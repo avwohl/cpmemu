@@ -201,21 +201,33 @@ void qkz80_reg_set::set_carry_from_int(qkz80_big_uint x) {
 void qkz80_reg_set::set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry, bool is_increment) {
   a&=0x0ff;
   qkz80_uint8 result(get_flags());
+
+  // Half carry (H/AC)
   if(half_carry)
     result|=qkz80_cpu_flags::AC;
   else
     result&= ~qkz80_cpu_flags::AC;
 
+  // Zero flag
   if(a==0)
     result|=qkz80_cpu_flags::Z;
   else
     result&= ~qkz80_cpu_flags::Z;
 
-  // sign
+  // Sign flag
   if((a&0x80)!=0)
     result|=qkz80_cpu_flags::S;
   else
     result&= ~qkz80_cpu_flags::S;
+
+  // N flag (Z80 only) - subtract flag
+  if(cpu_mode == MODE_Z80) {
+    if (is_increment) {
+      result &= ~qkz80_cpu_flags::N;  // Clear N for INC (addition)
+    } else {
+      result |= qkz80_cpu_flags::N;   // Set N for DEC (subtraction)
+    }
+  }
 
   // P/V flag
   if(cpu_mode == MODE_Z80) {
@@ -239,6 +251,19 @@ void qkz80_reg_set::set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry, bool
       result|=qkz80_cpu_flags::P;
     else
       result&= ~qkz80_cpu_flags::P;
+  }
+
+  // X and Y flags (Z80 only) - undocumented flags copy bits 3 and 5
+  if(cpu_mode == MODE_Z80) {
+    if (a & 0x08)
+      result |= qkz80_cpu_flags::X;  // Copy bit 3
+    else
+      result &= ~qkz80_cpu_flags::X;
+
+    if (a & 0x20)
+      result |= qkz80_cpu_flags::Y;  // Copy bit 5
+    else
+      result &= ~qkz80_cpu_flags::Y;
   }
 
   result=fix_flags(result);
