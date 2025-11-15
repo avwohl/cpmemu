@@ -11,6 +11,8 @@ class qkz80 {
     regp_SP=3,
     regp_AF=4,
     regp_PC=5,
+    regp_IX=6,  // Z80 index register X
+    regp_IY=7,  // Z80 index register Y
   };
 
   enum {
@@ -78,5 +80,15 @@ class qkz80 {
 
   void write_2_bytes(qkz80_uint16 store_me,qkz80_uint16 location);
   void execute(void);
+
+  // Helper functions for Z80 bit operations
+  qkz80_uint8 do_rlc(qkz80_uint8 val);
+  qkz80_uint8 do_rrc(qkz80_uint8 val);
+  qkz80_uint8 do_rl(qkz80_uint8 val);
+  qkz80_uint8 do_rr(qkz80_uint8 val);
+  qkz80_uint8 do_sla(qkz80_uint8 val);
+  qkz80_uint8 do_sra(qkz80_uint8 val);
+  qkz80_uint8 do_sll(qkz80_uint8 val);  // undocumented
+  qkz80_uint8 do_srl(qkz80_uint8 val);
 };
 

@@ -14,6 +14,19 @@ class qkz80_reg_set {
   qkz80_reg_pair SP;
   qkz80_reg_pair PC;
 
+  // Z80-specific registers
+  qkz80_reg_pair IX;  // Index register X
+  qkz80_reg_pair IY;  // Index register Y
+  qkz80_reg_pair AF_; // Alternate AF
+  qkz80_reg_pair BC_; // Alternate BC
+  qkz80_reg_pair DE_; // Alternate DE
+  qkz80_reg_pair HL_; // Alternate HL
+  qkz80_uint8 I;      // Interrupt vector base
+  qkz80_uint8 R;      // Memory refresh counter
+  qkz80_uint8 IFF1;   // Interrupt flip-flop 1
+  qkz80_uint8 IFF2;   // Interrupt flip-flop 2
+  qkz80_uint8 IM;     // Interrupt mode (0, 1, or 2)
+
   bool condition_code(qkz80_uint8 a,qkz80_uint8 cpu_flags) const;
   void set_flags_from_logic8(qkz80_big_uint a,
 			     qkz80_uint8 new_carry,

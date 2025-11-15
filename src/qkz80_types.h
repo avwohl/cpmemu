@@ -1,5 +1,7 @@
 typedef unsigned char qkz80_uint8;
+typedef signed char qkz80_int8;
 typedef unsigned short int qkz80_uint16;
+typedef signed short int qkz80_int16;
 // int long enough to have 16bits plus at least one bit more for carry
 typedef unsigned int qkz80_big_uint;
 
