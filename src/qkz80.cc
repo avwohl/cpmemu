@@ -420,12 +420,16 @@ void qkz80::execute(void) {
       return;
     }
     if (opcode == 0x57) { // LD A,I
-      set_A(regs.I);
+      qkz80_uint8 val = regs.I;
+      set_A(val);
+      regs.set_flags_from_ld_a_ir(val);
       trace->asm_op("ld a,i");
       return;
     }
     if (opcode == 0x5f) { // LD A,R
-      set_A(regs.R);
+      qkz80_uint8 val = regs.R;
+      set_A(val);
+      regs.set_flags_from_ld_a_ir(val);
       trace->asm_op("ld a,r");
       return;
     }

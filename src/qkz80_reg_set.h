@@ -56,6 +56,7 @@ class qkz80_reg_set {
   void set_flags_from_cpl(qkz80_uint8 result_a);
   void set_flags_from_scf(qkz80_uint8 a_val);
   void set_flags_from_ccf(qkz80_uint8 a_val);
+  void set_flags_from_ld_a_ir(qkz80_uint8 loaded_val);
   qkz80_uint8 get_carry_as_int(void);
 };
 #endif

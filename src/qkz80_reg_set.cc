@@ -328,6 +328,42 @@ void qkz80_reg_set::set_flags_from_ccf(qkz80_uint8 a_val) {
   set_flags(flags);
 }
 
+// LD A,I and LD A,R - Special LD instructions that affect flags
+// Sets S, Z, H=0, N=0, P/V=IFF2, preserves C, X and Y from loaded value
+void qkz80_reg_set::set_flags_from_ld_a_ir(qkz80_uint8 loaded_val) {
+  qkz80_uint8 flags = get_flags();
+
+  // Preserve carry
+  qkz80_uint8 old_carry = flags & qkz80_cpu_flags::CY;
+
+  // Start fresh
+  flags = old_carry;
+
+  // Set S flag (sign)
+  if (loaded_val & 0x80)
+    flags |= qkz80_cpu_flags::S;
+
+  // Set Z flag (zero)
+  if (loaded_val == 0)
+    flags |= qkz80_cpu_flags::Z;
+
+  // H and N are cleared (already 0)
+
+  // P/V flag = IFF2 (interrupt flip-flop 2 state)
+  if (IFF2)
+    flags |= qkz80_cpu_flags::P;
+
+  // Set X and Y flags from loaded value (Z80 only)
+  if (cpu_mode == MODE_Z80) {
+    if (loaded_val & 0x08)
+      flags |= qkz80_cpu_flags::X;
+    if (loaded_val & 0x20)
+      flags |= qkz80_cpu_flags::Y;
+  }
+
+  set_flags(flags);
+}
+
 void qkz80_reg_set::set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry, bool is_increment) {
   a&=0x0ff;
   qkz80_uint8 result(get_flags());
