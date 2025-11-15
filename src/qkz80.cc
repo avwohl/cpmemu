@@ -886,6 +886,76 @@ void qkz80::execute(void) {
   if ((opcode & 0xc0) == 0x40) { // MOV
     qkz80_uint8 src(opcode & 0x07);
     qkz80_uint8 dst((opcode >> 3) & 0x07);
+
+    // Special handling for indexed memory operations (IX+d) or (IY+d)
+    if ((has_dd_prefix || has_fd_prefix) && (src == reg_M || dst == reg_M)) {
+      qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+      qkz80_uint16 addr = get_reg16(active_hl) + offset;
+
+      if (src == reg_M && dst == reg_M) {
+        // LD (IX+d),(IX+d) is illegal - shouldn't happen
+        qkz80_global_fatal("illegal MOV (IX+d),(IX+d)");
+      } else if (src == reg_M) {
+        // LD r,(IX+d) or LD r,(IY+d)
+        qkz80_uint8 dat = mem.fetch_mem(addr);
+        set_reg8(dat, dst);
+        if (has_dd_prefix)
+          trace->asm_op("ld %s,(ix%+d)", name_reg8(dst), offset);
+        else
+          trace->asm_op("ld %s,(iy%+d)", name_reg8(dst), offset);
+      } else {
+        // LD (IX+d),r or LD (IY+d),r
+        qkz80_uint8 dat = get_reg8(src);
+        mem.store_mem(addr, dat);
+        if (has_dd_prefix)
+          trace->asm_op("ld (ix%+d),%s", offset, name_reg8(src));
+        else
+          trace->asm_op("ld (iy%+d),%s", offset, name_reg8(src));
+      }
+      return;
+    }
+
+    // Special handling for IXH, IXL, IYH, IYL (undocumented Z80 instructions)
+    if ((has_dd_prefix || has_fd_prefix) && (src == reg_H || src == reg_L || dst == reg_H || dst == reg_L)) {
+      qkz80_uint8 dat;
+
+      // Get source value
+      if (src == reg_H) {
+        dat = has_dd_prefix ? regs.IX.get_high() : regs.IY.get_high();
+      } else if (src == reg_L) {
+        dat = has_dd_prefix ? regs.IX.get_low() : regs.IY.get_low();
+      } else {
+        dat = get_reg8(src);
+      }
+
+      // Set destination value
+      if (dst == reg_H) {
+        if (has_dd_prefix) {
+          regs.IX.set_high(dat);
+          trace->asm_op("ld ixh,%s", src == reg_H ? "ixh" : (src == reg_L ? "ixl" : name_reg8(src)));
+        } else {
+          regs.IY.set_high(dat);
+          trace->asm_op("ld iyh,%s", src == reg_H ? "iyh" : (src == reg_L ? "iyl" : name_reg8(src)));
+        }
+      } else if (dst == reg_L) {
+        if (has_dd_prefix) {
+          regs.IX.set_low(dat);
+          trace->asm_op("ld ixl,%s", src == reg_H ? "ixh" : (src == reg_L ? "ixl" : name_reg8(src)));
+        } else {
+          regs.IY.set_low(dat);
+          trace->asm_op("ld iyl,%s", src == reg_H ? "iyh" : (src == reg_L ? "iyl" : name_reg8(src)));
+        }
+      } else {
+        set_reg8(dat, dst);
+        if (src == reg_H) {
+          trace->asm_op("ld %s,%s", name_reg8(dst), has_dd_prefix ? "ixh" : "iyh");
+        } else {
+          trace->asm_op("ld %s,%s", name_reg8(dst), has_dd_prefix ? "ixl" : "iyl");
+        }
+      }
+      return;
+    }
+
     qkz80_uint8 dat(get_reg8(src));
     set_reg8(dat,dst);
     trace->asm_op("mov %s,%s",name_reg8(dst),name_reg8(src));
@@ -906,6 +976,29 @@ void qkz80::execute(void) {
         trace->asm_op("ld (ix%+d),0x%02x", offset, dat);
       else
         trace->asm_op("ld (iy%+d),0x%02x", offset, dat);
+      return;
+    }
+
+    // Special handling for IXH, IXL, IYH, IYL (undocumented Z80 instructions)
+    if ((has_dd_prefix || has_fd_prefix) && (dst == reg_H || dst == reg_L)) {
+      qkz80_uint8 dat = pull_byte_from_opcode_stream();
+      if (dst == reg_H) {
+        if (has_dd_prefix) {
+          regs.IX.set_high(dat);
+          trace->asm_op("ld ixh,0x%02x", dat);
+        } else {
+          regs.IY.set_high(dat);
+          trace->asm_op("ld iyh,0x%02x", dat);
+        }
+      } else { // reg_L
+        if (has_dd_prefix) {
+          regs.IX.set_low(dat);
+          trace->asm_op("ld ixl,0x%02x", dat);
+        } else {
+          regs.IY.set_low(dat);
+          trace->asm_op("ld iyl,0x%02x", dat);
+        }
+      }
       return;
     }
 
@@ -1088,6 +1181,52 @@ void qkz80::execute(void) {
  
  if ((opcode & 0xc7) == 0x04 ) { // INR
     qkz80_uint8 reg_num((opcode>>3) & 0x7);
+
+    // Special handling for indexed memory (IX+d) or (IY+d)
+    if ((has_dd_prefix || has_fd_prefix) && reg_num == reg_M) {
+      qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+      qkz80_uint16 addr = get_reg16(active_hl) + offset;
+      qkz80_uint8 num = mem.fetch_mem(addr);
+      num++;
+      mem.store_mem(addr, num);
+      qkz80_uint8 hc((num & 0xf) == 0);
+      regs.set_zspa_from_inr(num,hc);
+      if (has_dd_prefix)
+        trace->asm_op("inc (ix%+d)", offset);
+      else
+        trace->asm_op("inc (iy%+d)", offset);
+      return;
+    }
+
+    // Special handling for IXH, IXL, IYH, IYL (undocumented Z80 instructions)
+    if ((has_dd_prefix || has_fd_prefix) && (reg_num == reg_H || reg_num == reg_L)) {
+      qkz80_uint8 num;
+      if (reg_num == reg_H) {
+        num = has_dd_prefix ? regs.IX.get_high() : regs.IY.get_high();
+        num++;
+        if (has_dd_prefix) {
+          regs.IX.set_high(num);
+          trace->asm_op("inc ixh");
+        } else {
+          regs.IY.set_high(num);
+          trace->asm_op("inc iyh");
+        }
+      } else { // reg_L
+        num = has_dd_prefix ? regs.IX.get_low() : regs.IY.get_low();
+        num++;
+        if (has_dd_prefix) {
+          regs.IX.set_low(num);
+          trace->asm_op("inc ixl");
+        } else {
+          regs.IY.set_low(num);
+          trace->asm_op("inc iyl");
+        }
+      }
+      qkz80_uint8 hc((num & 0xf) == 0);
+      regs.set_zspa_from_inr(num,hc);
+      return;
+    }
+
     qkz80_uint8 num(get_reg8(reg_num));
     num++;
     set_reg8(num,reg_num);
@@ -1099,6 +1238,52 @@ void qkz80::execute(void) {
  
  if ((opcode & 0xc7) == 0x05 ) { // DCR
     qkz80_uint8 reg_num((opcode>>3) & 0x7);
+
+    // Special handling for indexed memory (IX+d) or (IY+d)
+    if ((has_dd_prefix || has_fd_prefix) && reg_num == reg_M) {
+      qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+      qkz80_uint16 addr = get_reg16(active_hl) + offset;
+      qkz80_uint8 num = mem.fetch_mem(addr);
+      num--;
+      mem.store_mem(addr, num);
+      qkz80_uint8 hc((num & 0xf) == 0xf);
+      regs.set_zspa_from_inr(num,hc,false);  // false = decrement
+      if (has_dd_prefix)
+        trace->asm_op("dec (ix%+d)", offset);
+      else
+        trace->asm_op("dec (iy%+d)", offset);
+      return;
+    }
+
+    // Special handling for IXH, IXL, IYH, IYL (undocumented Z80 instructions)
+    if ((has_dd_prefix || has_fd_prefix) && (reg_num == reg_H || reg_num == reg_L)) {
+      qkz80_uint8 num;
+      if (reg_num == reg_H) {
+        num = has_dd_prefix ? regs.IX.get_high() : regs.IY.get_high();
+        num--;
+        if (has_dd_prefix) {
+          regs.IX.set_high(num);
+          trace->asm_op("dec ixh");
+        } else {
+          regs.IY.set_high(num);
+          trace->asm_op("dec iyh");
+        }
+      } else { // reg_L
+        num = has_dd_prefix ? regs.IX.get_low() : regs.IY.get_low();
+        num--;
+        if (has_dd_prefix) {
+          regs.IX.set_low(num);
+          trace->asm_op("dec ixl");
+        } else {
+          regs.IY.set_low(num);
+          trace->asm_op("dec iyl");
+        }
+      }
+      qkz80_uint8 hc((num & 0xf) == 0xf);
+      regs.set_zspa_from_inr(num,hc,false);  // false = decrement
+      return;
+    }
+
     qkz80_uint8 num(get_reg8(reg_num));
     num--;
     set_reg8(num,reg_num);
