@@ -475,6 +475,46 @@ void qkz80_reg_set::set_flags_from_block_cp(qkz80_uint8 a_val, qkz80_uint8 mem_v
   set_flags(flags);
 }
 
+// Flag setting for DAA instruction
+// DAA must preserve the N flag from the previous operation
+void qkz80_reg_set::set_flags_from_daa(qkz80_uint8 result, qkz80_uint8 n_flag, qkz80_uint8 half_carry, qkz80_uint8 carry) {
+  qkz80_uint8 flags = 0;
+
+  // Set carry flag
+  if (carry)
+    flags |= qkz80_cpu_flags::CY;
+
+  // Set half-carry flag
+  if (half_carry)
+    flags |= qkz80_cpu_flags::H;
+
+  // Set zero flag
+  if (result == 0)
+    flags |= qkz80_cpu_flags::Z;
+
+  // Set sign flag
+  if (result & 0x80)
+    flags |= qkz80_cpu_flags::S;
+
+  // PRESERVE N flag from previous operation (passed as parameter)
+  if (n_flag)
+    flags |= qkz80_cpu_flags::N;
+
+  // Set P/V flag as parity (not overflow)
+  if (parity_info.get_parity_of_byte(result))
+    flags |= qkz80_cpu_flags::P;
+
+  // Set X and Y flags from result (Z80 only)
+  if (cpu_mode == MODE_Z80) {
+    if (result & 0x08)
+      flags |= qkz80_cpu_flags::X;
+    if (result & 0x20)
+      flags |= qkz80_cpu_flags::Y;
+  }
+
+  set_flags(flags);
+}
+
 void qkz80_reg_set::set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry, bool is_increment) {
   a&=0x0ff;
   qkz80_uint8 result(get_flags());

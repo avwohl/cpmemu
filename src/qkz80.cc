@@ -1440,8 +1440,8 @@ void qkz80::execute(void) {
     }
 
     set_reg8(result, reg_A);
-    regs.set_zspa_from_inr(result, new_half_carry);
-    regs.set_carry_from_int(carry);
+    regs.set_flags_from_daa(result, n_flag, new_half_carry, carry);
+    trace->asm_op("daa");
     return;
   }
 

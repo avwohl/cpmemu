@@ -60,6 +60,7 @@ class qkz80_reg_set {
   void set_flags_from_ld_a_ir(qkz80_uint8 loaded_val);
   void set_flags_from_block_ld(qkz80_uint8 a_val, qkz80_uint8 copied_byte, qkz80_uint16 bc_after);
   void set_flags_from_block_cp(qkz80_uint8 a_val, qkz80_uint8 mem_val, qkz80_uint16 bc_after);
+  void set_flags_from_daa(qkz80_uint8 result, qkz80_uint8 n_flag, qkz80_uint8 half_carry, qkz80_uint8 carry);
   qkz80_uint8 get_carry_as_int(void);
 };
 #endif
