@@ -1,9 +1,0 @@
-typedef unsigned char qkz8080_uint8;
-typedef unsigned short int qkz8080_uint16;
-// int long enough to have 16bits plus at least one bit more for carry
-typedef unsigned int qkz8080_big_uint;
-
-void qkz8080_global_fatal(const char *fmt,...);
-#define qkz8080_GET_CLEAN8(xx_a) ((xx_a) & 0x0ff)
-#define qkz8080_GET_HIGH8(xx_a) qkz8080_GET_CLEAN8((xx_a) >> 8)
-#define qkz8080_MK_INT16(xx_low,xx_high) ((qkz8080_uint16(qkz8080_GET_CLEAN8(xx_high))<<8) | qkz8080_uint16(qkz8080_GET_CLEAN8(xx_low)))
