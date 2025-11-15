@@ -240,6 +240,94 @@ void qkz80_reg_set::set_flags_from_rotate_acc(qkz80_uint8 result_a, qkz80_uint8 
   set_flags(flags);
 }
 
+// CPL - Complement accumulator
+// Sets N=1, H=1, X and Y from result, preserves S, Z, P/V, C
+void qkz80_reg_set::set_flags_from_cpl(qkz80_uint8 result_a) {
+  qkz80_uint8 flags = get_flags();
+
+  // Set N and H flags
+  flags |= (qkz80_cpu_flags::N | qkz80_cpu_flags::H);
+
+  // Set X and Y flags from result (Z80 only)
+  if (cpu_mode == MODE_Z80) {
+    if (result_a & 0x08)
+      flags |= qkz80_cpu_flags::X;
+    else
+      flags &= ~qkz80_cpu_flags::X;
+
+    if (result_a & 0x20)
+      flags |= qkz80_cpu_flags::Y;
+    else
+      flags &= ~qkz80_cpu_flags::Y;
+  }
+
+  set_flags(flags);
+}
+
+// SCF - Set carry flag
+// Sets C=1, N=0, H=0, X and Y from A, preserves S, Z, P/V
+void qkz80_reg_set::set_flags_from_scf(qkz80_uint8 a_val) {
+  qkz80_uint8 flags = get_flags();
+
+  // Set carry
+  flags |= qkz80_cpu_flags::CY;
+
+  // Clear N and H
+  flags &= ~(qkz80_cpu_flags::N | qkz80_cpu_flags::H);
+
+  // Set X and Y from A (Z80 only)
+  if (cpu_mode == MODE_Z80) {
+    if (a_val & 0x08)
+      flags |= qkz80_cpu_flags::X;
+    else
+      flags &= ~qkz80_cpu_flags::X;
+
+    if (a_val & 0x20)
+      flags |= qkz80_cpu_flags::Y;
+    else
+      flags &= ~qkz80_cpu_flags::Y;
+  }
+
+  set_flags(flags);
+}
+
+// CCF - Complement carry flag
+// Sets C=NOT(C), N=0, H=old C, X and Y from A, preserves S, Z, P/V
+void qkz80_reg_set::set_flags_from_ccf(qkz80_uint8 a_val) {
+  qkz80_uint8 flags = get_flags();
+  qkz80_uint8 old_carry = (flags & qkz80_cpu_flags::CY) ? 1 : 0;
+
+  // Complement carry
+  if (old_carry)
+    flags &= ~qkz80_cpu_flags::CY;
+  else
+    flags |= qkz80_cpu_flags::CY;
+
+  // Clear N
+  flags &= ~qkz80_cpu_flags::N;
+
+  // H gets old carry value
+  if (old_carry)
+    flags |= qkz80_cpu_flags::H;
+  else
+    flags &= ~qkz80_cpu_flags::H;
+
+  // Set X and Y from A (Z80 only)
+  if (cpu_mode == MODE_Z80) {
+    if (a_val & 0x08)
+      flags |= qkz80_cpu_flags::X;
+    else
+      flags &= ~qkz80_cpu_flags::X;
+
+    if (a_val & 0x20)
+      flags |= qkz80_cpu_flags::Y;
+    else
+      flags &= ~qkz80_cpu_flags::Y;
+  }
+
+  set_flags(flags);
+}
+
 void qkz80_reg_set::set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry, bool is_increment) {
   a&=0x0ff;
   qkz80_uint8 result(get_flags());
@@ -307,8 +395,6 @@ void qkz80_reg_set::set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry, bool
     else
       result &= ~qkz80_cpu_flags::Y;
   }
-
-  result=fix_flags(result);
 
   set_flags(result);
 }

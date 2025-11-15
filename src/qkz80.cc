@@ -634,6 +634,14 @@ void qkz80::execute(void) {
       flags = (flags & qkz80_cpu_flags::CY) | qkz80_cpu_flags::H;  // Keep carry, set H, clear N
       if (bit_val) flags |= qkz80_cpu_flags::Z | qkz80_cpu_flags::P;  // Set Z and P/V if bit is 0
       if ((val & 0x80) && bit_num == 7) flags |= qkz80_cpu_flags::S;  // Set S if bit 7 is set
+
+      // X and Y flags (Z80 only) - undocumented behavior
+      // For BIT n,r: copy from the tested value
+      if (regs.cpu_mode == qkz80_reg_set::MODE_Z80) {
+        if (val & 0x08) flags |= qkz80_cpu_flags::X;
+        if (val & 0x20) flags |= qkz80_cpu_flags::Y;
+      }
+
       regs.set_flags(flags);
       trace->asm_op("bit %d,%s", bit_num, name_reg8(reg_sel));
     } else if (opcode < 0xC0) {
@@ -1043,7 +1051,7 @@ void qkz80::execute(void) {
     qkz80_uint8 num(get_reg8(reg_num));
     num--;
     set_reg8(num,reg_num);
-    qkz80_uint8 hc(!((num & 0xf) == 0xf));
+    qkz80_uint8 hc((num & 0xf) == 0xf);
     regs.set_zspa_from_inr(num,hc,false);  // false = decrement
     trace->asm_op("dcr %s",name_reg8(reg_num));
     return;
@@ -1157,24 +1165,26 @@ void qkz80::execute(void) {
     return;
  }
 
- if (opcode == 0x2f) { // CMA
+ if (opcode == 0x2f) { // CPL
     qkz80_uint8 result(get_reg8(reg_A));
     result=result ^ -1;
     set_reg8(result,reg_A);
-    trace->asm_op("cmc");
+    regs.set_flags_from_cpl(result);
+    trace->asm_op("cpl");
     return;
  }
 
- if (opcode == 0x3f) { // CMC
-   qkz80_uint8 old_carry(regs.get_carry_as_int());
-   regs.set_carry_from_int((~old_carry) & 1);
-   trace->asm_op("cmc");
+ if (opcode == 0x3f) { // CCF
+   qkz80_uint8 a_val = get_reg8(reg_A);
+   regs.set_flags_from_ccf(a_val);
+   trace->asm_op("ccf");
    return;
  }
 
- if (opcode == 0x37) { // STC
-   regs.set_carry_from_int(1);
-   trace->asm_op("stc");
+ if (opcode == 0x37) { // SCF
+   qkz80_uint8 a_val = get_reg8(reg_A);
+   regs.set_flags_from_scf(a_val);
+   trace->asm_op("scf");
    return;
   }
 
