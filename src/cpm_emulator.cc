@@ -634,6 +634,8 @@ void CPMEmulator::setup_memory() {
     current_dma = DEFAULT_DMA;
     memset(&mem[DEFAULT_FCB], 0, 36);
     memset(&mem[DEFAULT_FCB2], 0, 20);
+    // Set SP to top of available RAM
+    // CP/M programs expect stack at high memory
     cpu->regs.SP.set_pair16(0xFFF0);
 }
 
@@ -668,7 +670,8 @@ void CPMEmulator::setup_command_line(int argc, char** argv) {
 
 bool CPMEmulator::handle_pc(qkz80_uint16 pc) {
     if (pc == 0) {
-        fprintf(stderr, "Program exit via JMP 0\n");
+        qkz80_uint16 sp = cpu->get_reg16(qkz80::regp_SP);
+        fprintf(stderr, "Program exit via JMP 0 (SP=0x%04X)\n", sp);
         exit(0);
     }
 
@@ -698,7 +701,7 @@ void CPMEmulator::bdos_call(qkz80_uint8 func) {
 
     switch (func) {
         case 0:
-            fprintf(stderr, "System reset\n");
+            fprintf(stderr, "System reset (BDOS func 0)\n");
             exit(0);
             break;
         case 1:

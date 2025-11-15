@@ -16,12 +16,8 @@ qkz80_cpu_mem::~qkz80_cpu_mem() {
 void qkz80_cpu_mem::store_mem(qkz80_uint16 addr,qkz80_uint8 abyte) {
   addr = 0x0FFFF & addr;
 
-  const qkz80_uint16 addr_high = 0x0FF00;
-  // don't allow writes to the last page
-  // 4k basic crashes if all memory is writable
-  if ( ( addr & addr_high ) == addr_high )
-    return;
-
+  // No memory protection - allow all writes
+  // CP/M programs manage their own stack and memory
   dat[ addr ] = abyte;
 }
 
