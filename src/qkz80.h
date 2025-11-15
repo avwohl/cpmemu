@@ -94,6 +94,7 @@ class qkz80 {
 
   void write_2_bytes(qkz80_uint16 store_me,qkz80_uint16 location);
   void execute(void);
+  void debug_dump_regs(const char* label);
 
   // Helper functions for Z80 bit operations
   qkz80_uint8 do_rlc(qkz80_uint8 val);

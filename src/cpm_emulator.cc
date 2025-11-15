@@ -1144,6 +1144,10 @@ int main(int argc, char** argv) {
 
     cpu.regs.PC.set_pair16(TPA_START);
 
+    // Check for debug mode via environment variable
+    static bool debug_trace = (getenv("QKZ80_DEBUG") != nullptr);
+    static int instr_count = 0;
+
     // Run without instruction limit
     while (true) {
         qkz80_uint16 pc = cpu.regs.PC.get_pair16();
@@ -1152,7 +1156,22 @@ int main(int argc, char** argv) {
             continue;
         }
 
+        // Debug trace before instruction
+        if (debug_trace && pc >= 0x100 && pc < 0x200) {
+            char label[32];
+            snprintf(label, sizeof(label), "BEFORE[%d]:", instr_count);
+            cpu.debug_dump_regs(label);
+        }
+
         cpu.execute();
+        instr_count++;
+
+        // Debug trace after instruction
+        if (debug_trace && cpu.regs.PC.get_pair16() >= 0x100 && cpu.regs.PC.get_pair16() < 0x200) {
+            char label[32];
+            snprintf(label, sizeof(label), "AFTER [%d]:", instr_count - 1);
+            cpu.debug_dump_regs(label);
+        }
     }
 
     return 0;

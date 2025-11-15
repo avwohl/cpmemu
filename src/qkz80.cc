@@ -50,6 +50,32 @@ qkz80_uint8 qkz80::compute_subtract_half_carry(qkz80_uint16 rega,
   return 0;
 }
 
+void qkz80::debug_dump_regs(const char* label) {
+  // Print compact register state on one line for tracing
+  qkz80_uint8 flags = regs.get_flags();
+
+  fprintf(stderr, "%s PC=%04X AF=%02X%02X BC=%02X%02X DE=%02X%02X HL=%02X%02X SP=%04X IX=%04X IY=%04X [",
+          label,
+          regs.PC.get_pair16(),
+          regs.AF.get_high(), regs.AF.get_low(),
+          regs.BC.get_high(), regs.BC.get_low(),
+          regs.DE.get_high(), regs.DE.get_low(),
+          regs.HL.get_high(), regs.HL.get_low(),
+          regs.SP.get_pair16(),
+          regs.IX.get_pair16(),
+          regs.IY.get_pair16());
+
+  fprintf(stderr, "%c%c%c%c%c%c%c%c]\n",
+          (flags & 0x80) ? 'S' : '-',
+          (flags & 0x40) ? 'Z' : '-',
+          (flags & 0x20) ? 'Y' : '-',
+          (flags & 0x10) ? 'H' : '-',
+          (flags & 0x08) ? 'X' : '-',
+          (flags & 0x04) ? 'P' : '-',
+          (flags & 0x02) ? 'N' : '-',
+          (flags & 0x01) ? 'C' : '-');
+}
+
 void qkz80::halt(void) {
   // Print all registers and flags for debugging
   qkz80_uint8 flags = regs.get_flags();
@@ -847,6 +873,10 @@ void qkz80::execute(void) {
   if ((opcode & 0xcf) == 0x01) { // LXI
     qkz80_uint16 addr(pull_word_from_opcode_stream());
     qkz80_uint8 rpair = ((opcode >> 4) & 0x03);
+    // If DD/FD prefix and register pair is HL (2), use IX/IY instead
+    if ((has_dd_prefix || has_fd_prefix) && rpair == regp_HL) {
+      rpair = active_hl;
+    }
     set_reg16(addr,rpair);
     trace->asm_op("lxi %s,0x%0x",name_reg16(rpair),addr);
     trace->add_reg16(rpair);
@@ -1080,6 +1110,10 @@ void qkz80::execute(void) {
 
  if ((opcode & 0xcf) == 0x03 ) { // INX
     qkz80_uint8 rp((opcode >> 4) & 0x03);
+    // If DD/FD prefix and register pair is HL (2), use IX/IY instead
+    if ((has_dd_prefix || has_fd_prefix) && rp == regp_HL) {
+      rp = active_hl;
+    }
     qkz80_uint16 pair_val(get_reg16(rp));
     pair_val++;
     set_reg16(pair_val,rp);
@@ -1089,6 +1123,10 @@ void qkz80::execute(void) {
 
  if ((opcode & 0xcf) == 0x0b ) { // DCX
     qkz80_uint8 rp((opcode >> 4) & 0x03);
+    // If DD/FD prefix and register pair is HL (2), use IX/IY instead
+    if ((has_dd_prefix || has_fd_prefix) && rp == regp_HL) {
+      rp = active_hl;
+    }
     qkz80_uint16 pair_val(get_reg16(rp));
     pair_val--;
     set_reg16(pair_val,rp);
@@ -1098,6 +1136,10 @@ void qkz80::execute(void) {
 
  if ((opcode & 0xcf) == 0x09 ) { //DAD RP (ADD HL/IX/IY,rp)
     qkz80_uint8 rp((opcode >> 4) & 0x03);
+    // If DD/FD prefix and register pair is HL (2), use IX/IY instead
+    if ((has_dd_prefix || has_fd_prefix) && rp == regp_HL) {
+      rp = active_hl;
+    }
     qkz80_big_uint pair1(get_reg16(rp));
     qkz80_big_uint pair2(get_reg16(active_hl));
     qkz80_big_uint sum(pair1+pair2);
@@ -1355,18 +1397,26 @@ void qkz80::execute(void) {
     if(rpair==regp_SP) {
       rpair=regp_AF;
     }
+    // If DD/FD prefix and register pair is HL (2), use IX/IY instead
+    if ((has_dd_prefix || has_fd_prefix) && rpair == regp_HL) {
+      rpair = active_hl;
+    }
     qkz80_uint16 pair_val(pop_word());
     set_reg16(pair_val,rpair);
     trace->asm_op("pop %s",name_reg16(rpair));
     trace->add_reg16(rpair);
     return;
-  } 
+  }
 
  if ((opcode & 0xcf) == 0xc5) { // PUSH
     qkz80_uint8 rpair((opcode >> 4) & 0x3);
     // SP illegal for push, that code 3 means AF
     if(rpair==regp_SP) {
       rpair=regp_AF;
+    }
+    // If DD/FD prefix and register pair is HL (2), use IX/IY instead
+    if ((has_dd_prefix || has_fd_prefix) && rpair == regp_HL) {
+      rpair = active_hl;
     }
     qkz80_uint16 val(get_reg16(rpair));
     push_word(val);
