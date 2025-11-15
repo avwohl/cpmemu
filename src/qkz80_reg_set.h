@@ -52,6 +52,7 @@ class qkz80_reg_set {
   qkz80_uint8 fix_flags(qkz80_uint8 new_flags) const;
 
   void set_carry_from_int(qkz80_big_uint x);
+  void set_flags_from_rotate_acc(qkz80_uint8 result_a, qkz80_uint8 new_carry);
   qkz80_uint8 get_carry_as_int(void);
 };
 #endif

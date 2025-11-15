@@ -1264,7 +1264,7 @@ void qkz80::execute(void) {
     return;
   }
 
- if (opcode == 0x07) { // RLC
+ if (opcode == 0x07) { // RLCA
     qkz80_big_uint dat1(get_reg8(reg_A));
     qkz80_big_uint cy(0);
     if((dat1 & 0x080)!=0) {
@@ -1272,11 +1272,11 @@ void qkz80::execute(void) {
     }
     dat1=(dat1<<1) | cy;
     set_reg8(dat1,reg_A);
-    regs.set_carry_from_int(cy);
-    trace->asm_op("rlc");
+    regs.set_flags_from_rotate_acc(dat1, cy);
+    trace->asm_op("rlca");
     return;
  }
- if (opcode == 0x0f) { // RRC
+ if (opcode == 0x0f) { // RRCA
     qkz80_big_uint dat1(get_reg8(reg_A));
     qkz80_uint8 high_bit(0);
     qkz80_uint8 low_bit(dat1 & 0x1);
@@ -1285,36 +1285,36 @@ void qkz80::execute(void) {
     }
     dat1=(dat1>>1) | high_bit;
     set_reg8(dat1,reg_A);
-    regs.set_carry_from_int(low_bit);
-    trace->asm_op("rrc");
+    regs.set_flags_from_rotate_acc(dat1, low_bit);
+    trace->asm_op("rrca");
     return;
  }
 
- if (opcode == 0x17) { // RAL
+ if (opcode == 0x17) { // RLA
     qkz80_big_uint a_val(get_reg8(reg_A));
     qkz80_uint8 new_carry(0);
     if((a_val&0x80)!=0)
       new_carry=1;
     qkz80_uint8 old_carry(regs.get_carry_as_int());
-    regs.set_carry_from_int(new_carry);
-    a_val=(a_val<<1) | old_carry;;
+    a_val=(a_val<<1) | old_carry;
     set_reg8(a_val,reg_A);
-    trace->asm_op("ral");
+    regs.set_flags_from_rotate_acc(a_val, new_carry);
+    trace->asm_op("rla");
     return;
  }
 
- if (opcode == 0x1f) { // RAR
+ if (opcode == 0x1f) { // RRA
     qkz80_big_uint a_val(get_reg8(reg_A));
     qkz80_uint8 new_carry(a_val&1);
     qkz80_uint8 old_carry(regs.get_carry_as_int());
-    regs.set_carry_from_int(new_carry);
     a_val=a_val>>1;
     if(old_carry)
       a_val|=0x80;
     else
       a_val&=0x7f;
     set_reg8(a_val,reg_A);
-    trace->asm_op("rar");
+    regs.set_flags_from_rotate_acc(a_val, new_carry);
+    trace->asm_op("rra");
     return;
   }
 

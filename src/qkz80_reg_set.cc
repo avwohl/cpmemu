@@ -74,8 +74,8 @@ void qkz80_reg_set::set_flags_from_logic8(qkz80_big_uint a,
 
   if(new_half_carry!=0)
     new_flags|=qkz80_cpu_flags::AC;
-    
-  if(sum8bit==0) 
+
+  if(sum8bit==0)
     new_flags|=qkz80_cpu_flags::Z;
 
   if((sum8bit & 0x080) != 0)
@@ -83,6 +83,17 @@ void qkz80_reg_set::set_flags_from_logic8(qkz80_big_uint a,
 
   if(parity_info.get_parity_of_byte(sum8bit))
     new_flags|=qkz80_cpu_flags::P;
+
+  // N flag is cleared for logical operations
+  // (already 0 since we started with fix_flags(0))
+
+  // X and Y flags (Z80 only) - copy bits 3 and 5 of result
+  if(cpu_mode == MODE_Z80) {
+    if (sum8bit & 0x08)
+      new_flags |= qkz80_cpu_flags::X;  // Copy bit 3
+    if (sum8bit & 0x20)
+      new_flags |= qkz80_cpu_flags::Y;  // Copy bit 5
+  }
 
   set_flags(new_flags);
 }
@@ -196,6 +207,37 @@ void qkz80_reg_set::set_carry_from_int(qkz80_big_uint x) {
     result|= qkz80_cpu_flags::CY;
   }
   set_flags(result);
+}
+
+// Set flags for accumulator rotate/shift instructions (RLCA, RRCA, RLA, RRA)
+// These instructions only affect: C, H (cleared), N (cleared), X, Y (from result)
+// S, Z, P/V are preserved
+void qkz80_reg_set::set_flags_from_rotate_acc(qkz80_uint8 result_a, qkz80_uint8 new_carry) {
+  qkz80_uint8 flags = get_flags();
+
+  // Set carry
+  if (new_carry)
+    flags |= qkz80_cpu_flags::CY;
+  else
+    flags &= ~qkz80_cpu_flags::CY;
+
+  // Clear N and H flags
+  flags &= ~(qkz80_cpu_flags::N | qkz80_cpu_flags::H);
+
+  // Set X and Y flags from result (Z80 only)
+  if (cpu_mode == MODE_Z80) {
+    if (result_a & 0x08)
+      flags |= qkz80_cpu_flags::X;
+    else
+      flags &= ~qkz80_cpu_flags::X;
+
+    if (result_a & 0x20)
+      flags |= qkz80_cpu_flags::Y;
+    else
+      flags &= ~qkz80_cpu_flags::Y;
+  }
+
+  set_flags(flags);
 }
 
 void qkz80_reg_set::set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry, bool is_increment) {
