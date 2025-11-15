@@ -536,8 +536,7 @@ void qkz80::execute(void) {
       qkz80_uint16 bc = get_reg16(regp_BC);
       qkz80_uint8 a_val = get_reg8(reg_A);
       qkz80_uint8 mem_val = mem.fetch_mem(hl);
-      qkz80_big_uint diff = a_val - mem_val;
-      regs.set_flags_from_diff8(diff, a_val, mem_val, 0);
+      regs.set_flags_from_block_cp(a_val, mem_val, bc - 1);
       set_reg16(hl + 1, regp_HL);
       set_reg16(bc - 1, regp_BC);
       trace->asm_op("cpi");
@@ -549,7 +548,7 @@ void qkz80::execute(void) {
       qkz80_uint8 a_val = get_reg8(reg_A);
       qkz80_uint8 mem_val = mem.fetch_mem(hl);
       qkz80_big_uint diff = a_val - mem_val;
-      regs.set_flags_from_diff8(diff, a_val, mem_val, 0);
+      regs.set_flags_from_block_cp(a_val, mem_val, bc - 1);
       set_reg16(hl + 1, regp_HL);
       set_reg16(bc - 1, regp_BC);
       if (bc != 1 && diff != 0) regs.PC.set_pair16(regs.PC.get_pair16() - 2);  // Repeat if not found
@@ -561,8 +560,7 @@ void qkz80::execute(void) {
       qkz80_uint16 bc = get_reg16(regp_BC);
       qkz80_uint8 a_val = get_reg8(reg_A);
       qkz80_uint8 mem_val = mem.fetch_mem(hl);
-      qkz80_big_uint diff = a_val - mem_val;
-      regs.set_flags_from_diff8(diff, a_val, mem_val, 0);
+      regs.set_flags_from_block_cp(a_val, mem_val, bc - 1);
       set_reg16(hl - 1, regp_HL);
       set_reg16(bc - 1, regp_BC);
       trace->asm_op("cpd");
@@ -574,7 +572,7 @@ void qkz80::execute(void) {
       qkz80_uint8 a_val = get_reg8(reg_A);
       qkz80_uint8 mem_val = mem.fetch_mem(hl);
       qkz80_big_uint diff = a_val - mem_val;
-      regs.set_flags_from_diff8(diff, a_val, mem_val, 0);
+      regs.set_flags_from_block_cp(a_val, mem_val, bc - 1);
       set_reg16(hl - 1, regp_HL);
       set_reg16(bc - 1, regp_BC);
       if (bc != 1 && diff != 0) regs.PC.set_pair16(regs.PC.get_pair16() - 2);  // Repeat if not found

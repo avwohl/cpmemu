@@ -396,6 +396,49 @@ void qkz80_reg_set::set_flags_from_block_ld(qkz80_uint8 a_val, qkz80_uint8 copie
   set_flags(flags);
 }
 
+// Block Compare Instructions (CPI/CPIR/CPD/CPDR) - Flag updates
+// Performs A - (HL) comparison and sets flags accordingly
+// S, Z, H: From comparison (A - (HL))
+// N: Set to 1 (subtraction)
+// P/V: Set if BC != 0 after decrement (NOT overflow!)
+// C: Preserved (unchanged)
+// X, Y (undocumented): From (A - (HL) - H) where H is the half-carry
+void qkz80_reg_set::set_flags_from_block_cp(qkz80_uint8 a_val, qkz80_uint8 mem_val, qkz80_uint16 bc_after) {
+  // First do normal subtraction to get S, Z, H, N flags
+  qkz80_uint8 flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
+  sub8_bitwise(a_val, mem_val, 0, flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s);
+
+  qkz80_uint8 flags = get_flags();
+
+  // Preserve carry flag
+  qkz80_uint8 old_carry = flags & qkz80_cpu_flags::CY;
+
+  // Build new flags
+  flags = old_carry;  // Start with preserved carry
+
+  // Set flags from subtraction
+  if (flag_s) flags |= qkz80_cpu_flags::S;
+  if (flag_z) flags |= qkz80_cpu_flags::Z;
+  if (flag_h) flags |= qkz80_cpu_flags::H;
+  flags |= qkz80_cpu_flags::N;  // N is always set (subtraction)
+
+  // P/V flag: Set if BC != 0 after decrement (NOT overflow!)
+  if (bc_after != 0)
+    flags |= qkz80_cpu_flags::P;
+
+  // X and Y flags (Z80 only): From (A - (HL) - H)
+  if (cpu_mode == MODE_Z80) {
+    qkz80_uint8 result = a_val - mem_val;
+    qkz80_uint8 n = result - (flag_h ? 1 : 0);  // Subtract half-carry
+    if (n & 0x08)
+      flags |= qkz80_cpu_flags::X;
+    if (n & 0x02)  // Y is bit 1 of the adjusted result
+      flags |= qkz80_cpu_flags::Y;
+  }
+
+  set_flags(flags);
+}
+
 void qkz80_reg_set::set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry, bool is_increment) {
   a&=0x0ff;
   qkz80_uint8 result(get_flags());
