@@ -45,7 +45,7 @@ qkz80_uint8 qkz80_reg_set::fix_flags(qkz80_uint8 new_flags) const {
 }
 
 qkz80_uint8 qkz80_reg_set::get_flags(void) const {
-  return fix_flags(AF.get_low());
+  return AF.get_low();  // Return raw flags without modification
 }
 
 void qkz80_reg_set::set_flags(qkz80_uint8 new_flags) {
@@ -338,7 +338,7 @@ void qkz80_reg_set::set_flags_from_adc16(qkz80_big_uint result, qkz80_big_uint v
   if (flag_x) flags |= qkz80_cpu_flags::X;
   if (flag_y) flags |= qkz80_cpu_flags::Y;
 
-  set_flags(fix_flags(flags));
+  set_flags(flags);  // set_flags() already calls fix_flags(), no need to double-call
 }
 
 // Z80-specific: 16-bit SBC HL,ss
@@ -362,7 +362,7 @@ void qkz80_reg_set::set_flags_from_sbc16(qkz80_big_uint result, qkz80_big_uint v
   if (flag_x) flags |= qkz80_cpu_flags::X;
   if (flag_y) flags |= qkz80_cpu_flags::Y;
 
-  set_flags(fix_flags(flags));
+  set_flags(flags);  // set_flags() already calls fix_flags(), no need to double-call
 }
 
 // Z80-specific: 16-bit ADC/SBC (ADC HL,ss / SBC HL,ss)
