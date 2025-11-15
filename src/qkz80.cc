@@ -836,6 +836,20 @@ void qkz80::execute(void) {
 
   if ((opcode & 0xc7) == 0x06) { // MVI
     qkz80_uint8 dst((opcode >> 3) & 0x07);
+
+    // Special handling for LD (IX+d),n and LD (IY+d),n
+    if ((has_dd_prefix || has_fd_prefix) && dst == reg_M) {
+      qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+      qkz80_uint8 dat = pull_byte_from_opcode_stream();
+      qkz80_uint16 addr = get_reg16(active_hl) + offset;
+      mem.store_mem(addr, dat);
+      if (has_dd_prefix)
+        trace->asm_op("ld (ix%+d),0x%02x", offset, dat);
+      else
+        trace->asm_op("ld (iy%+d),0x%02x", offset, dat);
+      return;
+    }
+
     qkz80_uint8 dat(pull_byte_from_opcode_stream());
     set_reg8(dat,dst);
     trace->asm_op("mvi %s,0x%0x",name_reg8(dst),dat);
