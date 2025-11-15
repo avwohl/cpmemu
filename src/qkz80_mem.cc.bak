@@ -1,0 +1,39 @@
+#include "qkz8080_mem.h"
+
+#include <string.h>
+
+#define MEM_SIZE (0x010000)
+qkz8080_cpu_mem::qkz8080_cpu_mem():dat(0) {
+  dat=(qkz8080_uint8 *)new char[MEM_SIZE];
+  memset(dat,0,MEM_SIZE);
+};
+
+qkz8080_cpu_mem::~qkz8080_cpu_mem() {
+  delete dat;
+  dat=0;
+}
+
+void qkz8080_cpu_mem::store_mem(qkz8080_uint16 addr,qkz8080_uint8 abyte) {
+  addr = 0x0FFFF & addr;
+
+  const qkz8080_uint16 addr_high = 0x0FF00;
+  // don't allow writes to the last page
+  // 4k basic crashes if all memory is writable
+  if ( ( addr & addr_high ) == addr_high )
+    return;
+
+  dat[ addr ] = abyte;
+}
+
+qkz8080_uint8 qkz8080_cpu_mem::fetch_mem(qkz8080_uint16 addr) {
+  return (dat[0x0FFFF & addr]) & 0x0ff;
+}
+
+qkz8080_uint16 qkz8080_cpu_mem::fetch_mem16(qkz8080_uint16 addr) {
+  return fetch_mem(addr) | (fetch_mem(addr+1) << 8);
+}
+
+void qkz8080_cpu_mem::store_mem16(qkz8080_uint16 addr,qkz8080_uint16 aword) {
+  store_mem(addr,aword);
+  store_mem(addr+1,aword >> 8);
+}

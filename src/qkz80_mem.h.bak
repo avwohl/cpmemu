@@ -1,0 +1,19 @@
+#ifndef X_CPU_MEM
+#define X_CPU_MEM 1
+#include "qkz8080_types.h"
+
+class qkz8080_cpu_mem {
+  qkz8080_uint8 *dat;
+ public:
+  char *get_mem(void) {
+    return (char *)dat;
+  }
+  qkz8080_cpu_mem();
+  ~qkz8080_cpu_mem();
+  qkz8080_uint8 fetch_mem(qkz8080_uint16 addr);
+  void store_mem(qkz8080_uint16 addr,qkz8080_uint8 abyte);
+
+  qkz8080_uint16 fetch_mem16(qkz8080_uint16 addr);
+  void store_mem16(qkz8080_uint16 addr,qkz8080_uint16 aword);
+};
+#endif

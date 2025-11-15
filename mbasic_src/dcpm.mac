@@ -1,0 +1,1089 @@
+	subttl	common file for basic interpreter
+	.sall	
+conto	set	15			;character to supress output (usually control-o)
+dbltrn	set	0			;for double precision transcendentals
+	if2	
+	.printx	/extended/
+	.printx	/lpt/
+	.printx	/cpm disk/
+	.printx	/z80/
+	.printx	/fast/
+	.printx	/5.0 features/
+	.printx	/ansi compatible/
+	endif
+clmwid	set	14			;make comma columns fourteen characters
+datpsc	set	128			;number of data bytes in disk sector
+linln	set	80			;terminal line length 
+lptlen	set	132
+buflen	set	255			;long lines
+namlen	set	40			;maximum length name -- 3 to 127
+numlev	set	0*20+19+2*5		;number of stack levels reserved
+					;by an explicit call to getstk
+strsiz	set	4
+strsiz	set	3
+numtmp	set	3			;number of string temporaries
+numtmp	set	10
+md.rnd	set	3			;the mode number for random files
+md.sqi	set	1			;the mode number for sequential input files
+					;never written into a file
+md.sqo	set	2			;the mode for sequential output files
+					;and program files
+cpmwrm	set	0			;cp/m warm boot addr
+cpment	set	cpmwrm+5		;cp/m bdos call addr
+	cseg	
+trurom	set	0
+	page
+	subttl	disk parameters and documentation
+	title	disk code for cpm/ontel/mostek/dmc/beehive: whg,pga,mbm
+;external symbols
+	extrn	derbfm,derbfn,derbrn,derdfl
+	extrn	derfao,derfnf,derioe,dernmf,dertmf
+	extrn	finprt,outdo,crdo
+	extrn	temp,strout,strlt3,snerr,scrtch
+	extrn	faclo,fout,conint
+	extrn	clsall,filfrm,filidx,getbyt,filscn
+	extrn	buf
+	extrn	dcompr,getypr,synchr
+	extrn	filnam
+	extrn	filna2
+	extrn	dirtmp
+;internal symbols
+	public	ntopnc,filout,filou3,indskc
+	public	nmlofs,nmlofc,nmlo.c,datofs,datofc,locofs
+	public	eof,clsfil,loc
+	public	name,open,kill,indskb,prgfil
+;
+;
+;			revision history
+;			-------- -------
+;
+;11/7/77		fixed eof() code to use ornofs instead of nmlofs, pga
+;12/2/77  (4.41) fixed random access to close extents pga
+;12/17/77	additional code to support ontel dos basic, p.zilber
+;12/29/77 (4.42)	fixed bug where get, put w/o rec not inc curloc, pga
+;1/5/78   (4.43) fixed another random bug, line printer ^c prob. pga
+;7/23/79		add beehive interace and cleanup conditionals
+;
+;
+;
+;file information:
+;
+;	 1	mode of the file
+;f.blk1	(n)	1st block of space, usually fcb( cpm: 33, ontel: 42,
+;		mostek: 47 ). zero for others
+;locofs	 2	curloc, # of sectors read or writeen for sequential.
+;		for random files, it is the last record # +1.
+;ornofs	 1/2	seq input: 	# of bytes in sector when read.
+;		seq output:	# bytes in output sector( # written )
+;		random:		set to datpsc by put and get, sometimes
+;				zeroed by outsq2 setup for dskout code.
+;nmlofs	 1/2	seq input:	# bytes left in input buffer
+;		seq output:	position of imaginary print head
+;f.blk2	(n)	2nd block of space( 6 byte chain links for ontel,
+;		160 bytes for dmc, 10 bytes for beehiv )
+;datofs	(n)	sector buffer, length = datpsc
+;
+;extra information for 5.0 version only:
+;
+;fd.siz	 2	variable length record size( default = 128 )
+;fd.phy	 2	current physical record #
+;fd.log	 2	current logical record #
+;fd.chg	 1	future flag for across record prints, etc.
+;fd.ops	 2	output print position for print, input, write
+;fd.dat	(n)	data buffer for field, size is (fd.siz). fd.max is max.
+;
+;%
+;file modes
+md.000	set	0			;the mode number for no file, internal
+					;use only as an escape from open
+md.rnd	set	3			;the mode number for random files
+md.sqi	set	1			;the mode number for sequential input
+					;files never written into a file
+md.sqo	set	2			;the mode for sequential output files
+					;and program files
+;disk code configuration switches
+spc1st	set	1 or 0 or 0 or 0 or 0 or 0;1st block exists
+spc2nd	set	0 or 0 or 0		;2nd block exists
+sw2byt	set	0 or 0 or 0		;2 byte offsets (datpsc .gt. 255)
+swlof	set	1 or 0 or 0 or 0 or 0 or 0;there is a lof function
+swres	set	1 or 0 or 0		;there is a reset statement
+swfil	set	0 or 1 or 0 or 0 or 0	;there is a files command
+swdskf	set	(0 or 0) and (0-1)	;there is a dskf function
+; offsets into file blocks for specific entries
+locofs	set	34+3*1+9*0+14*0-10*0+267*0-30*0;offset to curloc bytes
+ornofs	set	2+locofs		;offset to number of bytes
+					;originally in the buffer
+nmlofs	set	1+ornofs+0		;offset to bytes remaining in the buffer
+nmlofc	set	0+nmlofs
+					;or the print position on output
+nmlo.c	set	0+nmlofs
+datofs	set	1+nmlofs+0+6*0+288*0+10*0;offset to buffer
+datofc	set	0+datofs
+dblksz	set	datofs+datpsc
+	public	dblk.c
+dblk.c	set	0+dblksz
+q	set	dblksz
+;define	ent(sym,siz),<
+;intern	sym
+;sym=q
+;q=q+siz>
+	public	fd.siz,fd.phy,fd.log,fd.chg,fd.ops,fd.dat
+fd.max	set	0			;size of field buffer
+;ent	fd.siz,2		;variable length record size default 128
+fd.siz	set	q
+q	set	q+2
+;ent	fd.phy,2		;current physical record #
+fd.phy	set	q
+q	set	q+2
+;ent	fd.log,2		;current logical record number
+fd.log	set	q
+q	set	q+2
+;ent	fd.chg,1		;future flag for accross block prints etc.
+fd.chg	set	q
+q	set	q+1
+;ent	fd.ops,2		;output print position for print, input, write
+fd.ops	set	q
+q	set	q+2
+;ent	fd.dat,fd.max		;actual field data buffer
+fd.dat	set	q
+q	set	q+fd.max
+					;size is fd.siz bytes long
+	public	fnzblk
+fnzblk	set	0+q
+eofchr	set	26+2*0-22*0-23*0	;end of file character
+	subttl	operating system calls and other data
+	extrn	cpmvrn,cpmrea,cpmwri
+; cpm call identifiers
+c.open	set	15
+c.clos	set	16
+c.dele	set	19
+;c.writ==21
+c.make	set	22
+c.rena	set	23
+c.buff	set	26			;set dma address
+c.gdrv	set	25			;get currently selected drive
+c.sdrv	set	14			;set currently selected drive
+c.rest	set	13			;initialize bdos
+c.sear	set	17			;search for file
+; offsets into cp/m fcb (file control block)
+fcb.fn	set	1-0			;file name
+fcb.ft	set	9-0			;extension
+fcb.ex	set	12+20*0			;file extent
+fcb.rc	set	15+23*0			;record count = current extent size
+fcb.nr	set	32+8*0			;next record number
+fcb.rn	set	33			;cp/m 2.x random record number
+;special for cp/m testing
+	subttl	eof function
+	public	eof
+eof::	call	filfrm			;convert argument to file number
+	jz	derbfn			;bad file number - not found !!!
+					;and set [b,c] to point to file data block
+	cpi	md.sqo			;is it a sequential output file?
+	jz	derbfm			;then give bad file mode
+ornchk:	lxi	h,0+ornofs		;see if any bytes arrived in this buffer
+	dad	b
+	mov	a,m			;zero iff it is end of file
+	ora	a			;set cc's
+	jz	waseof			;no bytes left
+	ldax	b			;** 5.11 **  get file mode
+	cpi	md.rnd			;is it a random file?
+	jz	waseof			;** 5.11 **  (a) .ne. 0 - not eof
+	inx	h			;point to number left in buffer
+	mov	a,m			;get number of bytes in buffer
+	ora	a			;non-zero?
+	jnz	chkctz			;then check for control-z
+	push	b			;save [b,c]
+	mov	h,b			;get fcb pointer in [b,c]
+	mov	l,c
+	call	readin			;read another buffer
+	pop	b			;restore [b,c]
+	jmp	ornchk			;have new buffer, use previous procedure
+chkctz:	mvi	a,datpsc and 377o	;get # of bytes in full buffer
+	sub	m			;subtract left
+	mov	c,a			;put in [b,c] for dad
+	mvi	b,0
+	dad	b			;add to ornofs offset
+	inx	h			;add one to point to byte in buffer
+	mov	a,m			;get byte
+	sui	eofchr			;if control-z, eof (control-\ is fs)
+waseof:	sui	1			;map 0 to -1 and all others to 0
+	sbb	a
+	jmp	conia##			;convert to an integer and return
+	subttl	outseq	-- sequential output for a data block
+;
+; [b,c] points at file data block
+;
+	public	outseq
+outseq:	mov	d,b			;put file block offset in [d,e]
+	mov	e,c
+	inx	d			;point to fcb
+outsq2:	lxi	h,0+ornofs		;point to number in buffer
+	dad	b			;add start of file data block
+	push	b			;save file data pointer
+	xra	a
+	mov	m,a			;zero out number in data buffer
+;	output next record in file
+;
+;	(a) = 0
+;	(hl) points to nmlofs-1
+;	(de) points to file data block + 1 ( fcb if spc2nd=0)
+;	(bc) points to file data block
+	call	setbuf			;set buffer address
+	lda	cpmwri			;get write code
+	call	accfil			;access file
+	cpi	255
+	jz	dertmf			;too many files - 5.11
+	dcr	a			;error extending file? (1)
+	jz	derioe			;yes
+	dcr	a			;disk full? (2)
+	jnz	outsok			;no
+	pop	d			;get back file pointer
+	xra	a			;get zero
+	stax	d			;mark as closed
+	mvi	c,c.clos		;close it
+	inx	d			;point to fcb
+	call	cpment			;call cp/m
+	jmp	derdfl			;give "disk full" error message
+outsok:	inr	a			;too many files?
+	jz	dertmf			;yes
+	pop	b			;get pointer at curloc
+	lxi	h,0+locofs		;by adding offset to file pointer
+	dad	b
+	mov	e,m			;increment it
+	inx	h
+	mov	d,m
+	inx	d
+	mov	m,d
+	dcx	h
+	mov	m,e
+	ret	
+	subttl	close a file
+; file number is in [a]
+; zero all information. if file is open, raise its disks head
+; if file is sequential output, send final sector of data
+	public	clsfil
+clsfil:	call	filidx			;get pointer to data
+	jz	ntopnc			;return if not open
+					;save file #
+	push	b			;save file pointer
+	ldax	b			;get file mode
+	mov	d,b			;put file block offset in [d,e]
+	mov	e,c
+	inx	d			;point to fcb
+	push	d			;save [d,e] for later
+	cpi	md.sqo			;seqential output?
+	jnz	noforc			;no need to force partial output buffer
+	lxi	h,clsfl1		;return here
+	push	h			;save on stack
+	push	h			;need extra stack entry
+	mov	h,b			;get file pointer
+	mov	l,c			;into [h,l]
+	mvi	a,eofchr		;put out control-z (or fs)
+	jmp	filou4			;jump into char output code
+clsfl1:	lxi	h,0+ornofs		;chars in buffer
+	dad	b			;test
+	mov	a,m			;test ornofs
+	ora	a
+	cnz	outsq2			;force out buffer
+noforc:	pop	d			;get back fcb pointer
+;	close file
+;
+;	(de) points to fcb
+;	((sp)) points to file data block
+	call	setbuf			;set dma address
+	mvi	c,c.clos		;the close
+	call	cpment			;call cpm
+;*****	no check for errors
+	pop	b			;restore file pointer
+ntopnc:	mvi	d,datofs		;number of bytes to zero
+	xra	a
+morczr:	stax	b
+	inx	b
+	dcr	d
+	jnz	morczr
+	ret	
+	subttl	loc (current location) and lof (last record number)
+	public	loc
+loc:	call	filfrm			;convert argument and point at data block
+	jz	derbfn			;if not open, "bad file number"
+	cpi	md.rnd			;random mode?
+	lxi	h,0+locofs+1		;assume not
+	jnz	loc1			;no, use curloc
+	lxi	h,0+fd.log+1		;point at logical record number
+loc1:
+intred:	dad	b
+intret:	mov	a,m
+	dcx	h
+	mov	l,m
+	jmp	givint##
+	page
+	public	lof
+lof:	call	filfrm			;convert argument and index
+	jz	derbfn			;"bad file number" if not open
+;	(bc) points to file data block
+	lxi	h,0+fcb.rc+1		;point to record number
+	dad	b
+	mov	a,m			;get rc
+	jmp	sngflt##		;float it
+					;return with lof in (hl)
+					;swlof
+	subttl	filout -- put a character in an output buffer and output if necessary
+;
+; call at filout with [h,l] to be saved on the stack
+; and the character in the high order byte below the [h,l]
+; on the stack. the current data is output if there are 128
+; character stuffed into the data area.
+; filout is normally called from outdo (outchr)
+;
+filout:	pop	h			;get saved [h,l] off stack
+	pop	psw			;get save char off stack
+filou3:	push	h			;save the [h,l]
+	push	psw			;save the character again
+	lhld	ptrfil##		;get the pointer to the file
+	mov	a,m			;what is the mode?
+	cpi	md.sqi			;must be echoing or "extra ignored"
+					;during the reading of a file
+	jz	popaht##		;so ignore this outchr
+	extrn	filofv
+	cpi	md.rnd			;random?
+	jz	filofv			;yes, finish up in fivdk.mac
+	pop	psw			;take the character off
+filou4:	push	d
+	push	b
+	mov	b,h			;setup [b,c] for outseq
+	mov	c,l
+	push	psw			;re-save output character
+	lxi	d,0+ornofs		;point at the number of characters in the
+	dad	d			;buffer currently
+	mov	a,m
+	cpi	datpsc and 377o		;is the buffer full?
+	push	h			;save pointer at character count
+	cz	outseq			;output if full
+	pop	h			;get back data block pointer
+	inr	m			;increment the number of characters
+	mov	c,m			;fetch for offset into data
+	mvi	b,0
+	inx	h			;point at print position
+	public	filupp
+filupp:
+	pop	psw			;get the output character
+	push	psw			;resave for output
+	mov	d,m			;[d]=current position
+	cpi	13			;back to zero position with return?
+	mov	m,b			;assume reset to zero since [b]=0
+	jz	iscrds			;all done updating position
+	adi	224			;set carry for spaces and higher
+	mov	a,d			;[a]=current position
+	adc	b			;add on carry since [b]=0
+	mov	m,a			;update the position in the data block
+iscrds:	dad	b
+	pop	psw			;get the character
+	pop	b
+	pop	d
+	mov	m,a			;save it in the data area
+	pop	h			;get back saved [h,l]
+	ret	
+	subttl	put and get statements
+;	extern	get,put
+	public	fivdpt
+fivdpt:
+	dcx	d			;map record number 1=0 logical
+	dcx	h
+	mov	m,e
+	inx	h
+	mov	m,d			;setup curloc again
+	inx	h			;point to orn
+	mvi	m,datpsc and 377o	;set number in the buffer to datspc
+	inx	h
+	mvi	m,datpsc and 377o
+	pop	h			;[h,l]=text pointer
+	xthl				;save text pointer, [h,l]=start of data block
+	mov	b,h
+	mov	c,l
+;	random file access
+;
+;	(de) = physical block #
+;	(bc) points to file data block
+;	(hl) points to file data block
+	push	h			;save data block pointer
+	lda	cpmvrn			;get version number
+	ora	a
+	jz	rndvr1			;version 1.x
+	lxi	h,0+fcb.rn+1		;offset to random record number
+	dad	b
+	mov	m,e			;set new random record number
+	inx	h
+	mov	m,d
+	inx	h
+	mvi	m,0
+	jmp	rnddon			;finished setting record number
+rndvr1:	lxi	h,0+fcb.ex+1		;point to extent
+	dad	b			;add start of file control block
+	mov	a,e			;get low byte of offset
+	ral				;get high bit in carry
+	mov	a,d			;get high byte
+	ral				;rotate in high byte of low part
+	mov	d,m			;put original extent in [d]
+	cmp	d			;are new and old extent the same?
+	jz	samext			;same extent, dont re-open
+	push	d			;save record number
+	push	psw			;save new extent
+	push	h			;save pointer to extent
+	push	b			;save file pointer
+	lxi	d,dirtmp		;read directory in here for open
+	mvi	c,c.buff		;set cpm buffer address
+	call	cpment
+	pop	d			;get cpm fcb pointer
+	push	d			;save back
+	inx	d			;point to fcb
+	mvi	c,c.clos		;close previous extent (?!)
+	call	cpment			;call cp/m
+	pop	d			;get back fcb pointer
+	pop	h			;restore pointer to extent field
+	pop	psw			;get back new extent
+	mov	m,a			;store new extent
+	push	d
+	inx	d			;point to fcb
+	mvi	c,c.open		;open new extent
+	push	d			;save extent pointer
+	call	cpment			;by calling cp/m
+	pop	d			;restore fcb pointer
+	inr	a			;does extent exist?
+	jnz	rndok			;yes
+	mvi	c,c.make		;make the extent exist
+	call	cpment			;call cp/m
+	inr	a			;room in directory?
+	jz	dertmf			;no
+rndok:	pop	b			;restore [b,c]
+	pop	d			;restore record number
+samext:	lxi	h,0+fcb.nr+1		;next record field
+	dad	b			;point to it
+	mov	a,e			;get low 7 bits of record #
+	ani	127
+	mov	m,a			;set record #
+rnddon:
+	pop	h			;[h,l] point at file data block
+;	(bc) points to file data block
+;	(hl) points to file data block
+	lda	maxtrk##		;get flag for "put" or "get"
+	ora	a
+	jnz	putfin			;do the putting
+	call	readin			;perform the get
+	pop	h			;get the text pointer
+	ret	
+putfin:
+	lxi	h,0+fcb.nr+1		;look at record #
+	dad	b			;[h,l] points to it
+	mov	a,m			;get it
+	cpi	127			;last record in extent?
+	push	psw			;save indicator
+	lxi	d,dirtmp		;save here
+	lxi	h,0+datofs		;point to data
+	dad	b
+	push	d			;save dirtmp pointer
+	push	h			;save data pointer
+	cz	bufmov			;not last extent
+	call	outseq			;output the data
+	pop	d			;restore data pointer
+	pop	h			;restore pointer to dirtmp
+	pop	psw			;restore indicator
+	cz	bufmov			;move sector
+	pop	h			;get the text pointer
+	jmp	finprt##		;zero ptrfil
+bufmov:	push	b			;save [b,c]
+	mvi	b,datpsc		;# of bytes to move
+bufslp:	mov	a,m			;get byte from buffer
+	inx	h			;bump pointer
+	stax	d			;save in dirtmp
+	inx	d			;bump pointer
+	dcr	b
+	jnz	bufslp			;keep moving bytes
+	pop	b			;restore [b,c]
+	ret	
+	subttl	indskc, fillsq, and readin -- for reading characters and buffers
+;
+; get a character from a sequential file in [ptrfil]
+; all registers except [d,e] smashed
+;
+;	'C' set if eof read
+;
+indskb:	push	b			;save char counter
+	push	h			;save [h,l]
+indsk3:	lhld	ptrfil##		;get data block pointer
+	extrn	filifv
+	mov	a,m			;get file mode
+	cpi	md.rnd			;random?
+	jz	filifv			;do input
+	lxi	b,0+nmlofs		;see how many characters left
+	dad	b
+	mov	a,m			;get the number
+	ora	a
+	jz	fillsq			;must go read some more -- if can
+	dcx	h			;point at ornofs
+	mov	a,m			;get original number
+	inx	h			;point at number left again
+	dcr	m			;decrement the number
+	sub	m			;subtract to give offset
+	mov	c,a			;[c]=offset
+	dad	b
+	mov	a,m			;get the data
+	ora	a			;reset carry flag for no eof
+	pop	h			;restore [h,l]
+popbrt:	pop	b			;restore
+	ret	
+fillsq:	dcx	h			;back up pointer
+	mov	a,m			;to ornofs
+	ora	a			;did we hit eof on previous read?
+	jz	fills1			;yes
+	call	read2			;read a record
+;	ora	a		;used to be - was it eof?
+	jnz	indsk3			;return with a char
+fills1:	stc				;carry is eof flag
+	pop	h			;restore [h,l]
+	pop	b			;eof detected
+	mvi	a,eofchr		;return with char=control-z (or =fs)
+	ret	
+read2:	lhld	ptrfil##		;get data pointer
+readin:	push	d
+	mov	d,h			;put fcb pointer in [d,e]
+	mov	e,l
+	inx	d
+	lxi	b,0+locofs		;point to curloc
+	dad	b
+	mov	c,m			;update [curloc]
+	inx	h
+	mov	b,m
+	inx	b
+	dcx	h
+	mov	m,c
+	inx	h
+	mov	m,b
+	inx	h			;point to number read
+	inx	h			;point to nmlofs
+	push	h			;save [h,l]
+; zero out the buffer in case nothing read
+	mvi	c,datpsc		;number of bytes/buffer
+zrrnd:	inx	h			;increment buffer pointer
+	mvi	m,0			;zero it
+	dcr	c			;decrement count
+	jnz	zrrnd			;keep zeroing
+;	read specified record in file
+;
+;	(de) points to fcb
+;
+;	if sw2byt = 0,
+;		(a) = number of bytes read
+;	if sw2byt = 1,
+;		(de) = number of bytes read
+;
+;	if eof, return with (a) or (de) zero and
+;		jump to readi2
+;
+;	returns 'Z' set if eof
+	call	setbuf			;set cpm buffer address
+	lda	cpmrea			;get read code
+	call	accfil			;access file
+	ora	a			;eof?
+	mvi	a,0			;return 0 if eof
+	jnz	readi2			;assume eof if error
+readi1:	mvi	a,datpsc		;otherwise, have 128 bytes
+readi2:	pop	h			;point back to # read
+	mov	m,a			;store number read
+	dcx	h			;point at number originally
+	mov	m,a			;store number read
+	ora	a			;test for eof
+	pop	d			;get [d,e] back
+	ret	
+setbuf:	push	b			;save [b,c]
+	push	d			;save [d,e]
+	push	h			;save [h,l]
+	lxi	h,0+datofs-1		;point to buffer
+	dad	d			;add
+	xchg				;put buffer address in [d,e]
+	mvi	c,c.buff		;set up buffer address
+	call	cpment			;call cpm
+	pop	h			;restore [h,l]
+	pop	d			;restore [d,e]
+	pop	b			;restore [b,c]
+	ret	
+;
+indskc:
+	call	indskb			;get char
+	rc				;if eof, return with end of file character
+	cpi	eofchr			;was it a control-z (or fs)?
+	stc				;set carry
+	cmc				;make sure carry reset
+	rnz				;no
+	push	b			;save [b,c]
+	push	h			;save [h,l]
+	lhld	ptrfil			;get pointer to file data block
+	lxi	b,0+ornofs		;point to number originally in buffer
+	dad	b
+	mvi	m,0			;force it to zero
+	inx	h			;point to number in buffer
+	mvi	m,0			;force to zero.
+	stc				;set eof flag
+	pop	h			;restore [h,l]
+	pop	b			;restore [b,c]
+	ret	
+	subttl	namfil -- scan a file name and name command
+namfil:	call	frmevl##		;evaluate string
+	push	h			;save text pointer
+	call	frestr##		;free up the temp
+	mov	a,m			;get length of string
+	ora	a			;null string?
+	jz	dernmf			;yes, error
+	push	psw			;no "." seen
+	inx	h			;pick up pointer to string
+	mov	e,m			;by getting address
+	inx	h			;out of descriptor
+	mov	h,m
+	mov	l,e			;[h,l] points to string
+	mov	e,a			;save length
+;	(hl) points to filename
+;	(a) = length
+;	(e) = length
+;	((sp)) = no carry
+	cpi	2			;can there be a device?
+	jc	nodev			;no, name too short
+	mov	c,m			;[c]=possible device name
+	inx	h			;point to next char
+	mov	a,m			;get it
+	dcr	e			;decrement count for device name
+	cpi	':'			;colon for device name?
+	jz	chkfil			;yes, so now get file name
+	dcx	h			;back up pointer by one
+	inr	e			;compensate for dcr
+nodev:	dcx	h			;back up pointer
+	inr	e			;increment char count to compensate for next decr
+	mvi	c,'A'-1			;use currently selected drive
+chkfil:	dcr	e			;decrment char count
+	jz	dernmf			;error if no filename
+	mov	a,c			;get drive #
+	sui	'A'-1			;convert to logical number
+	jc	dernmf			;not in range
+	cpi	27			;bigger than 27
+	jnc	dernmf			;not allowed
+	lxi	b,filnam		;where to put name
+	stax	b			;store disk # in fcb
+	inx	b			;point to where first char of file name is stored
+	mvi	d,11-2*0		;length of name
+filinx:	inx	h			;bump pointer
+fillop:	dcr	e			;end of string
+	jm	filspc			;yes, fill rest of field with blanks
+	mov	a,m			;get char
+	cpi	'.'			;extension?
+	jnz	fillo1			;no
+fillo0:	call	fillnm			;yes, fill name with blanks
+	pop	psw			;restore cc's
+	stc				;flag "." seen
+	push	psw			;save cc's back
+	jmp	filinx			;yes, ignore "."
+fillo1:
+	stax	b			;copy char
+	inx	b
+	inx	h
+	dcr	d			;decrment possible count of chars
+	jnz	fillop
+gotnam:
+	xra	a			;clear extent field
+	sta	filnam+12
+	pop	psw			;restore condition codes
+	pop	h			;get back text pointer
+	ret	
+fillnm:	mov	a,d			;get # of chars
+	cpi	11+8*0-2*0		;initial position?
+	jz	dernmf			;dont allow null filename
+	cpi	3			;filled field?
+	jc	dernmf			;no, but 2nd "."
+	rz				;yes, back to loop
+filln1:	mvi	a,' '			;fill with space
+	stax	b
+	inx	b
+	dcr	d
+	jmp	fillnm
+filspc:	inr	d			;chars left in file buffer
+	dcr	d			;test
+	jz	gotnam			;no
+filsp2:	mvi	a,' '			;space
+	stax	b			;store
+	inx	b
+	dcr	d			;filled whole field?
+	jnz	filsp2			;no, more spaces
+	jmp	gotnam			;yes, make sure name ok
+	page
+name::
+	call	namfil			;pick up the old name to use
+	push	h			;save the text pointer
+	lxi	d,dirtmp		;read directory in here
+	mvi	c,c.buff		;set buffer address
+	call	cpment			;call cp/m
+	lxi	d,filnam		;see if original name exists
+	mvi	c,c.open		;by opening
+	call	cpment			;call cp/m
+	inr	a			;does it exist?
+	jz	derfnf			;file not found
+	lxi	h,filna2		;save file name in filna2
+	lxi	d,filnam
+	mvi	b,12+3*0-2*0+2*0+3*0-3*0;set [c]=max file name length
+namrmv:	ldax	d			;get byte from file
+	mov	m,a			;save byte in "old" file name
+	inx	h			;bump pointers
+	inx	d
+	dcr	b
+	jnz	namrmv
+	pop	h			;get the text pointer back
+	call	synchr
+	db	'A'			;make sure "as" is there
+	call	synchr
+	db	'S'			;
+	call	namfil			;read the new name
+	push	h			;save the text pointer
+	lda	filnam			;get disk # of file name
+	lxi	h,filna2		;point to orig file
+	cmp	m			;compare
+	jnz	fcerr##			;disks must be the same
+	lxi	d,filnam		;see if original name exists
+	mvi	c,c.open		;by opening
+	call	cpment			;call cp/m
+	inr	a			;does it exist?
+	extrn	derfae
+	jnz	derfae			;yes
+	mvi	c,c.rena		;rename operation
+	lxi	d,filna2		;point at old name fcb
+	call	cpment			;call cpm
+;	inr	a		;file found?
+;****dont check error return, cp/m has problems****
+;	jz	derfnf		;no
+	pop	h			;restore text pointer
+	ret	
+	subttl	open statement and all directory handling
+open::	lxi	b,finprt		;zero ptrfil when done
+	push	b
+	call	frmevl			;read the file mode
+	push	h			;save the text pointer
+	call	frestr			;free string temp & check string
+	mov	a,m			;make sure its not a null string
+	ora	a
+	jz	derbfm			;if so, "bad file mode"
+	inx	h
+	mov	c,m			;[b,c] point at mode character
+	inx	h
+	mov	b,m
+	ldax	b			;[a]=mode character
+	ani	-1-' '			;force to upper case
+	mvi	d,md.sqo		;assume its "o"
+	cpi	'O'			;is it?
+	jz	havmod			;[d] has correct mode
+	mvi	d,md.sqi		;assume sequential
+	cpi	'I'			;is it?
+	jz	havmod			;[d] says sequential input
+	mvi	d,md.rnd		;must be random
+	cpi	'R'
+	jnz	derbfm			;if not, no match so "bad file mode"
+havmod:	pop	h			;get back the text pointer
+	call	synchr
+	db	44			;skip comma before file number
+	push	d			;save the file mode
+	cpi	'#'			;skip a possible "#"
+	cz	chrgtr##
+	call	getbyt			;read the file number
+	call	synchr
+	db	44			;skip comma before name
+	mov	a,e			;[a]=file number
+	ora	a			;make sure file wasn't zero
+	jz	derbfn			;if so, "bad file number"
+	pop	d			;get back file mode
+prgfil:	mov	e,a			;save file number in [e]
+	push	d			;save the mode in [d]
+					;since program file [a]=0
+	call	filidx			;[b,c] point at file data block
+	jnz	derfao			;if non zero mode, "file already open"
+	pop	d			;[d]=file mode
+	mov	a,d			;file mode to [a]
+	stax	b			;save in file block
+	push	b			;save pointer at file data block
+	push	d			;save back file mode and number
+	call	namfil			;read the name
+	pop	d			;restore file number
+	pop	b			;get back file data block pointer
+	push	b			;save back
+	extrn	varecs
+	push	psw			;save extension flag
+	ldax	b			;get file mode
+	call	varecs			;scan record length field
+	pop	psw			;get back extension flag
+	extrn	temp
+	shld	temp			;save the text pointer for a while
+	jc	prgdot			;if "." seen, dont default extension
+	mov	a,e			;get file number
+	ora	a			;set condition codes
+	jnz	prgdot			;not file 0, dont default file name
+	lxi	h,filnam+9-0-0-2*0	;point to first char of extension
+	mov	a,m			;get it
+	cpi	' '			;blank extension
+	jnz	prgdot			;non-blank extension, dont use default
+	mvi	m,'B'			;set default extension
+	inx	h
+	mvi	m,'A'
+	inx	h
+	mvi	m,'S'			;set ".bas"
+					;bascom
+prgdot:	pop	h			;[h,l]=pointer at file data block
+	shld	ptrfil##		;setup as current file
+	push	h			;save back file data block pointer
+	inx	h			;point to fcb entry
+	lxi	d,filnam		;get pointer to scanned file name
+	mvi	c,12+0+0*3+2*0+3*0	;number of bytes to copy
+opnlp:	ldax	d			;get byte from filnam
+	mov	m,a			;store in file data block
+	inx	d
+	inx	h
+	dcr	c			;decrment count of bytes to move
+	jnz	opnlp			;keep looping
+;	open file
+;
+;	((sp)) points to file data block
+;	((sp)+2) contains the file mode - dmc!x3200!r2e
+	mvi	m,0			;make sure extent field is zero
+	lxi	d,0+20			;point to nr field
+	dad	d
+	mvi	m,0			;set to zero
+	pop	d			;get pointer to file data block back in [d]
+	push	d			;save again for later
+	inx	d
+	call	setbuf			;set buffer address
+	pop	h			;get back file data block ptr
+	push	h			;save back
+	mov	a,m			;get mode
+	cpi	md.sqo			;seqential output?
+	jnz	opnfil			;no, do cpm open call
+	push	d			;save fcb pointer
+	mvi	c,c.dele		;delete existing output file, if any
+	call	cpment			;call cp/m
+	pop	d			;restore fcb pointer
+makfil:	mvi	c,c.make		;create file
+	call	cpment			;call cpm
+	inr	a			;test for too many files
+	jz	dertmf			;that was the case
+	jmp	opnset			;finish setup of file data block
+opnfil:	mvi	c,c.open		;cpm code for open
+	call	cpment			;call cpm
+	inr	a			;file not found
+	jnz	opnset			;found
+	pop	d			;get back file pointer
+	push	d			;save back
+	ldax	d			;get mode of file
+	cpi	md.rnd			;random?
+	jnz	derfnf			;no, seqential input, file not found
+	inx	d			;make [d,e]=fcb pointer
+	jmp	makfil			;make file
+;	((sp)) points to file data block
+;	((sp)+2) contains the file mode - dmc!x3200!r2e
+opnset:	pop	d			;point to file info
+	push	d			;save pointer back
+	lxi	h,0+locofs		;point to curloc
+	dad	d
+	xra	a			;zero curloc in case this file
+					;was just killed
+	mov	m,a
+	inx	h
+	mov	m,a
+	inx	h
+	mov	m,a			;zero number of bytes in the buffer
+	inx	h
+	mov	m,a			;zero print position
+	pop	h			;get pointer at mode
+	mov	a,m			;see what has to be done
+	cpi	md.rnd			;is it random mode?
+	jz	rndfin			;yes random finish up
+	cpi	md.sqi			;if sequential all that is left to do
+	jnz	gtmprt##		;fetch text pointer and done
+;
+; finish up sequential input after finding file
+;
+	call	read2			;read first data block
+opn000:
+	lhld	temp			;get back the text pointer
+	ret	
+rndfin:	lxi	b,0+datofs		;now advance pointer to data
+	dad	b			;by adding proper offset
+	mvi	c,datpsc		;# of bytes to zero
+zrrndt:	mov	m,b
+	inx	h
+	dcr	c
+	jnz	zrrndt
+	jmp	gtmprt			;get text pointer
+	subttl	system (exit) command - return to cpm (or exit to os)
+	public	system
+	public	systme
+system:
+	rnz				;should terminate
+	call	clsall			;close all data files
+systme:	jmp	cpmwrm			;warm start cp/m
+					;bascom
+	subttl	reset command - force directory re-read on all disks
+	public	reset
+reset:	rnz				;should terminate
+	push	h			;save text pointer
+	call	clsall			;close all files
+	mvi	c,c.gdrv		;get drive currently selected
+	call	cpment			;get it in [a]
+	push	psw			;save current drive #
+	mvi	c,c.rest		;do the reset call
+	call	cpment
+	pop	psw			;get drive to select
+	mov	e,a			;into [e]
+	mvi	c,c.sdrv		;set drive
+	call	cpment			;call cpm
+	pop	h			;restore text pointer
+	ret	
+	subttl	kill command
+kill::
+	call	namfil			;scan file name
+	push	h			;save text pointer
+	lxi	d,dirtmp		;read directory in here
+	mvi	c,c.buff		;set buffer address
+	call	cpment			;for cp/m
+	lxi	d,filnam		;try to open file
+	push	d			;save fcb pointer
+	mvi	c,c.open
+	call	cpment
+	inr	a			;file found?
+	pop	d			;get back pointer to fcb
+	push	d			;save back
+	push	psw			;save found flag
+	mvi	c,c.clos		;this may not be nesc.
+	cnz	cpment			;close file
+	pop	psw			;restore found indicator
+	pop	d			;restore fcb pointer
+	jz	derfnf			;yes
+	mvi	c,c.dele		;code for delete
+	call	cpment			;call cpm
+	pop	h			;get back text pointer
+	ret	
+	subttl	files command - list the directory
+; this is the files[<filename>] command
+; which prints the files which match the <filename> wildcard specifier
+; if <filename> is omitted, all the files on the currently selected drive
+; are listed
+	public	files
+files:
+	jnz	filnb			;file name was specified
+	push	h			;save text pointer
+	lxi	h,filnam		;point to file name
+	mvi	m,0			;set current drive
+	inx	h			;bump pointer
+	mvi	c,11+8*0		;match all files
+	call	filqst			;set file name and extension to question marks
+	pop	h			;restore text pointer
+filnb:	cnz	namfil			;scan file name
+	xra	a			;make sure extent is zero
+	sta	filnam+12
+	push	h			;save text pointer
+	lxi	h,filnam+1		;get first char of file name
+	mvi	c,8			;fill name with question marks
+	call	filqs
+	lxi	h,filnam+9		;point to extension
+	mvi	c,3			;3 chars in extension
+	call	filqs			;fill it with qmarks
+	lxi	d,dirtmp		;set buffer to 80 hex
+	mvi	c,c.buff
+	call	cpment
+	lxi	d,filnam		;point to fcb
+	mvi	c,c.sear		;do initial search for file
+	call	cpment			;call cp/m
+	cpi	255			;find first incarnation of file
+	jz	derfnf			;no
+filnxt:	ani	3			;mask off low two bits
+	add	a			;multiply by 32
+	add	a
+	add	a
+	add	a
+	add	a
+	mov	c,a			;put offset in [b,c]
+	mvi	b,0
+	lxi	h,dirtmp+1		;point to directory buffer
+	dad	b			;point to fcb entry in directory
+	mvi	c,11+5*0+11*0		;chars in name
+mornam:	mov	a,m			;get file name char
+	inx	h			;bump pointer
+	call	outdo			;print it
+	mov	a,c			;get  char posit
+	cpi	4+5*0			;about to print extension?
+	jnz	notext			;no
+	mov	a,m			;get first char of extension
+	cpi	' '			;if so, not space
+	jz	prispa			;print space
+	mvi	a,'.'			;print dot
+prispa:	call	outdo
+notext:	dcr	c			;decrement char count
+	jnz	mornam			;more of name to print
+	lda	ttypos##		;get current tty posit
+	adi	13+6*0+9*0+2*0		;space for next name?
+	mov	d,a			;save in d
+	lda	linlen##		;get length of terminal line
+	cmp	d			;compre to current posit
+	jc	nwfiln			;need to force crlf
+	mvi	a,' '			;two spaces between file names
+	call	outdo
+	call	outdo
+					;or three
+nwfiln:
+	cc	crdo			;type crlf
+	lxi	d,filnam		;point at fcb
+	mvi	c,c.sear+1		;search for next entry
+	call	cpment			;search for next incarnation
+	cpi	255			;no more?
+	jnz	filnxt			;more.
+nwfil2:
+	pop	h			;restore text pointer
+	ret	
+filqs:	mov	a,m			;get char
+	cpi	'*'			;wild card?
+	rnz				;no, return
+filqst:	mvi	m,'?'			;store question mark
+	inx	h			;bump pointer
+	dcr	c			;decrement count of qmarks
+	jnz	filqst			;keep saving qmarks
+	ret	
+					;final cr/lf
+					;swfil
+	subttl	dskf function
+	subttl	miscellaneous operating system i/o
+accfil:	push	d			;save fcb address
+	mov	c,a
+	push	b
+	call	cpment
+	pop	b
+	pop	d
+	push	psw
+	lxi	h,0+fcb.rn		;point to random record number
+	dad	d
+	inr	m
+	jnz	accfl1
+	inx	h
+	inr	m
+	jnz	accfl1
+	inx	h
+	inr	m
+accfl1:	mov	a,c			;get back cpm call code
+	cpi	34			;is it random write/
+	jnz	accfl2			;no
+	pop	psw			;get error code and map into 1.4 errors
+	ora	a
+	rz	
+	cpi	5
+	jz	dertmf			;too many files
+	cpi	3
+	mvi	a,1			;turn into i/o error
+	rz	
+	inr	a			;default to disk space full (2)
+	ret	
+accfl2:	pop	psw
+	ret	
+
+	subttl	bascom o.s. dependent data areas
+
+	end	
+

@@ -1,0 +1,433 @@
+	subttl	common file for basic interpreter
+	.sall	
+conto	set	15			;character to supress output (usually control-o)
+dbltrn	set	0			;for double precision transcendentals
+	if2	
+	.printx	/extended/
+	.printx	/lpt/
+	.printx	/cpm disk/
+	.printx	/z80/
+	.printx	/fast/
+	.printx	/5.0 features/
+	.printx	/ansi compatible/
+	endif
+clmwid	set	14			;make comma columns fourteen characters
+datpsc	set	128			;number of data bytes in disk sector
+linln	set	80			;terminal line length 
+lptlen	set	132
+buflen	set	255			;long lines
+namlen	set	40			;maximum length name -- 3 to 127
+numlev	set	0*20+19+2*5		;number of stack levels reserved
+					;by an explicit call to getstk
+strsiz	set	4
+strsiz	set	3
+numtmp	set	3			;number of string temporaries
+numtmp	set	10
+md.rnd	set	3			;the mode number for random files
+md.sqi	set	1			;the mode number for sequential input files
+					;never written into a file
+md.sqo	set	2			;the mode for sequential output files
+					;and program files
+cpmwrm	set	0			;cp/m warm boot addr
+cpment	set	cpmwrm+5		;cp/m bdos call addr
+	cseg	
+trurom	set	0
+	page
+	title	biprtu	basic interpreter print using driver/whg
+	subttl	print using driver
+;
+; come here after the "using" clause in a print statement
+; is recognized. the idea is to scan the using string until
+; the value list is exhausted, finding string and numeric
+; fields to print values out of the list in,
+; and just outputing any characters that aren't part of
+; a print field.
+;
+	extrn	chrgtr,synchr
+	extrn	chkstr,crdo,faclo,fcerr,fretm2,frmchk,frmevl
+	extrn	outdo,pufout,snerr,strout,strprt,usflg
+	extrn	leftus
+	public	prinus
+cstrng	set	134o
+curncy	set	44o			;use dollar sign as default
+prinus:	call	frmchk			;evaluate the "using" string
+	call	chkstr			;make sure it is a string
+	call	synchr
+	db	73o			;must be delimited by a semi-colon
+	xchg				;[d,e]=text pointer
+	lhld	faclo			;get pointer to "using" string descriptor
+	jmp	inius			;dont pop off or look at usflg
+reusst:	lda	usflg			;did we print out a value last scan?
+	ora	a			;set cc's
+	jz	fcerr3			;no, give error
+	pop	d			;[d,e]=pointer to "using" string descriptor
+	xchg				;[d,e]=text pointer
+inius:	push	h			;save the pointer to "using" string descriptor
+	xra	a			;initially indicate there are more
+					;values in the value list
+	sta	usflg			;reset the flag that says values printed
+	cmp	d			;turn the zero flag off
+					;to indicate the value list hasn't ended
+	push	psw			;save flag indicating whether the value
+					;list has ended
+	push	d			;save the text pointer into the value list
+	mov	b,m			;[b]=length of the "using" string
+	ora	b			;see if its zero
+fcerr3:	jz	fcerr			;if so, "illegal function call"
+	inx	h			;[h,l]=pointer at the "using" string's
+	mov	c,m			;data
+	inx	h
+	mov	h,m
+	mov	l,c
+	jmp	prcchr			;go into the loop to scan
+					;the "using" string
+bgstrf:	mov	e,b			;save the "using" string character count
+	push	h			;save the pointer into the "using" string
+	mvi	c,2			;the \\ string field has 2 plus
+					;number of enclosed spaces width
+lpstrf:	mov	a,m			;get the next character
+	inx	h			;advance the pointer at the "using" string
+					;data
+	cpi	cstrng			;the field terminator?
+	jz	isstrf			;go evaluate a string and print
+	cpi	' '			;a field extender?
+	jnz	nostrf			;if not, its not a string field
+	inr	c			;increment the field width
+					;see if there are more characters
+	dcr	b
+	jnz	lpstrf			;keep scanning for the field terminator
+;
+; since  string field wasn't found, the "using" string 
+; character count and the pointer into it's data must
+; be restored and the "\" printed
+;
+nostrf:	pop	h			;restore the pointer into "using" string's data
+	mov	b,e			;restore the "using" string character count
+	mvi	a,cstrng		;restore the character
+;
+; here to print the character in [a] since it wasn't part of any field
+;
+newuch:	call	plsprt			;if a "+" came before this character
+					;make sure it gets printed
+	call	outdo			;print the character that wasn't
+					;part of a field
+prcchr:	xra	a			;set [d,e]=0 so if we dispatch
+	mov	e,a			;some flags are already zeroed
+	mov	d,a			;don't print "+" twice
+plsfin:	call	plsprt			;allow for multiple pluses
+					;in a row
+	mov	d,a			;set "+" flag
+	mov	a,m			;get a new character
+	inx	h
+	cpi	'!'			;check for a single character
+	jz	smstrf			;string field
+	cpi	'#'			;check for the start of a numeric field 
+	jz	numnum			;go scan it
+	cpi	'&'			;see if its a variable length string field
+	jz	varstr			;go print entire string
+	dcr	b			;all the other possibilities
+					;require at least 2 characters
+	jz	reusin			;if the value list is not exhausted
+					;go reuse "using" string
+	cpi	'+'			;a leading "+" ?
+	mvi	a,8			;setup [d] with the plus-flag on in
+	jz	plsfin			;case a numeric field starts
+	dcx	h			;pointer has already been incremented
+	mov	a,m			;get back the current character
+	inx	h			;reincrement the pointer
+	cpi	'.'			;numeric field with trailing digits
+	jz	dotnum			;if so go scan with [e]=
+					;number of digits before the "."=0
+	cpi	'_'			;check for literal character declaration
+	jz	litchr
+	cpi	cstrng			;check for a big string field starter
+	jz	bgstrf			;go see if it really is a string field
+	cmp	m			;see if the next character matches the
+					;current one
+	jnz	newuch			;if not, can't have $$ or ** so all the
+					;possibilities are exhausted
+	cpi	curncy			;is it $$ ?
+	jz	dolrnm			;go set up the flag bit
+	cpi	'*'			;is it ** ?
+	jnz	newuch			;if not, its not part
+					;of a field since all the possibilities
+					;have been tried
+	mov	a,b			;see if the "using" string is long
+	inx	h			;check for $
+	cpi	2			;enough for the special case of
+	jc	notspc			; **$
+	mov	a,m
+	cpi	curncy			;is the next character $ ?
+notspc:	mvi	a,32			;set the asterisk bit
+	jnz	spcnum			;if it not the special case, don't
+					;set the dollar sign flag
+	dcr	b			;decrement the "using" string character count
+					;to take the $ into consideration
+	inr	e			;increment the field width for the
+					;floating dollar sign
+	db	376q			;"cpi" over the next byte
+					;mvi si,  in 8086
+dolrnm:	xra	a			;clear [a]
+	adi	16			;set bit for floating dollar sign flag
+	inx	h			;point beyond the special characters
+spcnum:	inr	e			;since two characters specify
+					;the field size, initialize [e]=1
+	add	d			;put new flag bits in [a]
+	mov	d,a			;into [d]. the plus flag may have
+					;already been set
+numnum:	inr	e			;increment the number of digits before
+					;the decimal point
+	mvi	c,0			;set the number of digits after
+					;the decimal point = 0
+	dcr	b			;see if there are more characters
+	jz	endnus			;if not, we are done scanning this
+					;numeric field
+	mov	a,m			;get the new character
+	inx	h			;advance the pointer at the "using" string data
+	cpi	'.'			;do we have trailing digits?
+	jz	aftdot			;if so, use special scan loop
+	cpi	'#'			;more leading digits ?
+	jz	numnum			;increment the count and keep scanning
+	cpi	54o			;does he want a comma
+					;every three digits?
+	jnz	finnum			;no more leading digits, check for ^^^
+	mov	a,d			;turn on the comma bit
+	ori	64
+	mov	d,a
+	jmp	numnum			;go scan some more
+;
+; here when a "." is seen in the "using" string
+; it starts a numeric field if and only if
+; it is followed by a "#"
+;
+dotnum:	mov	a,m			;get the character that follows
+	cpi	'#'			;is this a numeric field?
+	mvi	a,'.'			;if not, go back and print "."
+	jnz	newuch
+	mvi	c,1			;initialize the number of
+					;digits after the decimal point
+	inx	h
+aftdot:	inr	c			;increment the number of digits
+					;after the decimal point
+	dcr	b			;see if the "using" string has more
+	jz	endnus			;characters, and if not, stop scanning
+	mov	a,m			;get the next character
+	inx	h
+	cpi	'#'			;more digits after the decimal point?
+	jz	aftdot			;if so, increment the count and keep
+					;scanning
+;
+; check for the "^^^^" that indicates scientific notation
+;
+finnum:	push	d			;save [d]=flags and [e]=leading digits
+	lxi	d,notsci		;place to go if its not scientific
+	push	d			;notation
+	mov	d,h			;remember [h,l] in case
+	mov	e,l			;its not scientific notation
+	cpi	'^'			;is the first character "^" ?
+	rnz	
+	cmp	m			;is the second character "^" ?
+	rnz	
+	inx	h
+	cmp	m			;is the third character "^" ?
+	rnz	
+	inx	h
+	cmp	m			;is the fourth character "^" ?
+	rnz	
+	inx	h
+	mov	a,b			;were there enough characters for "^^^^"
+	sui	4			;it takes four
+	rc	
+	pop	d			;pop off the notsci return address
+	pop	d			;get back [d]=flags [e]=leading digits
+	mov	b,a			;make [b]=new character count
+	inr	d			;turn on the scientific notation flag
+	inx	h
+	db	312o			;skip the next two bytes with "jz"
+notsci:	xchg				;restore the old [h,l]
+	pop	d			;get back [d]=flags [e]=leading digits
+endnus:	mov	a,d			;if the leading plus flag is on
+	dcx	h
+	inr	e			;include leading "+" in number of digits
+	ani	8			;don't check for a trailing sign
+	jnz	endnum			;all done with the field if so
+					;if there is a leading plus
+	dcr	e			;no leading plus so don't increment the
+					;number of digits before the decimal point
+	mov	a,b
+	ora	a			;see if there are more characters
+	jz	endnum			;if not, stop scanning
+	mov	a,m			;get the current character
+	sui	'-'			;trail minus?
+	jz	sgntrl			;set the trailing sign flag
+	cpi	'+'-'-'			;a trailing plus?
+	jnz	endnum			;if not, we are done scanning
+	mvi	a,8			;turn on the positive="+" flag
+sgntrl:	adi	4			;turn on the trailing sign flag
+	add	d			;include with old flags
+	mov	d,a
+	dcr	b			;decrement the "using" string character
+					;count to account for the trailing sign
+endnum:	pop	h			;[h,l]=the old text pointer
+	pop	psw			;pop off flag that says whether there
+					;are more values in the value list
+	jz	fldfin			;if not, we are done with the "print"
+	push	b			;save [b]=# of characters remaining in
+					;"using" string and [c]=trailing digits
+	push	d			;save [d]=flags and [e]=leading digits
+	call	frmevl			;read a value from the value list
+	pop	d			;[d]=flags & [e]=# of leading digits
+	pop	b			;[b]=# character left in "using" string
+					;[c]=number of trailing digits
+	push	b			;save [b] for entering scan again
+	push	h			;save the text pointer
+	mov	b,e			;[b]=# of leading digits
+	mov	a,b			;make sure the total number of digits
+	add	c			;does not exceed twenty-four
+	cpi	25
+	jnc	fcerr			;if so, "illegal function call"
+	mov	a,d			;[a]=flag bits
+	ori	128			;turn on the "using" bit
+	call	pufout			;print the value
+	call	strout			;actually print it
+fnstrf:	pop	h			;get back the text pointer
+	dcx	h			;see what the terminator was
+	call	chrgtr
+	stc				;set flag that crlf is desired
+	jz	crdnus			;if it was a end-of-statement
+					;flag that the value list ended
+					;and that  crlf should be printed
+	sta	usflg			;flag that value has been printed.
+					;doesnt matter if zero set, [a]
+					;must be non-zero otherwise
+	cpi	73o			;a semi-colon?
+	jz	semusn			;a legal delimiter
+	cpi	54o			;a comma ?
+	jnz	snerr			;the delimeter was illegal
+semusn:	call	chrgtr			;is there another value?
+crdnus:	pop	b			;[b]=characters remaining in "using" string
+	xchg				;[d,e]=text pointer
+	pop	h			;[h,l]=point at the "using" string
+	push	h			;descriptor. resave it.
+	push	psw			;save the flag that indicates
+					;whether or not the value list terminated
+	push	d			;save the text pointer
+;
+; since frmevl may have forced garbage collection
+; we have to use the number of characters already scanned
+; as an offset to the pointer to the "using" string's data
+; to get a new pointer to the rest of the characters to
+; be scanned
+;
+	mov	a,m			;get the "using" string's length
+	sub	b			;subtract the number of characters
+					;already scanned
+	inx	h			;[h,l]=pointer at
+	mov	c,m			;the "using" string's
+	inx	h			;string data
+	mov	h,m
+	mov	l,c
+	mvi	d,0			;setup [d,e] as a double byte offset
+	mov	e,a
+	dad	d			;add on the offset to get
+					;the new pointer
+chkusi:	mov	a,b			;[a]=the number of characters left to scan
+	ora	a			;see if there are any left
+	jnz	prcchr			;if so, keep scanning
+	jmp	finusi			;see if there are more values
+reusin:	call	plsprt			;print a "+" if necessary
+	call	outdo			;print the final character
+finusi:	pop	h			;pop off the text pointer
+	pop	psw			;pop off the indicator of whether or not
+					;the value list has ended
+	jnz	reusst			;if not, reuse the "using" string
+fldfin:	cc	crdo			;if not comma or semi-colon
+					;ended the value list
+					;print a crlf
+	xthl				;save the text pointer
+					;[h,l]=point at the "using" string's
+					;descriptor
+	call	fretm2			;finally free it up
+	pop	h			;get back the text pointer
+	extrn	finprt
+	jmp	finprt			;zero [ptrfil]
+;
+; here to handle a literal character in the using string preceded
+; by "_"
+;
+litchr:	call	plsprt			;print previous "+" if any
+	dcr	b			;decrement count for actual character
+	mov	a,m			;fetch literal character
+	inx	h
+	call	outdo			;output literal character
+	jmp	chkusi			;go see if using string ended
+;
+; here to handle variable length string field specified with "&"
+;
+varstr:	mvi	c,255			;set length to maximum possible
+	jmp	isstr1
+;
+; here when the "!" indicating a single character
+; string field has been scanned
+;
+smstrf:	mvi	c,1			;set the field width to 1
+	db	76q			;skip next byte with a "mvi a,"
+isstrf:	pop	psw			;get rid of the [h,l] that was being
+					;saved in case this wasn't a string field
+isstr1:	dcr	b			;decrement the "using" string character count
+	call	plsprt			;print a "+" if one came before the field
+	pop	h			;take off the text pointer
+	pop	psw			;take of the flag which says
+					;whether there are more values in the
+					;value list
+	jz	fldfin			;if there are no more values
+					;then we are done
+	push	b			;save [b]=number of characters yet to
+					;be scanned in "using" string
+	call	frmevl			;read a value
+	call	chkstr			;make sure its a string
+	pop	b			;[c]=field width
+	push	b			;resave [b]
+	push	h			;save the text pointer
+	lhld	faclo			;get a pointer to the descriptor
+	mov	b,c			;[b]=field width
+	mvi	c,0			;set up for "left$"
+	push	b			;save the field width for space padding
+	call	leftus			;truncate the string to [b] characters
+	call	strprt			;print the string
+	lhld	faclo			;see if it needs to be padded
+	pop	psw			;[a]=field width
+	inr	a			;if field length is 255 must be "&" so
+	jz	fnstrf			;dont print any trailing spaces
+	dcr	a
+	sub	m			;[a]=amount of padding needed
+	mov	b,a
+	mvi	a,' '			;setup the print character
+	inr	b			;dummy increment of number of spaces
+uprtsp:	dcr	b			;see if more spaces
+	jz	fnstrf			;no, go see if the value list ended and
+					;resume scanning
+	call	outdo			;print a space
+	jmp	uprtsp			;and loop printing them
+;
+; when a "+" is detected in the "using" string
+; if a numeric field follows a bit in [d] should
+; be set, otherwise "+" should be printed.
+; since deciding whether a numeric field follows is very
+; difficult, the bit is always set in [d].
+; at the point it is decided a character is not part
+; of a numeric field, this routine is called to see
+; if the bit in [d] is set, which means
+; a plus preceded the character and should be
+; printed.
+;
+plsprt:	push	psw			;save the current character
+	mov	a,d			;check the plus bit
+	ora	a			;since it is the only thing that could
+					;be turned on
+	mvi	a,'+'			;setup to print the plus
+	cnz	outdo			;print it if the bit was set
+	pop	psw			;get back the current character
+	ret	
+	end	
+

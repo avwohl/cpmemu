@@ -1,0 +1,564 @@
+	subttl	common file for basic interpreter
+	.sall	
+conto	set	15			;character to supress output (usually control-o)
+dbltrn	set	0			;for double precision transcendentals
+	if2	
+	.printx	/extended/
+	.printx	/lpt/
+	.printx	/cpm disk/
+	.printx	/z80/
+	.printx	/fast/
+	.printx	/5.0 features/
+	.printx	/ansi compatible/
+	endif
+clmwid	set	14			;make comma columns fourteen characters
+datpsc	set	128			;number of data bytes in disk sector
+linln	set	80			;terminal line length 
+lptlen	set	132
+buflen	set	255			;long lines
+namlen	set	40			;maximum length name -- 3 to 127
+numlev	set	0*20+19+2*5		;number of stack levels reserved
+					;by an explicit call to getstk
+strsiz	set	4
+strsiz	set	3
+numtmp	set	3			;number of string temporaries
+numtmp	set	10
+md.rnd	set	3			;the mode number for random files
+md.sqi	set	1			;the mode number for sequential input files
+					;never written into a file
+md.sqo	set	2			;the mode for sequential output files
+					;and program files
+cpmwrm	set	0			;cp/m warm boot addr
+cpment	set	cpmwrm+5		;cp/m bdos call addr
+	cseg	
+trurom	set	0
+	page
+	title	fivdsk 5.0 features - variable length records, protected files /p. allen
+	.sall	
+	extrn	dcompr
+	extrn	chrgtr,synchr
+;
+;the 5.0 disk code is essentially an extra level of buffering
+;for random disk i/o files. sequential i/o is not
+;affected by the 5.0 code. great care has been taken to
+;insure compatibility with existing code to support diverse
+;operating systems. the 5.0 disk code has its
+;own data structure for handling the variable length
+;records in random files. this data structure sits right after
+;the regular data block for the file and consumes an amount of 
+;memory equal to  maxrec (the maximum allowed record size) plus
+;9 bytes.
+;
+;here is the content of the data block:
+;
+;fd.siz size 2			;variable length record size default 128
+;fd.phy size 2			;current physical record #
+;fd.log size 2			;current logical record number
+;fd.chg size 1			;future flag for accross block prints etc.
+;fd.ops size 2			;output print position for print, input, write
+;fd.dat size fd.zsiz		;actual field data buffer
+;				;size is fd.siz bytes long
+;
+;date				fix
+;----				---
+;8/6/179				make put, get increment loc correctly
+;8/14/1979			puuut in basic cococompiler switch (main source)
+;%
+	extrn	datofs,derbfm,derbrn,fcerr,maxtrk,fivdpt,locofs
+	extrn	fd.siz,fd.phy,fd.log,fd.chg,fd.ops,fd.dat
+	extrn	derfov,nmlofs
+	extrn	filscn,proflg,curlin,sincon,atncon,gtmprt
+	extrn	temp,txttab,vartab,snerr,maxrec
+	page
+	subttl	varecs - variable record scan for open
+	public	varecs,tempb,filofv,filifv,cmpfbc
+;	enter varecs with file mode in [a]
+varecs:	cpi	md.rnd			;random?
+	rnz				;no, give error later if he gave record length
+	dcx	h			;back up pointer
+	call	chrgtr			;test for eol
+	push	d			;save [d,e]
+	lxi	d,0+datpsc		;assume record length=datpsc
+	jz	notsep			;no other params for open
+	push	b			;save file data block pointer
+	extrn	intidx
+	call	intidx			;get record length
+	pop	b			;get back file data block
+notsep:	push	h			;save text pointer
+	lhld	maxrec			;is size ok?
+	call	dcompr
+	jc	fcerr			;no, give error
+	lxi	h,0+fd.siz		;stuff into data block
+	dad	b
+	mov	m,e
+	inx	h
+	mov	m,d
+	xra	a			;clear other bytes in data block
+	mvi	e,7			;# of bytes to clear
+zofivb:	inx	h			;increment pointer
+	mov	m,a			;clear byte
+	dcr	e			;count down
+	jnz	zofivb			;go back for more
+	pop	h			;text pointer 
+	pop	d			;restore [d,e]
+	ret	
+	page
+	subttl	put and get statements
+	public	get,put
+put:	db	366o			;"ori"to set non-zero flag
+get:	xra	a			;set zero
+	sta	pgtflg			;save flag
+	call	filscn			;get pointer at file data block
+	cpi	md.rnd			;must be a random file
+	jnz	derbfm			;if not, "bad file mode"
+	push	b			;save pointer at file data block
+	push	h			;save text pointer
+	lxi	h,0+fd.log		;fetch current logical posit
+	dad	b
+	mov	e,m
+	inx	h
+	mov	d,m
+	inx	d			;compensate for "dcx d" when call intidx
+	xthl				;save data block pointer and get text pointer
+	mov	a,m
+	cpi	44			;is there a record number
+	cz	intidx			;read it if there, 1-indexed
+	dcx	h			;make sure statement ends
+	call	chrgtr
+	jnz	snerr
+	xthl				;save text pointer, get data block pointer
+	mov	a,e			;get record #
+	ora	d			;make sure its not zero
+	jz	derbrn			;if so, "bad record number"
+	dcx	h
+	mov	m,e
+	inx	h
+	mov	m,d
+	dcx	d
+	pop	h			;get back text pointer 
+	pop	b
+	push	h			;save back text pointer 
+	push	b			;pointer to file data block
+	lxi	h,0+fd.ops		;zero output file posit
+	dad	b
+	xra	a
+	mov	m,a
+	inx	h
+	mov	m,a
+	lxi	h,0+fd.siz		;get logical record size in [d,e]
+	dad	b
+	mov	a,m
+	inx	h
+	mov	h,m
+	mov	l,a
+	xchg				;record size to [d,e], posit in [h,l]
+	push	d			;save record size (count of bytes)
+; record size in [d,e]
+; logical position in [h,l]
+; this code computes physical record # in [h,l]
+; offset into buffer in [d,e]
+	push	h			;save logical posit
+	lxi	h,0+datpsc		;get sector size
+	call	dcompr			;compare the two
+	pop	h			;restore logical posit
+	jnz	ntlsap			;if record size=sector size, done
+	lxi	d,0			;set offset to zero
+	jmp	donclc			;done with calculations
+ntlsap:	mov	b,d			;copy record size to [b,c]
+	mov	c,e
+	mvi	a,20o			;16 by 16 multiply
+	xchg				;put multiplier in [d,e]
+	lxi	h,0			;set both parts of product to zero
+	push	h			;2nd part is on stack
+frmul1:	dad	h
+	xthl	
+	jnc	fnocry
+	dad	h
+	inx	h
+	jmp	fnocy0
+fnocry:	dad	h
+fnocy0:	xthl	
+	xchg	
+	dad	h			;rotate [d,e] left one
+	xchg	
+	jnc	fnocy2			;add in [b,c] if ho=1
+	dad	b
+	xthl	
+	jnc	fnoinh
+	inx	h
+fnoinh:	xthl	
+fnocy2:	dcr	a			;are we done multiplying
+	jnz	frmul1			;no, go back for next bit of product
+; now divide by the number of bytes in a sector
+	iff	datpsc-256
+	mov	e,l			;remainder is just low byte
+	mvi	d,0			;of which ho is 0
+	mov	l,h			;annd record # is shifted down
+	pop	b			;get most sig. byte of record #
+	mov	h,c			;set record # to it
+	mov	a,b			;make sure rest=0
+	ora	a
+	jnz	fcerr
+	endif				;uh-oh
+	if	datpsc-128
+	if	datpsc-256
+	pop	d			;get high word of dividend in [d,e]
+	lxi	b,0			;set dividend to zero.
+kepsub:	push	b			;save dividend
+	lxi	b,0-datpsc		;get divisor (# of bytes sector)
+	dad	b			;subtract it
+	jc	guarcy			;carry from low bytes implies cary from high
+	xchg				;subtract -1 from high byte
+	lxi	b,0-1
+	dad	b
+	xchg				;put result back where it belongs
+guarcy:	pop	b			;restore dividend
+	jnc	dondiv			;finished
+	inx	b			;add one to it
+	mov	a,b			;see if overflowed
+	ora	c
+	jnz	kepsub			;keep at it till done
+	jmp	fcerr			;yes give error
+dondiv:	push	b			;save dividend
+	lxi	b,0+datpsc		;correct for one too many subtraction
+	dad	b			;by adding divisor back in
+	pop	d			;dividend ends up in [d,e], remainder in [h,l]
+	xchg	
+	endif
+	endif				;put values in right regs for rest of code
+	iff	datpsc-128
+	mov	a,l			;get low byte of result
+	ani	127			;get rid of high bit
+	mov	e,a			;this is it
+	mvi	d,0			;set high byte of remainder to zero
+	pop	b			;get high word of product
+	mov	a,l			;get msb of low word
+	mov	l,h
+	mov	h,c
+	dad	h			;make space for it
+	jc	fcerr			;uh-oh record # to big!
+	ral				;is it set?
+	jnc	doninh			;not set
+	inx	h			;copy it into low bit
+doninh:	mov	a,b			;get high byte of record #
+	ora	a			; is it non-zero
+	jnz	fcerr
+	endif				;bad
+donclc:
+; at this point, record #is in [h,l]
+; offset into record in [d,e]
+; stack:
+; count of bytes to read or write
+; data block
+; text pointer
+; return address
+	shld	record			;save record size
+	pop	h			;get count
+	pop	b			;pointer to file data block
+	push	h			;save back count
+	lxi	h,0+fd.dat		;point to field buffer
+	dad	b			;add start of data block
+	shld	lbuff			;save pointer to field buffer
+nxtopd:	lxi	h,0+datofs		;point to physical buffer
+	dad	b			;add file block offset
+	dad	d
+	shld	pbuff			;save
+	pop	h			;get count
+	push	h			;save count
+	lxi	h,0+datpsc		;[h,l]=datpsc-offset
+	mov	a,l
+	sub	e
+	mov	l,a
+	mov	a,h
+	sbb	d
+	mov	h,a
+	pop	d			;get back count (destroy offset)
+	push	d			;save count
+	call	dcompr			;which is smaller, count or datpsc-offset?
+	jc	datmof			;the latter
+	mov	h,d			;copy count into bytes
+	mov	l,e
+datmof:	lda	pgtflg			;put or get
+	ora	a			;set cc's
+	jz	fivdrd			;was read
+	lxi	d,0+datpsc		;if bytes .lt. datpsc then read(sector)
+	call	dcompr
+	jnc	nofvrd			;(idea-if writing full buffer, no need to read)
+	push	h			;save bytes
+	call	getsub			;read record.
+	pop	h			;bytes
+nofvrd:	push	b
+	mov	b,h
+	mov	c,l
+	lhld	pbuff
+	xchg	
+	lhld	lbuff			;get ready to move bytes between buffers
+	call	fdmov			;move bytes to physical buffer
+	shld	lbuff			;store updated pointer
+	mov	d,b			;count to [d,e]
+	mov	e,c
+	pop	b			;restore fdb pointer
+	call	putsub			;do write
+nxfvbf:	pop	h			;count
+	mov	a,l			;make count correct
+	sub	e
+	mov	l,a
+	mov	a,h
+	sbb	d
+	mov	h,a
+	ora	l			;is count zero?
+	lxi	d,0			;set offset=0
+	push	h			;save count
+	lhld	record
+	inx	h			;increment it
+	shld	record			;save back
+	jnz	nxtopd			;keep working on it
+	pop	h			;get rid of count
+	pop	h			;restore text pointer
+	ret				;done
+; read code
+; [h,l]=bytes
+; [d,e]=count
+fivdrd:	push	h			;save bytes
+	call	getsub			;do read
+	pop	h			;get back bytes
+	push	b
+	mov	b,h
+	mov	c,l
+	lhld	lbuff			;point to logical buffer
+	xchg	
+	lhld	pbuff
+	call	fdmov
+	xchg				;get pointer to field buffer in [h,l]
+	shld	lbuff			;save back updated logical buffer
+	mov	d,b			;count to [d,e]
+	mov	e,c
+	pop	b
+	jmp	nxfvbf
+putsub:	db	366q
+getsub:	xra	a
+	sta	maxtrk			;get/put fflag
+	push	b
+	push	d
+	push	h
+	lhld	record
+	xchg	
+	lxi	h,0+fd.phy		;point to physical record #
+	dad	b			;add offset to file buffer
+	push	h			;save this pointer
+	mov	a,m			;get current phys. rec #
+	inx	h
+	mov	h,m
+	mov	l,a
+	inx	d
+	call	dcompr			;do we already have record in buffer
+	pop	h			;restore pointer
+	mov	m,e
+	inx	h
+	mov	m,d			;store new record number
+	jnz	ntreds			;curent and previos record numbers are different
+	lda	maxtrk			;trying to do read?
+	ora	a
+	jz	subret			;if trying to read and record already
+					;in buffer, do nothing
+ntreds:	lxi	h,subret		;where to return to
+	push	h
+	push	b			;file data block
+	push	h			;dummy text pointer
+	lxi	h,0+locofs+1		;where [h,l] is expected to be
+	dad	b
+	jmp	fivdpt			;call old put/get
+subret:	pop	h
+	pop	d
+	pop	b
+	ret				;restore all regs and return to caller
+; move bytes from [h,l] to [d,e] [b,c] times
+fdmov:	push	b			;save count
+fdmov1:	mov	a,m			;get byte
+	stax	d			;store it
+	inx	h
+	inx	d
+	dcx	b			;decrement count
+	mov	a,b			;gone to zero?
+	ora	c
+	jnz	fdmov1			;go back for more
+	pop	b			;return with count in [d,e]
+	ret	
+filofv:	pop	psw			;get character off stack
+	push	d			;save [d,e]
+	push	b			;save [b,c]
+	push	psw			;save back char
+	mov	b,h			;[b,c]=file data block
+	mov	c,l
+	call	cmpfps			;any room in buffer
+	jz	derfov			;no
+	call	setfpi			;save new position
+	lxi	h,0+fd.dat-1		;index into data buffer
+	dad	b			;add start of file control block
+	dad	d			;add offset into buffer
+	pop	psw			;get back char
+	mov	m,a			;store in buffer
+	push	psw			;save char
+	lxi	h,0+nmlofs		;set up [h,l] to point at print posit
+	dad	b
+	mov	d,m			;get present position
+	mvi	m,0			;assume set it to zero
+	cpi	13			;is it <cr>?
+	jz	fiscr			;yes
+	adi	224			;set carry for spaces & higher
+	mov	a,d			;add one to current posit
+	aci	0
+	mov	m,a
+fiscr:	pop	psw			;restore all regs
+	pop	b
+	pop	d
+	pop	h
+	ret	
+filifv:	push	d			;save [d,e]
+	call	cmpfbc			;compare to present posit
+	jz	derfov			;return with null 
+	call	setfpi			;set new position
+	lxi	h,0+fd.dat-1		;point to data
+	dad	b
+	dad	d
+	mov	a,m			;get the byte
+	ora	a			;clear carry (no eof)
+	pop	d			;restore [d,e]
+	pop	h			;restore [h,l]
+	pop	b			;restore [b,c]
+	ret	
+getfsz:	lxi	h,0+fd.siz		;point to record size
+	jmp	getfp1			;continue
+getfps:	lxi	h,0+fd.ops		;point to output position
+getfp1:	dad	b			;add offset into buffer
+	mov	e,m			;get value
+	inx	h
+	mov	d,m
+	ret	
+setfpi:	inx	d			;increment current posit
+setfps:	lxi	h,0+fd.ops		;point to output position
+	dad	b			;add file control block address
+	mov	m,e
+	inx	h
+	mov	m,d
+	ret	
+cmpfbc:	mov	b,h			;copy file data block into [b,c]
+	mov	c,l
+cmpfps:	call	getfps			;get present posit
+	push	d			;save it
+	call	getfsz			;get file size
+	xchg				;into [h,l]
+	pop	d			;get back posit
+	call	dcompr			;see if were at end
+	ret	
+	page
+	subttl	protected files
+	public	prolod
+	extrn	binpsv
+	public	prosav
+prosav:	call	chrgtr			;get char after "s"
+	shld	temp			;save text pointer
+	extrn	sccptr
+	call	sccptr			;get rid of goto pointers
+	call	pencod			;encode binary
+	mvi	a,254			;put out 254 at start of file
+	call	binpsv			;do save
+	call	pdecod			;re-decode binary
+	jmp	gtmprt			;back to newstt
+n1	set	11			;number of bytes to use from atncon
+n2	set	13			;number of bytes to use from sincon
+	public	pencod
+pencod:	lxi	b,0+n1+n2*256		;initialize both counters
+	lhld	txttab			;starting point
+	xchg				;into [d,e]
+encdbl:	lhld	vartab			;at end?
+	call	dcompr			;test
+	rz				;yes
+	lxi	h,atncon		;point to first scramble table
+	mov	a,l			;use [c] to index into it
+	add	c
+	mov	l,a
+	mov	a,h
+	aci	0
+	mov	h,a
+	ldax	d			;get byte from program
+	sub	b			;subtract counter for no reason
+	xra	m			;xor entry
+	push	psw			;save result
+	lxi	h,sincon		;calculate offset into sincon using [b]
+	mov	a,l
+	add	b
+	mov	l,a
+	mov	a,h
+	aci	0
+	mov	h,a
+	pop	psw			;get back current byte
+	xra	m			;xor on this one too
+	add	c			;add counter for randomness
+	stax	d			;store back in program
+	inx	d			;incrment pointer
+	dcr	c			;decrment first table index
+	jnz	cntzer			;still non-zero
+	mvi	c,n1			;re-initialize counter 1
+cntzer:	dcr	b			;dedecrement counter-2
+	jnz	encdbl			;still non-zero, go for more
+	mvi	b,n2			;re-initialize counter 2
+	jmp	encdbl			;keep going until done
+prolod:
+pdecod:	lxi	b,0+n1+n2*256		;initialize both counters
+	lhld	txttab			;starting point
+	xchg				;into [d,e]
+decdbl:	lhld	vartab			;at end?
+	call	dcompr			;test
+	rz				;yes
+	lxi	h,sincon		;calculate offset into sincon using [b]
+	mov	a,l
+	add	b
+	mov	l,a
+	mov	a,h
+	aci	0
+	mov	h,a
+	ldax	d			;get byte from program
+	sub	c			;subtract counter for randomness
+	xra	m			;xor on this one too
+	push	psw			;save result
+	lxi	h,atncon		;point to first scramble table
+	mov	a,l			;use [c] to index into it
+	add	c
+	mov	l,a
+	mov	a,h
+	aci	0
+	mov	h,a
+	pop	psw			;get back current byte
+	xra	m			;xor entry
+	add	b			;add counter for no reason
+	stax	d			;store back in program
+	inx	d			;increment pointer
+	dcr	c			;decrment first table index
+	jnz	cntzr2			;still non-zero
+	mvi	c,n1			;re-initialize counter 1
+cntzr2:	dcr	b
+	jnz	decdbl			;decrement counter-2, still non-zero, go for more
+	mvi	b,n2			;re-initialize counter 2
+	jmp	decdbl			;keep going until done
+	public	prochk,prodir
+prodir:	push	h			;save [h,l]
+	lhld	curlin			;get current line #
+	mov	a,h			;direct?
+	ana	l
+	pop	h			;restore [h,l]
+	inr	a			;if a=0, direct
+	rnz	
+prochk:	push	psw			;save flags
+	lda	proflg			;is this a protected file?
+	ora	a			;set cc's
+	jnz	fcerr			;yes, give error
+	pop	psw			;restore flags
+	ret	
+tempb:					;used by field
+record:	ds	2			;record #
+lbuff:	ds	2			;logical buffer address
+pbuff:	ds	2			;physical buffer address
+pgtflg:	ds	1			;put/get flag (non zero=put)
+	end	
+

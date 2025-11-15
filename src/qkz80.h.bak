@@ -1,0 +1,82 @@
+#include "qkz8080_mem.h"
+#include "qkz8080_reg_set.h"
+#include "qkz8080_trace.h"
+
+class qkz8080 {
+ public:
+  enum {
+    regp_BC=0,
+    regp_DE=1,
+    regp_HL=2,
+    regp_SP=3,
+    regp_AF=4,
+    regp_PC=5,
+  };
+
+  enum {
+    reg_B=0,
+    reg_C=1,
+    reg_D=2,
+    reg_E=3,
+    reg_H=4,
+    reg_L=5,
+    reg_M=6,
+    reg_A=7,
+    reg_FLAGS=8,
+  };
+
+  qkz8080_reg_set regs;
+  qkz8080_cpu_mem mem;
+  qkz8080_trace *trace;
+  bool qkz8080_debug;
+
+  void set_debug(bool new_debug) {
+    qkz8080_debug=new_debug;
+  }
+  
+  char *get_mem(void) {
+    return mem.get_mem();
+  }
+
+  void set_trace(qkz8080_trace *new_trace) {
+    trace=new_trace;
+  }
+  
+  qkz8080();
+
+  void cpm_setup_memory(void);
+
+  qkz8080_uint8 compute_sum_half_carry(qkz8080_uint16 rega,
+					       qkz8080_uint16 dat,
+					       qkz8080_uint16 carry);
+
+  qkz8080_uint8 compute_subtract_half_carry(qkz8080_uint16 rega,
+						    qkz8080_uint16 diff,
+						    qkz8080_uint16 dat,
+						    qkz8080_uint16 carry);
+
+  void halt(void);
+  const char *name_condition_code(qkz8080_uint8 cond);
+  const char *name_reg8(qkz8080_uint8 reg8);
+  const char *name_reg16(qkz8080_uint8 rpair);
+
+  qkz8080_uint8 pull_byte_from_opcode_stream(void);
+  qkz8080_uint16 pull_word_from_opcode_stream(void);
+  void setup_parity(void);
+  void push_word(qkz8080_uint16 aword); 
+  qkz8080_uint16 read_word(qkz8080_uint16 addr);
+  qkz8080_uint16 pop_word(void);
+
+  qkz8080_uint8 fetch_carry_as_int(void);
+  qkz8080_uint8 get_reg8(qkz8080_uint8 a);
+  qkz8080_uint16 get_reg16(qkz8080_uint8 a);
+  void set_reg16(qkz8080_uint16 a,qkz8080_uint8 rp);
+  void set_reg8(qkz8080_uint8 dat,qkz8080_uint8 rnum);
+  void set_A(qkz8080_uint8 dat) {
+    set_reg8(dat,reg_A);
+  }
+
+  void write_2_bytes(qkz8080_uint16 store_me,qkz8080_uint16 location);
+  void execute(void);
+};
+

@@ -1,0 +1,4056 @@
+	subttl	common file for basic interpreter
+	.sall	
+conto	set	15			;character to supress output (usually control-o)
+dbltrn	set	0			;for double precision transcendentals
+	if2	
+	.printx	/extended/
+	.printx	/lpt/
+	.printx	/cpm disk/
+	.printx	/z80/
+	.printx	/fast/
+	.printx	/5.0 features/
+	.printx	/ansi compatible/
+	endif
+clmwid	set	14			;make comma columns fourteen characters
+datpsc	set	128			;number of data bytes in disk sector
+linln	set	80			;terminal line length 
+lptlen	set	132
+buflen	set	255			;long lines
+namlen	set	40			;maximum length name -- 3 to 127
+numlev	set	0*20+19+2*5		;number of stack levels reserved
+					;by an explicit call to getstk
+strsiz	set	4
+strsiz	set	3
+numtmp	set	3			;number of string temporaries
+numtmp	set	10
+md.rnd	set	3			;the mode number for random files
+md.sqi	set	1			;the mode number for sequential input files
+					;never written into a file
+md.sqo	set	2			;the mode for sequential output files
+					;and program files
+cpmwrm	set	0			;cp/m warm boot addr
+cpment	set	cpmwrm+5		;cp/m bdos call addr
+	cseg	
+trurom	set	0
+	page
+	title	mathpk for basic mcs 8080  gates/allen/davidoff
+	subttl	floating point math package configuration
+curncy	set	44o			;use dollar sign as default
+	public	rnd,sin,fout,inprt,linprt
+	public	zero,float,floatr,move,fadd,fadds,fsub,fmult,fdiv,fin
+	extrn	intxt,snerr,bserr,overr,minpls
+	public	normal,unpack
+	public	pushf,abs,int,qint,sgn,fcomp,signc,pophrt
+	public	sqr
+	public	movfm,movmf,movfr,movrf,movrm,neg,inrart,inxhrt
+	extrn	cnsget
+	public	umult,signs
+	public	fpwr,exp,log,cos,tan,atn,fone
+	public	pufout
+	public	vmovmf,vmovfm,frcint,frcsng,frcdbl,vneg,iadd
+	public	isub,imult,icomp,ineg,dadd,dsub,dmult,ddiv,dcomp,vint
+	public	vmove,valint,valsng,frcstr,chkstr,makint,isign
+	public	dcompd,dnorml,dint
+	public	fdivt,consih,conia,vmovfa,vmovaf,getbcd,vsign,vdfacs
+	public	imod,idiv
+	extrn	fansii,overri,strprn,flgovc
+	extrn	ttypos
+	extrn	divmsg,ovrmsg
+	extrn	caltty
+	extrn	fac,faclo,fbuffr,minutk,plustk,error,fcerr
+	extrn	chrgtr,outdo,dv0err,strout
+	public	sign
+	public	sincon,atncon
+	extrn	getypr
+	extrn	dcompr,synchr
+	extrn	tmerr
+	extrn	errflg,dfaclo,arg,arglo,valtyp,temp2,temp3
+;
+;	external locations used by the math-package
+;	;the floating accumulator
+;ifn	length&2,<
+;	block	1		;[temporary least significant byte]
+;dfaclo:	block	4>		;[four lowest orders for double precision]
+;faclo:	block	3		;[low order of mantissa (lo)]
+;				;[middle order of mantissa (mo)]
+;				;[high order of mantissa (ho)]
+;fac:	block	2		;[exponent]
+;				;[temporary complement of sign in msb]
+;ifn	length&2,<
+;	block	1		;[temporary least significant byte]
+;arglo:	block	7		;[location of second argument for double
+;arg:	block	1>		; precision]
+;fbuffr:	block	^d13		;buffer for fout
+;ifn	length&2,<block	^d<35-13>>
+;
+;
+;the floating point format is as follows:
+;
+;the sign is the first bit of the mantissa
+;the mantissa is 24 bits long
+;the binary point is to the left of the msb
+;number = mantissa * 2 ^ exponent
+;the mantissa is positive, with a one assumed to be where the sign bit is
+;the sign of the exponent is the first bit of the exponent
+;the exponent is stored in excess 200 i.e. with a bias of 200
+;so, the exponent is a signed 8-bit number with 200 added to it
+;an exponent of zero means the number is zero, the other bytes are ignored
+;to keep the same number in the fac while shifting:
+;	to shift right,	exp:=exp+1
+;	to shift left,	exp:=exp-1
+;
+;so, in memory the number looks like this:
+;	[bits 17-24 of the mantissa]
+;	[bits 9-16 of the mantissa]
+;	[the sign in bit 7, bits 2-8 of the mantissa are in bits 6-0]
+;	[the exponent as a signed number + 200]
+;(remember that bit 1 of the mantissa is always a one)
+;
+;arithmetic routine calling conventions:
+;
+;for one argument functions:
+;	the argument is in the fac, the result is left in the fac
+;for two argument operations:
+;	the first argument is in b,c,d,e i.e. the "registers"
+;	the second argument is in the fac
+;	the result is left in the fac
+;
+;the "s" entry points to the two argument operations have (hl) pointing to
+;the first argument instead of the first argument being in the registers.
+;movrm is called to get the argument in the registers.
+;the "t" entry points assume the first argument is on the stack.
+;popr is used to get the argument in the registers.
+;note: the "t" entry points should always be jumped to and never called
+;because the return address on the stack will be confused with the number.
+;
+;on the stack, the two lo's are pushed on first and then the ho and sign.
+;this is done so if a number is stored in memory, it can be pushed on the
+;stack with two pushm's.  the lower byte of each part is in the lower
+;memory address so when the number is popped into the registers, the higher
+;order byte will be in the higher order register of the register pair, i.e.
+;the higher order byte will be popped into b, d or h.
+;%
+	page
+	subttl	floating point addition and subtraction
+					;entry to fadd with pointer to arg in (hl)
+	public	faddh
+faddh:	lxi	h,fhalf			;entry to add 1/2
+fadds:	call	movrm			;get argument into the registers
+	jmp	fadd			;do the addition
+					;subtraction	fac:=arg-fac
+fsubs:	call	movrm			;entry if pointer to arg is in (hl)
+fsub:	call	neg			;negate second argument
+					;fall into fadd
+					;addition	fac:=arg+fac
+					;alters a,b,c,d,e,h,l
+;*****************************************************************
+;if intfsw=1 the format of floating point numbers will be:
+;reg b:sign and bits 1-7 of exponent,reg c:bit 8 of exponent
+;and bits 2-8 of mantissa,reg d:bits 9-16 of mantissa,
+;reg e:bits 17-24 of mantissa, and likewise for the fac format
+;furthermore, the exponent for intel will be bias 177 octal
+;******************************************************************
+fadd:	mov	a,b			;check if first argument is zero
+	ora	a			;get exponent
+	rz				;it is, result is number in fac
+	lda	fac			;get exponent
+	ora	a			;see if the number is zero
+	jz	movfr			;it is, answer is in registers
+;we want to get the smaller number in the registers so we can shift it right
+;and align the binary points of the two numbers.  then we can just add or
+;subtract them (depending on their signs) bytewise.
+	sub	b			;check relative sizes
+	jnc	fadd1			;is fac smaller?
+	cma				;yes, negate shift count
+	inr	a
+	xchg				;switch fac and registers, save (de)
+	call	pushf			;put fac on stack
+	xchg				;get (de) back where it belongs
+	call	movfr			;put registers in the fac
+	pop	b
+	pop	d
+					;get the old fac in the registers
+fadd1:
+	cpi	31o			;are we within 24 bits?
+	rnc	
+	push	psw			;save shift count
+	call	unpack			;unpack the numbers
+	mov	h,a			;save subtraction flag
+	pop	psw			;get shift count back
+	call	shiftr			;shift registers right the right amount
+;if the numbers have the same sign, then we add them.  if the signs are
+;different, then we have to subtract them.  we have to do this because the
+;mantissas are positive.  judging by the exponents, the larger number is in
+;the fac, so if we subtract, the sign of the result should be the sign of the
+;fac; however, if the exponents are the same, the number in the registers
+;could be bigger, so after we subtract them, we have to check if the result
+;was negative.  if it was, we negate the number in the registers and
+;complement the sign of the fac.  (here the fac is unpacked)
+;if we have to add the numbers, the sign of the result is the sign of the
+;fac.  so, in either case, when we are all done, the sign of the result
+;will be the sign of the fac.
+	mov	a,h			;get subtraction flag
+	ora	a
+	lxi	h,faclo			;set pointer to lo's
+	jp	fadd3			;subtract if the signs were different
+	call	fadda			;add the numbers
+	jnc	round			;round result if there was no overflow
+					;the most it can overflow is one bit
+	inx	h			;there was overflow
+	inr	m			;increment exponent
+	jz	ovfin4
+	mvi	l,1			;shift result right one, shift carry in
+	call	shradd
+	jmp	round			;round result and we are done
+					;here to subtract c,d,e,b from ((hl)+0,1,2),0
+fadd3:	xra	a			;subtract numbers, negate underflow byte
+	sub	b
+	mov	b,a			;save it
+	mov	a,m			;subtract low orders
+	sbb	e
+	mov	e,a
+	inx	h			;update pointer to next byte
+	mov	a,m			;subtract middle orders
+	sbb	d
+	mov	d,a
+	inx	h			;update pointer to high orders
+	mov	a,m			;subtract high orders
+	sbb	c
+	mov	c,a
+					;because we want a positive mantissa, check if we have to negate the
+					; number
+fadflt:	cc	negr			;entry from floatr, int: negate number if it
+					; was negative, fall into normalize
+					;normalize c,d,e,b
+					;alters a,b,c,d,e,h,l
+					;here we shift the mantissa left until the msb is a one.
+					;except in 4k, the idea is to shift left by 8 as many times as
+					;possible.
+normal:
+	mov	l,b			;put lowest 2 bytes in (hl)
+	mov	h,e
+	xra	a			;zero shift count
+norm1:	mov	b,a			;save shift count
+	mov	a,c			;do we have 1 byte of zeros
+	ora	a
+	jnz	norm3			;no, shift one place at a time
+					;this loop speeds things up by shifting 8 places at one time
+	mov	c,d			;yes, shift over 1 byte
+	mov	d,h
+	mov	h,l
+	mov	l,a			;shift in 8 zeros for the low order
+	mov	a,b			;update shift count
+	sui	10o
+	cpi	340o			;did we shift in 4 bytes of zeros?
+	jnz	norm1			;no, try to shift over 8 more
+					;yes, number was zero.  fall into zero
+					;zero fac
+					;alters a only
+					;exits with a=0
+					;by our floating point format, the number is zero if the exponent is
+					; zero
+zero:	xra	a			;zero a
+zero0:	sta	fac			;zero the fac's exponent, entry if a=0
+	ret				;all done
+norm2:
+	mov	a,h			;check for case of normalizing a small int
+	ora	l
+	ora	d
+	jnz	norm2u			;do usual thing
+	mov	a,c			;get byte to shift
+norm2f:	dcr	b			;decrment shift count
+	ral				;shift left
+	jnc	norm2f			;normalize like sob
+	inr	b			;correct shift count
+	rar				;we did it one too many times
+	mov	c,a			;result to [c]
+	jmp	norm3a			;all done
+norm2u:	dcr	b			;decrement shift count
+	dad	h			;rotate (hl) left one, shift in a zero
+	mov	a,d			;rotate next higher order left one
+	ral	
+	mov	d,a
+	mov	a,c			;rotate high order left one
+	adc	a			;set condition codes
+	mov	c,a
+norm3:	jp	norm2			;we have more normalization to do
+norm3a:	mov	a,b			;all normalized, get shift count
+	mov	e,h			;put lo's back in e,b
+	mov	b,l
+	ora	a			;check if we did no shifting
+	jz	round
+	lxi	h,fac			;look at fac's exponent
+	add	m			;update exponent
+	mov	m,a
+	jnc	zero			;check for underflow
+	jz	zero			;number is zero, all done
+					;fall into round and we are done
+					;round result in c,d,e,b and put number in the fac
+					;alters a,b,c,d,e,h,l
+					;we round c,d,e up or down depending upon the msb of b
+round:	mov	a,b			;see if we should round up
+roundb:	lxi	h,fac			;entry from fdiv, get pointer to exponent
+					;intel floating software flag
+	ora	a
+	cm	rounda			;do it if necessary
+	mov	b,m			;put exponent in b
+					;here we pack the ho and sign
+	inx	h			;point to sign
+	mov	a,m			;get sign
+	ani	200o			;get rid of unwanted bits
+	xra	c			;pack sign and ho
+	mov	c,a			;save it in c
+	jmp	movfr			;save number in fac
+					;subroutne for round:  add one to c,d,e
+rounda:	inr	e			;add one to the low order, entry from qint
+	rnz				;all done if it is not zero
+	inr	d			;add one to next higher order
+	rnz				;all done if no overflow
+	inr	c			;add one to the highest order
+	rnz				;return if no oveflow
+	mvi	c,200o			;the number overflowed, set new high order
+	inr	m			;update exponent
+	rnz				;return if it did not overflow
+	jmp	ovfin8			;overflow and continue
+					;add (hl)+2,1,0 to c,d,e
+					;this code is used by fadd, fout
+fadda:	mov	a,m			;get lowest order
+	add	e			;add in other lowest order
+	mov	e,a			;save it
+	inx	h			;update pointer to next byte
+	mov	a,m			;add middle orders
+	adc	d
+	mov	d,a
+	inx	h			;update pointer to high order
+	mov	a,m			;add high orders
+	adc	c
+	mov	c,a
+	ret				;all done
+					;negate number in c,d,e,b
+					;this code is used by fadd, qint
+					;alters a,b,c,d,e,l
+negr:	lxi	h,fac+1			;negate fac
+	mov	a,m			;get sign
+	cma				;complement it
+	mov	m,a			;save it again
+	xra	a			;zero a
+	mov	l,a			;save zero in l
+	sub	b			;negate lowest order
+	mov	b,a			;save it
+	mov	a,l			;get a zero
+	sbb	e			;negate next highest order
+	mov	e,a			;save it
+	mov	a,l			;get a zero
+	sbb	d			;negate next highest order
+	mov	d,a			;save it
+	mov	a,l			;get zero back
+	sbb	c			;negate highest order
+	mov	c,a			;save it
+	ret				;all done
+					;shift c,d,e right
+					;a = shift count
+					;alters a,b,c,d,e,l
+					;the idea (except in 4k) is to shift right 8 places as many times as
+					; possible
+shiftr:	mvi	b,0			;zero overflow byte
+shftr1:	sui	10o			;can we shift it 8 right?
+	jc	shftr2			;no, shift it one place at a time
+					;this loop speeds things up by shifting 8 places at one time
+	mov	b,e			;shift number 1 byte right
+	mov	e,d
+	mov	d,c
+	mvi	c,0			;put 0 in ho
+	jmp	shftr1			;try to shift 8 right again
+shftr2:	adi	11o			;correct shift count
+	mov	l,a			;save shift count
+;test for case (very common) where shifting small integer right.
+;this happens in for loops, etc.
+	mov	a,d			;see if three lows are zero.
+	ora	e
+	ora	b
+	jnz	shftr3			;if so, do usual.
+	mov	a,c			;get high byte to shift
+shftrf:	dcr	l			;done shifting?
+	rz				;yes, done
+	rar				;rotate one right
+	mov	c,a			;save result
+	jnc	shftrf			;zap back and do next one if none
+	jmp	shftc			;continue shifting
+shftr3:	xra	a			;clear carry
+	dcr	l			;are we done shifting?
+	rz				;return if we are
+	mov	a,c			;get ho
+shradd:	rar				;entry from fadd, shift it right
+	mov	c,a			;save it
+shftc:	mov	a,d			;shift next byte right
+	rar	
+	mov	d,a
+	mov	a,e			;shift low order right
+	rar	
+	mov	e,a
+	mov	a,b			;shift overflow byte right
+	rar	
+	mov	b,a
+	jmp	shftr3			;see if we are done
+	page
+	subttl	natural log function
+					;calculation is by:
+					; ln(f*2^n)=(n+log2(f))*ln(2)
+					;an approximation polynomial is used to calculate log2(f)
+					;constants used by log
+fone:	db	000			; 1
+	db	000
+	db	000
+	db	201o
+logp:	db	004			;hart 2524 coefficients
+	db	232o			;4.8114746
+	db	367o
+	db	031o
+	db	203o
+	db	044o			;6.105852
+	db	143o
+	db	103o
+	db	203o
+	db	165o			;-8.86266
+	db	315o
+	db	215o
+	db	204o
+	db	251o			;-2.054667
+	db	177o
+	db	203o
+	db	202o
+logq:	db	004
+	db	000			;1.0
+	db	000
+	db	000
+	db	201o
+	db	342o			;6.427842
+	db	260o
+	db	115o
+	db	203o
+	db	012o			;4.545171
+	db	162o
+	db	021o
+	db	203o
+	db	364o			;.3535534
+	db	004
+	db	065o
+	db	177o
+log:	call	sign			;check for a negative or zero argument
+	ora	a			;set cc's properly
+	jpe	fcerr			;fac .le. 0, blow him out of the water
+					;fsign only returns 0,1 or 377 in a
+					;the parity will be even if a has 0 or 377
+	call	log2			;
+	lxi	b,200q*256+061q
+	lxi	d,162q*256+030q		;get ln(2)
+	jmp	fmult			;complete log calculation
+log2:					;use hart 2524 calculation
+	call	movrf			;move fac to registers too
+	mvi	a,200o			;
+	sta	fac			;zero the exponent
+	xra	b			;remove 200 excess from x
+	push	psw			;save exponent
+	call	pushf			;save the fac (x)
+	lxi	h,logp			;point to p constants
+	call	poly			;calculate p(x)
+	pop	b			;fetch x
+	pop	h			;pushf would alter de
+	call	pushf			;push p(x) on the stack
+	xchg				;get low bytes of x to (de)
+	call	movfr			;and move to fac
+	lxi	h,logq			;point to q coefficients
+	call	poly			;compute q(x)
+	pop	b			;fetch p(x) to registers
+	pop	d
+	call	fdiv			;calculate p(x)/q(x)
+	pop	psw			;re-fetch exponent
+	call	pushf			;save evaluation
+	call	float			;float the exponent
+	pop	b
+	pop	d
+					;get eval. back
+	jmp	fadd
+	page
+;	jmp	fmult		;multiply by ln(2)
+	subttl	floating multiplication and division
+					;multiplication		fac:=arg*fac
+					;alters a,b,c,d,e,h,l
+fmult:	call	sign			;check if fac is zero
+	rz				;if it is, result is zero
+	mvi	l,0			;add the two exponents, l is a flag
+	call	muldiv			;fix up the exponents
+					;save the number in the registers so we can add it fast
+	mov	a,c			;get ho
+	sta	fmulta+1		;store ho of registers
+	xchg				;store the two lo's of the registers
+	shld	fmultb+1
+	lxi	b,0			;zero the product registers
+	mov	d,b
+	mov	e,b
+	lxi	h,normal
+	push	h			; on the stack
+	lxi	h,fmult2		;put fmult2 on the stack twice, so after
+	push	h			; we multiply by the lo byte, we will
+	push	h			; multiply by the mo and ho
+	lxi	h,faclo			;get address of lo of fac
+fmult2:	mov	a,m			;get byte to multiply by
+	inx	h			;move pointer to next byte
+	ora	a
+	jz	fmult3			;are we multiplying by zero?
+	push	h			;save pointer
+	xchg				;get lo's in (hl)
+	mvi	e,10o			;set up a count
+;the product will be formed in c,d,e,b. this will be in c,h,l,b part of the
+;time in order to use the "dad" instruction.  at fmult2, we get the next
+;byte of the mantissa in the fac to multiply by.  ((hl) points to it)
+;(the fmult2 subroutine preserves (hl))  in 8k, if the byte is zero, we just
+;shift the product 8 right.  this byte is then shifted right and saved in d
+;(h in 4k).  the carry determines if we should add in the second factor
+;if we do, we add it to c,h,l.  b is only used to determine which way we
+;round.  we then shift c,h,l,b (c,d,e,b) in 4k right one to get ready for the
+;next time through the loop.  note that the carry is shifted into the msb of
+;c.  e has a count (l in 4k) to determine when we have looked at all the bits
+;of d (h in 4k).
+fmult4:	rar				;rotate byte right
+	mov	d,a			;save it
+	mov	a,c			;get ho
+	jnc	fmult5			;don't add in number if bit was zero
+	push	d			;save counters
+fmultb:	lxi	d,0			;get lo's of number to add, this is set above
+	dad	d			;add them in
+	pop	d			;get counters back
+fmulta:	aci	0			;add in ho, this is set up above
+fmult5:	rar				;rotate result right one
+	mov	c,a
+	mov	a,h			;rotate next byte
+	rar	
+	mov	h,a
+	mov	a,l			;rotate next lower order
+	rar	
+	mov	l,a
+	mov	a,b			;rotate lo
+	rar	
+	mov	b,a
+	ani	20o			;see if we rotated thru st
+	jz	fml5b1			;if not don't worry
+	mov	a,b			;re fetch lo
+	ori	40o			;"or" in sticky
+	mov	b,a			;back to lo
+fml5b1:
+fmlt5b:
+	dcr	e			;are we done?
+	mov	a,d			;get number we are multiplying by
+	jnz	fmult4			;multiply again if we are not done
+	xchg				;get lo's in (de)
+pophrt:	pop	h			;get pointer to number to multiply by
+	ret				;all done
+fmult3:	mov	b,e			;multiply by zero: shift everything 8 right
+	mov	e,d
+	mov	d,c
+	mov	c,a			;shift in 8 zeros on the left
+	ret				;all done
+					;divide fac by 10
+					;alters a,b,c,d,e,h,l
+div10:	call	pushf			;save number
+	lxi	h,ften			;get pointer to the constant '10'
+	call	movfm			;move ten into the fac
+fdivt:	pop	b
+	pop	d
+					;get number back in registers
+					;fall into divide and we are done
+					;division	fac:=arg/fac
+					;alters a,b,c,d,e,h,l
+fdiv:	call	sign			;check for division by zero
+	jz	intdv1			;don't allow divide by zero
+	mvi	l,377o			;subtract the two exponents, l is a flag
+	call	muldiv			;fix up the exponents and things
+	inr	m
+	inr	m
+					;here we save the fac in memory so we can subtract it from the number
+					;in the registers quickly.
+	dcx	h			;point to ho
+	mov	a,m			;get ho
+	sta	fdiva+1			;save it
+	dcx	h			;save middle order
+	mov	a,m
+	sta	fdivb+1			;put it where nothing will hurt it
+	dcx	h			;save lo
+	mov	a,m
+	sta	fdivc+1
+;the numerator will be kept in b,h,l.  the quotient will be formed in c,d,e.
+;to get a bit of the quotient, we first save b,h,l on the stack, then
+;subtract the denominator that we saved in memory.  the carry indicates
+;whether or not b,h,l was bigger than the denominator.  if b,h,l was bigger,
+;the next bit of the quotient is a one.  to get the old b,h,l off the stack,
+;we pop them into the psw.  if the denominator was bigger, the next bit of
+;the quotient is zero, and we get the old b,h,l back by popping it off the
+;stack.  we have to keep an extra bit of the quotient in fdivg+1 in case the
+;denominator was bigger,  then b,h,l will get shifted left.  if the msb  of
+;b was one, it has to be stored somewhere, so we store it in fdivg+1.  then
+;the next time through the loop b,h,l will look bigger because it has an
+;extra ho bit in fdivg+1. we are done dividing when the msb of c is a one.
+;this occurs when we have calculated 24 bits of the quotient.  when we jump
+;to round, the 25th bit of the quotient determines whether we round or not.
+;it is in the msb of a.  if initially the denominator is bigger than the
+;numerator, the first bit of the quotient will be zero.  this means we
+;will go through the divide loop 26 times, since it stops on the 25th bit
+;after the first non-zero bit of the quotient.  so, this quotient will look
+;shifted left one from the quotient of two numbers in which the numerator is
+;bigger.  this can only occur on the first time through the loop, so c,d,e
+;are all zero.  so, if we finish the loop and c,d,e are all zero, then we
+;must decrement the exponent to correct for this.
+	mov	b,c			;get number in b,h,l
+	xchg	
+	xra	a			;zero c,d,e and highest order
+	mov	c,a
+	mov	d,a
+	mov	e,a
+	sta	fdivg+1
+fdiv1:	push	h			;save lo's of number
+	push	b			;save ho of number
+	mov	a,l			;subtract number that was in fac
+fdivc:	sui	0			;subtract lo
+	mov	l,a			;save it
+	mov	a,h			;subtract middle order
+fdivb:	sbi	0
+	mov	h,a
+	mov	a,b			;subtract ho
+fdiva:	sbi	0
+	mov	b,a
+fdivg:	mvi	a,0			;get highest order
+					;we could do this with no code in ram, but
+					; it would be much slower.
+	sbi	0			;subtract the carry from it
+	cmc				;set carry to corespond to next quotient bit
+	jnc	fdiv2			;get old number back if we subtracted too much
+	sta	fdivg+1			;update highest order
+	pop	psw			;the subtraction was good
+	pop	psw			;get previous number off stack
+	stc				;next bit in quotient is a one
+	db	322o			;"jnc" around next 2 bytes
+fdiv2:	pop	b			;we subtracted too much
+	pop	h			;get old number back
+	mov	a,c			;are we done?
+	inr	a			;set sign flag without affecting carry
+	dcr	a
+	rar				;put carry in msb
+	jp	div2a			;not ready to round yet
+	ral				;bit back to carry
+	lda	fdivg+1			;fetch extra bit
+	rar				;both now in a
+	ani	300o			;clear superfluous bits
+	push	psw			;save for later
+	mov	a,b			;fetch ho of remainder
+	ora	h			;fetch ho
+	ora	l			;see if other remainder bits
+					;and if so set st
+	jz	div2aa			;if not ignore
+	mvi	a,40o			;st bit
+div2aa:	pop	h			;and the rest of remainder
+	ora	h			;"or" in rest
+	jmp	roundb			;use remainder
+div2a:
+	ral				;we aren't, get old carry back
+	mov	a,e			;rotate everything left one
+	ral				;rotate next bit of quotient in
+	mov	e,a
+	mov	a,d
+	ral	
+	mov	d,a
+	mov	a,c
+	ral	
+	mov	c,a
+	dad	h			;rotate a zero into right end of number
+	mov	a,b			;the ho byte, finally!
+fdiv2a:	ral	
+	mov	b,a
+fdiv2b:	lda	fdivg+1			;rotate the highest order
+	ral	
+	sta	fdivg+1
+	mov	a,c			;add one to exponent if the first subtraction
+	ora	d			; did not work
+	ora	e
+	jnz	fdiv1			;this isn't the case
+	push	h			;save part of number
+	lxi	h,fac			;get pointer to fac
+	dcr	m			;decrement exponent
+	pop	h			;get number back
+	jnz	fdiv1			;divide more if no overflow occured
+	jmp	zero			;underflow!!
+					;check special cases and add exponents for fmult, fdiv
+					;alters a,b,h,l
+muldvs:	mvi	a,377o			;entry from ddiv, subtract exponents
+	db	056o			;"mvi	l" around next byte
+muldva:	xra	a			;entry from dmult, add exponents
+	lxi	h,arg-1			;get pointer to sign and ho of arg
+	mov	c,m			;get ho and sign for unpacking
+	inx	h			;increment pointer to exponent
+	xra	m			;get exponent
+	mov	b,a			;save it in b for below
+	mvi	l,0			;set flag to add the exponents below
+muldiv:	mov	a,b			;is number in registers zero?
+	ora	a
+	jz	muldv2			;it is, zero fac and we are done
+	mov	a,l			;get add or subtract flag
+	lxi	h,fac			;get pointer to exponent
+	xra	m			;get exponent
+	add	b			;add in register exponent
+	mov	b,a			;save it
+	rar				;check for overflow
+	xra	b			;overflow if sign is the same as carry
+	mov	a,b			;get sum
+	jp	muldv1			;we have overflow!!
+	adi	200o			;put exponent in excess 200
+	mov	m,a			;save it in the fac
+	jz	pophrt			;we have undeflow!! return.
+	call	unpack			;unpack the arguments
+	mov	m,a			;save the new sign
+dcxhrt:	dcx	h			;point to exponent
+	ret				;all done, leave ho in a
+mldvex:	call	sign			;entry from exp, pick underflow if negative
+	cma				;pick overflow if positive
+	pop	h			;don't screw up stack
+muldv1:	ora	a			;is error overflow or undeflow?
+muldv2:	pop	h			;get old return address off stack
+	jp	zero
+	jmp	ovfin2
+					;multiply fac by 10
+					;alters a,b,c,d,e,h,l
+mul10:	call	movrf			;get number in registers
+	mov	a,b			;get exponent
+	ora	a			;result is zero if arg is zero
+	rz				;it is
+	adi	2			;multiply by 4 by adding 2 to exponent
+	jc	ovfin3
+	mov	b,a			;restore exponent
+	call	fadd			;add in original number to get 5 times it
+	lxi	h,fac			;add 1 to exponent to multiply number by
+	inr	m			; 2 to get 10 times original number
+	rnz				;all done if no overflow
+	jmp	ovfin3
+	page
+	subttl	sign, sgn, float, neg and abs
+					;put sign of fac in a
+					;alters a only
+					;leaves fac alone
+					;note: to take advantage of the rst instructions to save bytes,
+					;fsign is defined to be an rst.  "fsign" is equivalent to "call	sign"
+					;the first few instructions of sign (the ones before signc) are done
+					;in the 8 bytes at the rst location.
+					;intel floating software flag
+					;fsign is usually an rst
+sign:	lda	fac			;check if the number is zero
+	ora	a
+	rz				;it is, a is zero
+signc:	lda	fac-1			;get sign of fac, it is non-zero
+	db	376o			;"cpi" around next byte
+fcomps:	cma				;entry from fcomp, complement sign
+icomps:	ral				;entry from icomp, put sign bit in carry
+signs:	sbb	a			;a=0 if carry was 0, a=377 if carry was 1
+	rnz				;return if number was negative
+inrart:	inr	a			;put one in a if number was positive
+	ret				;all done
+					;sgn function
+					;alters a,b,c,d,e,h,l
+					;fall into float
+					;float the signed integer in a
+					;alters a,b,c,d,e,h,l
+					;use microsoft format if not intel
+float:	mvi	b,210o			;set exponent correctly
+	lxi	d,0			;zero d,e
+					;fall into floatr
+					;float the signed number in b,a,d,e
+					;alters a,b,c,d,e,h,l
+floatr:	lxi	h,fac			;get pointer to fac
+	mov	c,a			;put ho in c
+	mov	m,b			;put exponent in the fac
+	mvi	b,0			;zero overflow byte
+	inx	h			;point to sign
+	mvi	m,200o			;assume a positive number
+	ral				;put sign in carry
+	jmp	fadflt			;go and float the number
+					;fall into neg
+;
+;	;get the valtyp and set condition codes as follows:
+;;condition code		true set	false set
+;;sign			int=2		str,sng,dbl
+;;zero			str=3		int,sng,dbl
+;;odd parity		sng=4		int,str,dbl
+;;no carry		dbl=10		int,str,sng
+;getype:	lda	valtyp		;get the valtyp
+;	cpi	10		;set carry correctly
+;	dcr	a		;set the other condition codes correctly
+;	dcr	a		; without affecting carry
+;	dcr	a
+;	ret	*			;all done
+					;absolute value of fac
+					;alters a,b,c,d,e,h,l
+abs:	call	vsign			;get the sign of the fac in a
+	rp				;if it is positive, we are done
+					;negate any type value in the fac
+					;alters a,b,c,d,e,h,l
+vneg:	call	getypr			;see what kind of number we have
+	jm	ineg			;we have an integer, negate it that way
+	jz	tmerr			;blow up on strings
+					;fall into neg to negate a sng or dbl
+					;negate number in the fac
+					;alters a,h,l
+					;note: the number must be packed
+					;if intfsw=0 do not use intel format
+neg:	lxi	h,fac-1			;get pointer to sign
+	mov	a,m			;get sign
+	xri	200o			;complement sign bit
+	mov	m,a			;save it
+	ret				;all done
+					;sgn function
+					;alters a,h,l
+sgn:	call	vsign			;get the sign of the fac in a
+					;entry to convert a signed number in a to an integer
+conia:	mov	l,a			;put it in the lo position
+	ral				;extend the sign to the ho
+	sbb	a
+	mov	h,a
+	jmp	makint			;return the result and set valtyp
+					;get the sign of the value in the fac in a
+					;alters a,h,l
+vsign:	call	getypr			;see what kind of a number we have
+	jz	tmerr			;blow up on strings
+	jp	sign			;single and double prec. work the same
+	lhld	faclo			;get the integer argument
+					;entry to find the sign of (hl)
+					;alters a only
+isign:	mov	a,h			;get its sign
+	ora	l			;check if the number is zero
+	rz				;it is, we are done
+	mov	a,h			;it isn't, sign is the sign of h
+	jmp	icomps			;go set a correctly
+	page
+	subttl	floating point movement routines
+					;put fac on stack
+					;alters d,e
+pushf:	xchg				;save (hl)
+	lhld	faclo			;get lo's
+	xthl				;switch lo's and ret addr
+	push	h			;put ret addr back on stack
+	lhld	fac-1			;get ho's
+	xthl				;switch ho's and ret addr
+	push	h			;put ret addr back on stack
+	xchg				;get old (hl) back
+	ret				;all done
+					;move number from memory [(hl)] to fac
+					;alters b,c,d,e,h,l
+					;at exit number is in b,c,d,e
+					;at exit (hl):=(hl)+4
+movfm:	call	movrm			;get number in registers
+					;fall into movfr and put it in fac
+					;move registers (b,c,d,e) to fac
+					;alters d,e
+movfr:	xchg				;get lo's in (hl)
+	shld	faclo			;put them where they belong
+	mov	h,b			;get ho's in (hl)
+	mov	l,c
+	shld	fac-1			;put ho's where they belong
+	xchg				;get old (hl) back
+	ret				;all done
+					;move fac to registers (b,c,d,e)
+					;alters b,c,d,e,h,l
+movrf:	lxi	h,faclo			;get pointer to fac
+					;fall into movrm
+					;get number in registers (b,c,d,e) from memory [(hl)]
+					;alters b,c,d,e,h,l
+					;at exit (hl):=(hl)+4
+movrm:	mov	e,m			;get lo
+	inx	h			;point to mo
+getbcd:	mov	d,m			;get mo, entry for bill
+	inx	h			;point to ho
+	mov	c,m			;get ho
+	inx	h			;point to exponent
+	mov	b,m			;get exponent
+inxhrt:	inx	h			;inc pointer to beginning of next number
+	ret				;all done
+					;move number from fac to memory [(hl)]
+					;alters a,b,d,e,h,l
+movmf:	lxi	d,faclo			;get pointer to fac
+					;fall into move
+					;move number from (de) to (hl)
+					;alters a,b,d,e,h,l
+					;exits with (de):=(de)+4, (hl):=(hl)+4
+move:	mvi	b,4			;set counter
+	jmp	move1			;continue with the move
+					;move any type value (as indicated by valtyp) from (de) to (hl)
+					;alters a,b,d,e,h,l
+movvfm:	xchg				;entry to switch (de) and (hl)
+vmove:	lda	valtyp			;get the length of the number
+	mov	b,a			;save it away
+	public	move1
+move1:	ldax	d			;get word, entry from vmovmf
+	mov	m,a			;put it where it belongs
+	inx	d			;increment pointers to next word
+	inx	h
+	dcr	b
+	jnz	move1
+	ret	
+					;unpack the fac and the registers
+					;alters a,c,h,l
+					;when the number in the fac is unacked, the assumed one in the
+					;mantissa is restored, and the complement of the sign is placed
+					;in fac+1
+					;intel floating software flag
+unpack:	lxi	h,fac-1			;point to ho and sign
+	mov	a,m			;get ho and sign
+	rlc				;duplicate the sign in carry and the lsb
+	stc				;restore the hidden one
+	rar				;restore the number in a
+	mov	m,a			;save ho
+	cmc				;get the complement of the sign
+	rar				;get it in the sign bit
+	inx	h			;point to temporary sign byte
+	inx	h
+	mov	m,a			;save complement of sign
+	mov	a,c			;get ho and sign of the registers
+	rlc				;duplicate the sign in carry and the lsb
+	stc				;restore the hidden one
+	rar				;restore the ho in a
+	mov	c,a			;save the ho
+	rar				;get the sign back
+	xra	m			;compare sign of fac and sign of registers
+	ret				;all done
+					;move any type value from memory [(hl)] to fac
+					;alters a,b,d,e,h,l
+vmovfa:	lxi	h,arglo			;entry from dadd, move arg to fac
+vmovfm:	lxi	d,movvfm		;get address of location that does
+	jmp	vmvvfm			; an "xchg" and falls into move1
+					;move any type value from fac to memory [(hl)]
+					;alters a,b,d,e,h,l
+vmovaf:	lxi	h,arglo			;entry from fin, dmul10, ddiv10
+					;move fac to arg
+vmovmf:	lxi	d,vmove			;get address of move subroutine
+vmvvfm:	push	d			;shove it on the stack
+vdfacs:	lxi	d,faclo			;get first address for int, str, sng
+	call	getypr			;get the value type
+	rc				;go move it if we do not have a dbl
+	lxi	d,dfaclo		;we do, get lo addr of the dbl number
+	ret				;go do the move
+	page
+	subttl	compare two numbers
+					;compare two single precision numbers
+					;a=1 if arg .lt. fac
+					;a=0 if arg=fac
+					;a=-1 if arg .gt. fac
+					;dorel depends upon the fact that fcomp returns with carry on
+					; iff a has 377
+					;alters a,h,l
+fcomp:	mov	a,b			;check if arg is zero
+	ora	a
+	jz	sign
+	lxi	h,fcomps		;we jump to fcomps when we are done
+	push	h			;put the address on the stack
+	call	sign			;check if fac is zero
+	mov	a,c			;if it is, result is minus the sign of arg
+	rz				;it is
+	lxi	h,fac-1			;point to sign of fac
+	xra	m			;see if the signs are the same
+	mov	a,c			;if they are different, result is sign of arg
+	rm				;they are different
+	call	fcomp2			;check the rest of the number
+fcompd:	rar				;numbers are different, change sign if
+	xra	c			; both numbers are negative
+	ret				;go set up a
+fcomp2:	inx	h			;point to exponent
+	mov	a,b			;get exponent of arg
+	cmp	m			;compare the two
+	rnz				;numbers are different
+	dcx	h			;point to ho
+	mov	a,c			;get ho of arg
+	cmp	m			;compare with ho of fac
+	rnz				;they are different
+	dcx	h			;point to mo of fac
+	mov	a,d			;get mo of arg
+	cmp	m			;compare with mo of fac
+	rnz				;the numbers are different
+	dcx	h			;point to lo of fac
+	mov	a,e			;get lo of arg
+	sub	m			;subtract lo of fac
+	rnz				;numbers are different
+	pop	h			;numbers are the same, don't screw up stack
+	pop	h
+	ret				;all done
+					;compare two integers
+					;a=1 if (de) .lt. (hl)
+					;a=0 if (de)=(hl)
+					;a=-1 if (de) .gt. (hl)
+					;alters a only
+icomp:	mov	a,d			;are the signs the same?
+	xra	h
+	mov	a,h			;if not, answer is the sign of (hl)
+	jm	icomps			;they are different
+	cmp	d			;they are the same, compare the ho's
+	jnz	signs			;go set up a
+	mov	a,l			;compare the lo's
+	sub	e
+	jnz	signs			;go set up a
+	ret				;all done, they are the same
+					;compare two double precision numbers
+					;a=1 if arg .lt. fac
+					;a=0 if arg=fac
+					;a=-1 if arg .gt. fac
+					;alters a,b,c,d,e,h,l
+dcompd:	lxi	h,arglo			;entry with pointer to arg in (de)
+	call	vmove			;move the argument into arg
+	public	xdcomp
+xdcomp:	lxi	d,arg			;get pointer to arg
+	ldax	d			;see if arg=0
+	ora	a
+	jz	sign			;arg=0, go set up a
+	lxi	h,fcomps		;push fcomps on stack so we will return to
+	push	h			; to it and set up a
+	call	sign			;see if fac=0
+	dcx	d			;point to sign of argument
+	ldax	d			;get sign of arg
+	mov	c,a			;save it for later
+	rz				;fac=0, sign of result is sign of arg
+	lxi	h,fac-1			;point to sign of fac
+	xra	m			;see if the signs are the same
+	mov	a,c			;if they are, get the sign of the numbers
+	rm				;the signs are different, go set a
+	inx	d			;point back to exponent of arg
+	inx	h			;point to exponent of fac
+	mvi	b,10o			;set up a count
+dcomp1:	ldax	d			;get a byte from arg
+	sub	m			;compare it with the fac
+	jnz	fcompd			;they are different, go set up a
+	dcx	d			;they are the same, examine the next lower
+	dcx	h			; order bytes
+	dcr	b			;are we done?
+	jnz	dcomp1			;no, compare the next bytes
+	pop	b			;they are the same, get fcomps off stack
+	ret				;all done
+					;compare two double precision numbers
+					;a=1 if arg .gt. fac
+					;a=0 if arg=fac
+					;a=-1 if arg .lt. fac
+					;note:	this is the reverse of icomp, fcomp and xdcomp
+					;alters a,b,c,d,e,h,l
+dcomp:	call	xdcomp			;compare the two numbers
+	jnz	fcomps			;negate the answer, make sure the carry comes
+	ret				; out correct for docmp
+	page
+	subttl	conversion routines between integer, single and double precision
+					;force the fac to be an integer
+					;alters a,b,c,d,e,h,l
+frcint:	call	getypr			;see what we have
+	lhld	faclo			;get faclo+0,1 in case we have an integer
+	rm				;we have an integer, all done
+	jz	tmerr			;we have a string, that is a "no-no"
+	jpo	frcin2			;go do s.p.
+fdbint:	call	vmovaf			;add d.p. .5
+	lxi	h,dhalf			;
+	call	vmovfm
+	call	dadd			;
+frdbin:	call	consd
+	jmp	frcin3
+frcin2:	call	faddh
+frcin3:	lda	fac-1			;get sign byte
+	ora	a			;set condition codes correctly
+	push	psw
+	ani	177o			;clear sign
+	sta	fac-1			;make fac positive
+	lda	fac			;get exponent
+	cpi	220o			;see if too large
+	jnc	overr			;
+	call	qint			;convert to integer
+	lda	fac
+	ora	a
+	jnz	frciaa
+	pop	psw			;
+	xchg	
+	jmp	frci3a
+frciaa:
+	pop	psw			;
+	xchg				;move integer to (hl)
+	jp	frcin4
+frci3a:	mov	a,h
+	cma	
+	mov	h,a			;complement (hl)
+	mov	a,l
+	cma	
+	mov	l,a			;
+frcin4:	jmp	makint
+	lxi	h,overr			;put overr on the stack so we will get error
+	push	h			; if number is too big
+					;fall into conis
+					;convert single precision number to integer
+					;alters a,b,c,d,e,h,l
+	public	conis
+conis:	lda	fac			;get the exponent
+	cpi	220o			;see if it is too big
+	jnc	conis2			;it is, but it might be -32768
+	call	qint			;it isn't, convert it to an integer
+	xchg				;put it in (hl)
+					;entry from iadd
+conis1:	pop	d			;get error address off stack
+					;put (hl) in faclo, set valtyp to int
+					;alters a only
+makint:	shld	faclo			;store the number in faclo
+valint:	mvi	a,2			;set valtyp to "integer"
+conisd:	sta	valtyp			;entry from conds
+	ret				;all done
+conis2:	lxi	b,220q*256+200q
+	lxi	d,000q*256+000q		;check if number is -32768, entry from fin
+	call	fcomp
+	rnz				;error:  it can't be converted to an integer
+	mov	h,c			;it is -32768, put it in (hl)
+	mov	l,d
+	jmp	conis1			;store it in the fac and set valtyp
+					;force the fac to be a single precision number
+					;alters a,b,c,d,e,h,l
+frcsng:	call	getypr			;see what kind of number we have
+	rpo				;we already have a sng, all done
+	jm	consi			;we have an integer, convert it
+	jz	tmerr			;strings!! -- error!!
+					;dbl prec -- fall into consd
+					;convert double precision number to a single precison one
+					;alters a,b,c,d,e,h,l
+	public	consd
+consd:	call	movrf			;get the ho's in the registers
+	call	valsng			;set valtyp to "single precison"
+	mov	a,b			;check if the number is zero
+	ora	a
+	rz				;if it is, we are done
+	call	unpack			;unpack the number
+	lxi	h,faclo-1		;get first byte below a sng number
+	mov	b,m			;put it in b for round
+	jmp	round			;round the dbl number up and we are done
+					;convert an integer to a single precision number
+					;alters a,b,c,d,e,h,l
+	public	consi
+consi:	lhld	faclo			;get the integer
+consih:	call	valsng			;set valtyp to "single precision"
+	mov	a,h			;set up registers for floatr
+	mov	d,l
+	mvi	e,0
+	mvi	b,220o
+	jmp	floatr			;go float the number
+					;force the fac to be a double precision number
+					;alters a,b,c,d,e,h,l
+frcdbl:	call	getypr			;see what kind of number we have
+	rnc				;we already have a dbl, we are done
+	jz	tmerr			;give an error if we have a string
+	cm	consi			;convert to sng if we have an int
+					;fall into conds and convert to dbl
+					;convert a single precision number to a double precision one
+					;alters a,h,l
+	public	conds
+conds:	lxi	h,0			;zero h,l
+	shld	dfaclo			;clear the four lower bytes in the double
+	shld	dfaclo+2		; precision number
+valdbl:	mvi	a,10o			;set valtyp to "double precision"
+	db	001			;"lxi	b" over the next 2 bytes
+valsng:	mvi	a,4			;set valtyp to "single precision"
+	jmp	conisd			;go to it
+					;force the fac to be a string
+					;alters a only
+chkstr:
+frcstr:	call	getypr			;see what kind of value we have
+	rz				;we have a string, everything is ok
+	jmp	tmerr			;we don't have a string, fall into tmerr
+	page
+	subttl	greatest integer function
+					;quick greatest integer function
+					;leaves int(fac) in c,d,e (signed)
+					;assumes fac .lt. 2^23 = 8388608
+					;assumes the exponent of fac is in a
+					;alters a,b,c,d,e
+qint:	mov	b,a			;zero b,c,d,e in case the number is zero
+	mov	c,a
+	mov	d,a
+	mov	e,a
+	ora	a			;set condition codes
+	rz				;it is zero, we are done
+;the hard case in qint is negative non-integers.  to handle this, if the
+;number is negative, we regard the 3-byte mantissa as a 3-byte integer and
+;subtarct one.  then all the fractional bits are shifted out by shifting the
+;mantissa right.  then, if the number was negative, we add one.  so, if we
+;had a negative integer, all the bits to the right of the binary point were
+;zero.  so the net effect is we have the original number in c,d,e.  if the
+;number was a negative non-integer, there is at least one non-zero bit to the
+;right of the binary point.  so the net effect is that we get the absolute
+;value of int(fac) in c,d,e.  c,d,e is then negated if the original number was
+;negative so the result will be signed.
+	push	h			;save (hl)
+	call	movrf			;get number in the registers
+	call	unpack			;unpack the number
+	xra	m			;get sign of number
+	mov	h,a			;don't lose it
+	cm	qinta			;subtract 1 from lo if number is negative
+	mvi	a,230o			;see how many we have to shift to change
+	sub	b			; number to an integer
+	call	shiftr			;shift number to get rid of fractional bits
+	mov	a,h			;get sign
+	ral				;put sign in carry so it will not be changed
+	cc	rounda			;if number was negative, add one
+	mvi	b,0			;forget the bits we shifted out
+	cc	negr			;negate number if it was negative because we
+					; want a signed mantissa
+	pop	h			;get old (hl) back
+	ret				;all done
+qinta:	dcx	d			;subtract one from c,d,e
+	mov	a,d			;we have to subtract one from c if
+	ana	e			; d and e are both all ones
+	inr	a			;see if both were -1
+	rnz				;they were not, we are done
+	public	dcxbrt
+dcxbrt:	dcx	b			;this is for bill.  c will never be zero
+					; (the msb will always be one) so "dcx	b"
+					; and "dcr	c" are functionally equivalent
+	ret				;all done
+					; this is the fix (x) function. it returns
+					; fix(x)=sgn(x)*int(abs(x))
+	public	fixer
+fixer:	call	getypr			;get valtype of arg
+	rm				;int, done
+	call	sign			;get sign
+	jp	vint			;if positive, just call regular int code
+	call	neg			;negate it
+	call	vint			;get the integer of it
+	jmp	vneg			;now re-negate it
+					;greatest integer function
+					;alters a,b,c,d,e,h,l
+vint:	call	getypr			;see what type of a number we have
+	rm				;it is an integer, all done
+	jnc	dint			;convert the double precision number
+	jz	tmerr			;blow up on strings
+	call	conis			;try to convert the number to an integer
+					;if we can't, we will return here to give a
+					; single precision result
+int:	lxi	h,fac			;get exponent
+	mov	a,m
+	cpi	230o			;see if number has any fractional bits
+					;the only guy who needs this doesn't care
+	lda	faclo			; about the sign
+	rnc				;it does not
+	mov	a,m			;get exponent back
+	call	qint			;it does, shift them out
+	mvi	m,230o			;change exponent so it will be correct
+					;note:qint unpacked the number!!!!
+					; after normalization
+	mov	a,e			;get lo
+	push	psw			;save it
+	mov	a,c			;negate number if it is negative
+	ral				;put sign in carry
+	call	fadflt			;refloat number
+	pop	psw			;get lo back
+	ret				;all done
+					;greatest integer function for double precision numbers
+					;alters a,b,c,d,e,h,l
+dint:	lxi	h,fac			;get pointer to fac
+	mov	a,m			;get exponent
+	cpi	220o			;can we convert it to an integer?
+din00:	jnz	dint2			;check for -32768
+	mov	c,a			;save exponent in c
+	dcx	h			;get pointer to sign and ho
+	mov	a,m			;get sign and ho
+	xri	200o			;check if it is 200
+	mvi	b,6			;set up a count to check if the rest of
+dint1:	dcx	h			; the number is zero, point to next byte
+	ora	m			;if any bits are non-zero, a will be non-zero
+	dcr	b			;are we done?
+	jnz	dint1			;no, check the next lower order byte
+	ora	a			;is a now zero?
+	lxi	h,200o*400o+0		;get -32768 just in case
+	jnz	din05
+	call	makint			;a is zero so we have -32768
+	jmp	frcdbl			;force back to double
+din05:	mov	a,c			;get exponent
+	public	dint2
+dint2:	ora	a			;check for zero value
+	rz				;***fix 5.11***^1 -- alalow 0 in dint
+	cpi	270o			;are there any fractional bits?
+	rnc				;no, the number is already an integer
+	public	dintfo
+dintfo:	push	psw			;entry from fout, carry is zero if we come
+					; here from fout
+	call	movrf			;get ho's of number in registers for unpacking
+	call	unpack			;unpack it
+	xra	m			;get its sign back
+	dcx	h			;set the exponent to normalize correctly
+	mvi	m,270o
+	push	psw			;save the sign
+	dcx	h
+	mov	m,c			;get unpacked high byte
+	cm	dinta			;subtract 1 from lo if number is negative
+	lda	fac-1			;fetch new high mantissa byte
+	mov	c,a			;and put in c
+	lxi	h,fac-1			;point to the ho of the fac
+	mvi	a,270o			;get how many bits we have to shift out
+	sub	b
+	call	dshftr			;shift them out!!
+	pop	psw			;get the sign back
+	cm	drouna			;if number was negative, add one
+	xra	a			;put a zero in the extra lo byte so when
+	sta	dfaclo-1		; we normalize, we will shift in zeros
+	pop	psw			;if we were called from fout, don't normalize,
+	rnc				; just return
+	jmp	dnorml			;re-float the integer
+dinta:	lxi	h,dfaclo		;subtract one from fac, get pointer to lo
+dinta1:	mov	a,m			;get a byte of fac
+	dcr	m			;subtract one from it
+	ora	a			;continue only if the byte used to be zero
+	inx	h			;increment pointer to next byte
+	jz	dinta1			;continue if necessary
+	ret				;all done
+	page
+	subttl	integer arithmetic routines
+					;integer multiply for multiply dimensioned arrays
+					; (de):=(bc)*(de)
+					;overflow causes a bs error
+					;alters a,b,c,d,e
+umult:	push	h			;save [h,l]
+	lxi	h,0			;zero product registers
+	mov	a,b			;check if (bc) is zero
+	ora	c			;if so, just return, (hl) is already zero
+	jz	mulret			;this is done for speed
+	mvi	a,20o			;set up a count
+umult1:	dad	h			;rotate (hl) left one
+	jc	bserr			;check for overflow, if so,
+	xchg				; bad subscript (bs) error
+	dad	h			;rotate (de) left one
+	xchg	
+	jnc	umult2			;add in (bc) if ho was 1
+	dad	b
+	jc	bserr			;check for overflow
+umult2:	dcr	a			;see if done
+	jnz	umult1
+mulret:	xchg				;return the result in [d,e]
+	pop	h			;get back the saved [h,l]
+	ret	
+;
+;	integer arithmetic conventions
+;
+;integer variables are 2 byte, signed numbers
+;	the lo byte comes first in memory
+;
+;calling conventions:
+;for one argument functions:
+;	the argument is in (hl), the result is left in (hl)
+;for two argument operations:
+;	the first argument is in (de)
+;	the second argument is in (hl)
+;	the result is left in the fac and if no overflow, (hl)
+;if overflow occurs, the arguments are converted to single precision
+;when integers are stored in the fac, they are stored at faclo+0,1
+;valtyp(integer)=2
+;%
+					;integer subtrtaction	(hl):=(de)-(hl)
+					;alters a,b,c,d,e,h,l
+isub:	mov	a,h			;extend the sign of (hl) to b
+	ral				;get sign in carry
+	sbb	a
+	mov	b,a
+	call	ineghl			;negate (hl)
+	mov	a,c			;get a zero
+	sbb	b			;negate sign
+	jmp	iadds			;go add the numbers
+					;integer addition	(hl):=(de)+(hl)
+					;alters a,b,c,d,e,h,l
+iadd:	mov	a,h			;extend the sign of (hl) to b
+	ral				;get sign in carry
+	sbb	a
+iadds:	mov	b,a			;save the sign
+	push	h			;save the second argument in case of overflow
+	mov	a,d			;extend the sign of (de) to a
+	ral				;get sign in carry
+	sbb	a
+	dad	d			;add the two lo's
+	adc	b			;add the extra ho
+	rrc				;if the lsb of a is different from the msb of
+	xra	h			; h, then overflow occured
+	jp	conis1			;no overflow, get old (hl) off stack and we
+					; are done, save (hl) in the fac also
+	push	b			;overflow -- save extended sign of (hl)
+	xchg				;get (de) in (hl)
+	call	consih			;float it
+	pop	psw			;get sign of (hl) in a
+	pop	h			;get old (hl) back
+	call	pushf			;put first argument on stack
+	xchg				;put second argument in (de) for floatr
+	call	inegad			;float it
+	jmp	faddt			;add the two numbers using single precision
+					;integer multiplication		(hl):=(de)*(hl)
+					;alters a,b,c,d,e,h,l
+imult:	mov	a,h			;check (hl) if is zero, if so
+	ora	l			; just return.  this is for speed.
+	jz	makint			;update faclo to be zero and return
+	push	h			;save second argument in case of overflow
+	push	d			;save first argument
+	call	imuldv			;fix up the signs
+	push	b			;save the sign of the result
+	mov	b,h			;copy second argument into (bc)
+	mov	c,l
+	lxi	h,0			;zero (hl), that is where the product goes
+	mvi	a,20o			;set up a count
+imult1:	dad	h			;rotate product left one
+	jc	imult5			;check for overlfow
+	xchg				;rotate first argument left one to see if
+	dad	h			; we add in (bc) or not
+	xchg	
+	jnc	imult2			;don't add in anything
+	dad	b			;add in (bc)
+	jc	imult5			;check for overlfow
+imult2:	dcr	a			;are we done?
+	jnz	imult1			;no, do it again
+	pop	b			;we are done, get sign of result
+	pop	d			;get original first argument
+imldiv:	mov	a,h			;entry from idiv, is result .ge. 32768?
+	ora	a
+	jm	imult3			;it is, check for special case of -32768
+	pop	d			;result is ok, get second argument off stack
+	mov	a,b			;get the sign of result in a
+	jmp	inega			;negate the result if necessary
+imult3:	xri	200o			;is result 32768?
+	ora	l			;note: if we get here from idiv, the result
+	jz	imult4			; must be 32768, it cannot be greater
+	xchg				;it is .gt. 32768, we have overflow
+	db	001			;"lxi	b" over next 2 bytes
+imult5:	pop	b			;get sign of result off stack
+	pop	h			;get the original first argument
+	call	consih			;float it
+	pop	h			;get the original second argument
+	call	pushf			;save floated first arument
+	call	consih			;float second argument
+fmultt:	pop	b
+	pop	d
+					;get first argument off stack, entry from polyx
+	jmp	fmult			;multiply the arguments using single precision
+imult4:	mov	a,b			;is result +32768 or -32768?
+	ora	a			;get its sign
+	pop	b			;discard original second argument
+	jm	makint			;the result should be negative, it is ok
+	push	d			;it is positive, save remainder for mod
+	call	consih			;float -32768
+	pop	d			;get mod's remainder back
+	jmp	neg			;negate -32768 to get 32768, we are done
+					;integer division	(hl):=(de)/(hl)
+					;remainder is in (de), quotient in (hl)
+					;alters a,b,c,d,e,h,l
+idiv:	mov	a,h			;check for division by zero
+	ora	l
+	jz	dv0err			;we have division by zero!!
+	call	imuldv			;fix up the signs
+	push	b			;save the sign of the result
+	xchg				;get denominator in (hl)
+	call	ineghl			;negate it
+	mov	b,h			;save negated denominator in (bc)
+	mov	c,l
+	lxi	h,0			;zero where we do the subtraction
+	mvi	a,21o			;set up a count
+	push	psw			;save it
+	ora	a			;clear carry 
+	jmp	idiv3			;go divide
+idiv1:	push	psw			;save count
+	push	h			;save (hl) i.e. current numerator
+	dad	b			;subtract denominator
+	jnc	idiv2			;we subtracted too much, get old (hl) back
+	pop	psw			;the subtraction was good, discard old (hl)
+	stc				;next bit in quotient is a one
+	db	076o			;"mvi	a" over next byte
+idiv2:	pop	h			;ignore the subtraction, we couldn't do it
+idiv3:	mov	a,e			;shift in the next quotient bit
+	ral	
+	mov	e,a
+	mov	a,d			;shift the ho
+	ral	
+	mov	d,a
+	mov	a,l			;shift in the next bit of the numerator
+	ral	
+	mov	l,a
+	mov	a,h			;do the ho
+	ral	
+	mov	h,a			;save the ho
+	pop	psw			;get count back
+	dcr	a			;are we done?
+	jnz	idiv1			;no, divide again
+	xchg				;get quotient in (hl), remainder in (de)
+	pop	b			;get sign of result
+	push	d			;save remainder so stack will be alright
+	jmp	imldiv			;check for special case of 32768
+					;get ready to multiply or divide
+					;alters a,b,c,d,e,h,l
+imuldv:	mov	a,h			;get sign of result
+	xra	d
+	mov	b,a			;save it in b
+	call	inegh			;negate second argument if necesary
+	xchg				;put (de) in (hl), fall in and negate first
+					; argument if necessary
+					;negate h,l
+					;alters a,c,h,l
+inegh:	mov	a,h			;get sign of (hl)
+inega:	ora	a			;set condition codes
+	jp	makint			;we don't have to negate, it is positive
+					;save the result in the fac for when
+					; operators return through here
+ineghl:	xra	a			;clear a
+	mov	c,a			;store a zero (we use this method for isub)
+	sub	l			;negate lo
+	mov	l,a			;save it
+	mov	a,c			;get a zero back
+	sbb	h			;negate ho
+	mov	h,a			;save it
+	jmp	makint			;all done, save the result in the fac
+					; for when operators return through here
+					;integer negation
+					;alters a,b,c,d,e,h,l
+ineg:	lhld	faclo			;get the integer
+	call	ineghl			;negate it
+	mov	a,h			;get the high order
+	xri	200o			;check for special case of 32768
+	ora	l
+	rnz				;it did not occur, everything is fine
+	public	ineg2
+ineg2:	xchg				;we have it, float 32768
+	call	valsng			;change valtyp to "single precision"
+	xra	a			;get a zero for the high order
+inegad:	mvi	b,230o			;entry from iadd, set exponent
+	jmp	floatr			;go float the number
+					;mod operator
+					;(hl):=(de)-(de)/(hl)*(hl),  (de)=quotient
+					;alters a,b,c,d,e,h,l
+imod:	push	d			;save (de) for its sign
+	call	idiv			;divide and get the remainder
+	xra	a			;turnoff the carry and tranfer
+	add	d			;the remainder*2 which is in [d,e]
+	rar				;to [h,l] dividing by two
+	mov	h,a
+	mov	a,e
+	rar	
+	mov	l,a			; ***whg01*** fix to mod operator
+	call	valint			;set valtyp to "integer" in case result of
+					; the division was 32768
+	pop	psw			;get the sign of the remainder back
+	jmp	inega			;negate the remainder if necessary
+	page
+	subttl	double precision arithmetic routines
+;
+;	double precision arithmetic conventions
+;
+;double precision numbers are 8 byte quantities
+;the last 4 bytes in memory are in the same format as single precision numbers
+;the first 4 bytes are 32 more low order bits of precision
+;the lowest order byte comes first in memory
+;
+;calling conventions:
+;for one argument functions:
+;	the argument is in the fac, the result is left in the fac
+;for two argument operations:
+;	the first argument is in the fac
+;	the second argument is in arg-7,6,5,4,3,2,1,0  (note: arglo=arg-7)
+;	the result is left in the fac
+;note:	this order is reversed from int and sng
+;valtyp(double precision)=10 octal
+;%
+					;double precision subtraction	fac:=fac-arg
+					;alters all registers
+dsub:	lxi	h,arg-1			;negate the second argument
+	mov	a,m			;get the ho and sign
+	xri	200o			;complemnt the sign
+	mov	m,a			;put it back
+					;fall into dadd
+					;double precision addition	fac:=fac+arg
+					;alters all registers
+dadd:	lxi	h,arg			;get  pointer to exponent of first argument
+	mov	a,m			;check if it is zero
+	ora	a
+	rz				;it is, result is already in fac
+	mov	b,a			;save exponent for unpacking
+	dcx	h			;point to ho and sign
+	mov	c,m			;get ho and sign for unpacking
+	lxi	d,fac			;get pointer to exponent of second argument
+	ldax	d			;get exponent
+	ora	a			;see if it is zero
+	jz	vmovfa			;it is, move arg to fac and we are done
+	sub	b			;subtract exponents to get shift count
+	jnc	dadd2			;put the smaller number in fac
+	cma				;negate shift count
+	inr	a
+	push	psw			;save shift count
+	mvi	c,10o			;switch fac and arg, set up a count
+	inx	h			;point to arg
+	push	h			;save pointer to arg
+dadd1:	ldax	d			;get a byte of the fac
+	mov	b,m			;get a byte of arg
+	mov	m,a			;put the fac byte in arg
+	mov	a,b			;put the arg byte in a
+	stax	d			;put the arg byte in fac
+	dcx	d			;point to the next lo byte of fac
+	dcx	h			;point to the next lo byte of arg
+	dcr	c			;are we done?
+	jnz	dadd1			;no, do the next lo byte
+	pop	h			;get the ho back
+	mov	b,m			;get the exponent
+	dcx	h			;point to the ho and sign
+	mov	c,m			;get ho and sign for unpacking
+	pop	psw			;get the shift count back
+dadd2:	cpi	71o			;are we within 56 bits?
+	rnc				;no, all done
+	push	psw			;save shift count
+	call	unpack			;unpack the numbers
+	lxi	h,arglo-1		;point to arglo-1
+	mov	b,a			;save subtraction flag
+	mvi	a,0			;
+	mov	m,a			;clear temporary least sig byte
+	sta	dfaclo-1		;clear extra byte
+	pop	psw			;get shift count
+	lxi	h,arg-1			;point to the ho of arg
+	call	dshftr			;shift arg right the right number of times
+	lda	arglo-1			;transfer overflow byte
+	sta	dfaclo-1		;from arg to fac
+	mov	a,b
+	ora	a			;get subtraction flag
+	jp	dadd3			;subtract numbers if their signs are different
+	call	daddaa			;signs are the same, add the numbers
+	jnc	dround			;round the result if no carry
+	xchg				;get pointer to fac in (hl)
+	inr	m			;add 1 to exponent
+	jz	ovfin4
+	call	dshfrb			;shift number right one, shift in carry
+	jmp	dround			;round the result
+dadd3:
+	db	076o			;"mvi	a", subtract the numbers
+	sbb	m			;get the subtract instruction in a
+	call	dadda			;subtract the numbers
+	lxi	h,fac+1			;fix [h,l] to point to sign for dnegr
+	cc	dnegr			;negate the result if it was negative
+					;fall into dnorml
+					;normalize fac
+					;alters a,b,c,d,h,l
+dnorml:	xra	a			;clear shift count
+dnorm1:	mov	b,a			;save shift count
+	lda	fac-1			;get ho
+	ora	a			;see if we can shift 8 left
+	jnz	dnorm5			;we can't, see if number is normalized
+	lxi	h,dfaclo-1		;we can, get pointer to lo
+	mvi	c,10o			;set up a count
+dnorm2:	mov	d,m			;get a byte of fac
+	mov	m,a			;put in byte from last location, the first
+					; time through a is zero
+	mov	a,d			;put the current byte in a for next time
+	inx	h			;increment pointer to next higher order
+	dcr	c			;are we done?
+	jnz	dnorm2			;no, do the next byte
+	mov	a,b			;subtract 8 from shift count
+	sui	10o
+	cpi	300o			;have we shifted all bytes to zero?
+	jnz	dnorm1			;no, try to shift 8 more
+	jmp	zero			;yes, the number is zero
+dnorm3:	dcr	b			;decrement shift count
+	lxi	h,dfaclo-1		;get pointer to lo
+	call	dshflc			;shift the fac left
+	ora	a			;see if number is normalized
+dnorm5:	jp	dnorm3			;shift fac left one if it is not normalized
+	mov	a,b			;get the shift count
+	ora	a			;see if no shifting was done
+	jz	dround			;none was, proceed to round the number
+	lxi	h,fac			;get pointer to exponent
+	add	m			;update it
+	mov	m,a			;save updated exponent
+	jnc	zero			;underflow, the result is zero
+	rz				;result is already zero, we are done
+					;fall into dround and round the result
+					;round fac
+					;alters a,b,h,l
+dround:	lda	dfaclo-1		;get extra byte to see if we have to round
+drounb:	ora	a			;entry from ddiv
+	cm	drouna			;round up if necessary
+	lxi	h,fac+1			;get pointer to unpacked sign
+	mov	a,m			;get sign
+	ani	200o			;isolate sign bit
+	dcx	h			;point to ho
+	dcx	h
+	xra	m			;pack sign and ho
+	mov	m,a			;put packed sign and ho in fac
+	ret				;we are done
+					;subroutine for round: add one to fac
+drouna:	lxi	h,dfaclo		;get pointer to lo, entry from dint
+	mvi	b,7			;set up a count
+drona1:	inr	m			;increment a byte
+	rnz				;return if there was no carry
+	inx	h			;increment pointer to next higher order
+	dcr	b			;have we incremented all bytes
+	jnz	drona1			;no, try the next one
+	inr	m			;yes, increment the exponent
+	jz	ovfin4
+	dcx	h			;the number overflowed its exponent
+	mvi	m,200o			;put 200 in ho
+	ret				;all done
+					;add or subtract 2 dbl quantities
+					;alters a,c,d,e,h,l
+daddd:	lxi	d,fbuffr+27		;entry from ddiv
+	lxi	h,arglo			;add or subtract fbuffr+^d27 and arg
+	jmp	dadds			;do the operation
+daddaa:	db	076o			;"mvi	a", entry from dadd, dmult
+	adc	m			;setup add instruction for loop
+dadda:	lxi	h,arglo			;get pointer to arg, entry from dadd
+daddfo:	lxi	d,dfaclo		;get pointer to fac, entry from fout
+dadds:	mvi	c,7			;set up a count
+dadds1:
+	sta	daddop			;store the add or subtract instruction
+	xra	a			;clear carry
+daddl:	ldax	d			;get a byte from result number
+daddop:	adc	m			;this is either "adc	m" or "sbb	m"
+	stax	d			;save the changed byte
+	inx	d			;increment pointers to next higher order byte
+	inx	h
+	dcr	c			;are we done?
+	jnz	daddl			;no, do the next higher order byte
+	ret				;all done
+					;negate signed number in fac
+					;this is used by dadd, dint
+					;alters a,b,c,h,l
+dnegr:	mov	a,m			;complement sign of fac
+	cma				;use the unpacked sign byte
+	mov	m,a			;save the new sign
+	lxi	h,dfaclo-1		;get pointer to lo
+	mvi	b,10o			;set up a count
+	xra	a			;clear carry and get a zero
+	mov	c,a			;save zero in c
+dnegr1:	mov	a,c			;get a zero
+	sbb	m			;negate the byte of fac
+	mov	m,a			;update fac
+	inx	h			;increment pointer to next higher order byte
+	dcr	b			;are we done?
+	jnz	dnegr1			;no, negate the next byte
+	ret				;all done
+					;shift dbl fac right one
+					;a = shift count
+					;alters a,c,d,e,h,l
+dshftr:	mov	m,c			;put the unpacked ho back
+	push	h			;save pointer to what to shift
+dshfr1:	sui	10o			;see if we can shift 8 right
+	jc	dshfr3			;we can't, check if we are done
+	pop	h			;get pointer back
+dshfrm:	push	h			;entry from dmult, save pointer to ho
+	lxi	d,10o*400o+0		;shift a zero into the ho, set up a count
+dshfr2:	mov	c,m			;save a byte of fac
+	mov	m,e			;put the last byte in its place
+	mov	e,c			;set up e for next time through the loop
+	dcx	h			;point to next lower order byte
+	dcr	d			;are we done?
+	jnz	dshfr2			;no, do the next byte
+	jmp	dshfr1			;yes, see if we can shift over 8 more
+dshfr3:	adi	11o			;correct shift count
+	mov	d,a			;save shift count in d
+dshfr4:	xra	a			;clear carry
+	pop	h			;get pointer to ho
+	dcr	d			;are we done?
+	rz				;yes
+dshfra:	push	h			;no, save pointer to lo, entry from dadd, dmult
+	mvi	e,10o			;set up a count, rotate fac one left
+dshfr5:	mov	a,m			;get a byte of the fac
+	rar				;rotate it left
+	mov	m,a			;put the updated byte back
+	dcx	h			;decrement pointer to next lower order byte
+	dcr	e			;are we done?
+	jnz	dshfr5			;no, rotate the next lower order byte
+	jmp	dshfr4			;yes, see if we are done shifting
+					;entry to dshftr from dadd, dmult
+dshfrb:	lxi	h,fac-1			;get pointer to ho of fac
+	mvi	d,1			;shift right once
+	jmp	dshfra			;go do it
+					;rotate fac left one
+					;alters a,c,h,l
+dshflc:	mvi	c,10o			;set up a count
+dshftl:	mov	a,m			;
+	ral				;rotate it left one
+	mov	m,a			;update byte in fac
+	inx	h			;increment pointer to next higher order byte
+	dcr	c			;are we done?
+	jnz	dshftl
+	ret				;all done
+					;double precision multiplication	fac:=fac*arg
+					;alters all registers
+dmult:	call	sign			;check if we are multiplying by zero
+	rz				;yes, all done, the fac is zero
+	lda	arg			;must see if arg is zero
+	ora	a
+	jz	zero			;return zero
+	call	muldva			;add exponents and take care of signs
+	call	dmuldv			;zero fac and put fac in fbuffr
+	mov	m,c			;put unpacked ho in arg
+	inx	d			;get pointer to lo of arg
+	mvi	b,7			;set up a count
+dmult2:	ldax	d			;get the byte of arg to multiply by
+	inx	d			;increment pointer to next higher byte
+	ora	a			;check if we are multiplying by zero
+	push	d			;save pointer to arg
+	jz	dmult5			;we are
+	mvi	c,10o			;set up a count
+dmult3:	push	b			;save counters
+	rar				;rotate multiplier right
+	mov	b,a			;save it
+	cc	daddaa			;add in old fac if bit of multipier was one
+	call	dshfrb			;rotate product right one
+	mov	a,b			;get multiplier in a
+	pop	b			;get counters back
+	dcr	c			;are we done with this byte of arg?
+	jnz	dmult3			;no, multiply by the next bit of the multiplier
+dmult4:	pop	d			;yes, get pointer into arg back
+	dcr	b			;are we done?
+	jnz	dmult2			;no, multiply by next higher order by of arg
+					;point is to right of understood one
+	jmp	dnorml			;all done, normalize and round result
+dmult5:	lxi	h,fac-1			;get pointer to ho of fac
+	call	dshfrm			;shift product right one byte, we are
+	jmp	dmult4			; multiplyiing by zero
+					;constant for div10, ddiv10
+tenth:	db	315o
+	db	314o
+	db	314o
+	db	314o
+	db	314o
+	db	314o
+	db	114o
+	db	175o
+dten:	db	000			; 10d0
+	db	000
+	db	000
+	db	000
+ften:	db	000			; 10.0
+	db	000
+	db	040o
+	db	204o
+					;double precision divide fac by 10
+					;alters all registers
+ddiv10:					;double precision divide fac by 10
+					;(fac)=(fac)*3/4*16/15*1/8
+	lda	fac			;must assure ourselves we can do
+	cpi	101o			;65 exponent decrements w/o 
+	jnc	dd04			;reaching zero
+	lxi	d,tenth			;point to .1d0
+	lxi	h,arglo			;point to arg
+	call	vmove
+	jmp	dmult
+dd04:
+	lda	fac-1			;negative no?
+	ora	a
+	jp	dd05
+	ani	177o			;want only pos. nos.
+	sta	fac-1
+	lxi	h,neg
+	push	h			;will negate when finished
+dd05:
+	call	$decf1			;divide fac by 2
+	lxi	d,dfaclo
+	lxi	h,arglo
+	call	vmove
+	call	$decf1			;divide fac by 2
+	call	dadd			;(fac)=(fac)+(arg)
+	lxi	d,dfaclo
+	lxi	h,arglo
+	call	vmove			;(arg)=(fac)
+	mvi	a,15
+dd10:	push	psw			;save loop counter
+	call	$deca4			;(arg)=(arg)/16
+	call	$psarg			;push arg on the stack
+	call	dadd			;(fac)=(fac)+(arg)
+	lxi	h,arg-1
+	call	$pparg			;pop arg off the stack
+	pop	psw			;fetch loop counter
+	dcr	a
+	jnz	dd10
+	call	$decf1
+	call	$decf1
+	call	$decf1
+	ret	
+$decf1:	lxi	h,fac
+	dcr	m			;(fac)=(fac)/2
+	rnz	
+	jmp	zero			;underflow
+$deca4:					;(arg)=(arg)/16
+	lxi	h,arg
+	mvi	a,4
+dc4:	dcr	m
+	rz	
+	dcr	a
+	jnz	dc4
+	ret	
+$psarg:					;push double precision arg on the stack
+	pop	d			;get our return address off the stack
+	mvi	a,4
+	lxi	h,arglo
+psa10:	mov	c,m			;fetch byte
+	inx	h
+	mov	b,m
+	inx	h
+	push	b
+	dcr	a			;through?
+	jnz	psa10
+	push	d
+	ret	
+$pparg:					;pop arg off the stack
+	pop	d			;get our return address off the stack
+	mvi	a,4
+	lxi	h,arg
+ppa10:	pop	b
+	mov	m,b
+	dcx	h
+	mov	m,c
+	dcx	h
+	dcr	a
+	jnz	ppa10
+	push	d
+	ret	
+					;double precision division	fac:=fac/arg
+					;alters all registers
+ddiv:	lda	arg			;check for division by zero
+	ora	a			;get the exponent of arg
+	jz	intdv0
+	lda	fac			;if fac=0 then ans is zero
+	ora	a
+	jz	zero
+	call	muldvs			;subtract exponents and check signs
+	inr	m			;muldiv different for truans=0
+	inr	m			;must correct for incorrect exp calc
+	jz	ovfin4
+	call	dmuldv			;zero fac and put fac in fbuffr
+	lxi	h,fbuffr+34		;get pointer to the extra ho byte we will use
+	mov	m,c			;zero it
+	mov	b,c			;zero flag to see when we start dividing
+ddiv1:
+	db	076o			;"mvi	a", subtract arg from fbuffr
+	sbb	m			;get subtract instruction
+	call	daddd			;do the subtraction
+	ldax	d			;subtract from extra ho byte
+	sbb	c			;here c=0
+	cmc				;carry=1 if subtraction was good
+	jc	ddiv2			;was it ok?
+	db	076o			;"mvi	a"  no, add fbuffr back in
+	adc	m			;get add instruction
+	call	daddd			;do the addition
+	xra	a			;clear carry
+	db	332o			;"jc" over next two bytes
+ddiv2:	stax	d			;store the new highest order byte
+	inr	b			;increment flag to show we could divide
+	lda	fac-1			;check if we are done dividing
+	inr	a			;set sign flag without affecting carry
+	dcr	a
+	rar				;put carry in msb for dround
+	jm	drounb			;we are done, we have 57 bits of accuracy
+	ral				;get old carry back where it belongs
+	lxi	h,dfaclo		;get pointer to lo of fac
+	mvi	c,7			;set up a count, shift fac left one
+	call	dshftl			;shift in the next bit in the quotient
+	lxi	h,fbuffr+27		;get pointer to lo in fbuffr
+	call	dshflc			;shift dividend one left
+	mov	a,b			;is this the first time and was the
+	ora	a			; subtraction not good? (b will get
+	jnz	ddiv1			; changed on the first or second subtraction)
+	lxi	h,fac			;yes, subtract one from exponent to correct
+	dcr	m			; scaling
+	jnz	ddiv1			;continue dividing if no underflow
+	jmp	zero			;underflow
+					;transfer fac to fbuffr for dmult and ddiv
+					;alters a,b,c,d,e,h,l
+dmuldv:
+	mov	a,c			;put unpacked ho back in arg
+	sta	arg-1
+	dcx	h			;point to ho of fac
+	lxi	d,fbuffr+33		;point to end of fbuffr
+	lxi	b,7*400o+0		;set up a count
+					;to fbuffr
+dmldv1:	mov	a,m			;get a byte from fac
+	stax	d			;put it in fbuffr
+	mov	m,c			;put a zero in fac
+	dcx	d			;point to next byte in fbuffr
+	dcx	h			;point to next lower order byte in fac
+	dcr	b			;are we done?
+	jnz	dmldv1			;no, transfer the next byte
+	ret				;all done
+					;double precision multiply the fac by 10
+					;alters all registers
+dmul10:	call	vmovaf			;save the fac in arg
+					;vmovaf exits with (de)=fac+1
+	xchg				;get the pointer into the fac in (hl)
+	dcx	h			;point to the exponent
+	mov	a,m			;get the exponent
+	ora	a			;is the number zero?
+	rz				;yes, all done
+	adi	2			;multiply fac by 4 by adding 2 to the exponent
+	jc	ovfin4
+	mov	m,a			;save the new exponent
+	push	h			;save pointer to fac
+	call	dadd			;add in the original fac to get 5 times  fac
+	pop	h			;get the pointer to fac back
+	inr	m			;add one to exponent to get 10 times fac
+	rnz				;all done if overflow did not occur
+	jmp	ovfin4
+					;multiply fac by 10
+	page
+	subttl	floating point input routine
+					;alters all registers
+					;the number is left in fac
+					;at entry, (hl) points to the first character in a text buffer.
+					;the first character is also in a.  we pack the digits into the fac
+					;as an integer and keep track of where the decimal point is.
+					;c is 377 if we have not seen a decimal point, 0 if we have.
+					;b is the number of digits after the decimal point.
+					;at the end, b and the exponent (in e) are used to determine how many
+					;times we multiply or divide by ten to get the correct number.
+	public	findbl
+findbl:	call	zero			;zero the fac
+	call	valdbl			;force to double precision
+	db	366o			;"ori" over "xra a" so frcint is not called
+fin:
+	xra	a			;force call to frcint
+	extrn	finovc
+	lxi	b,finovc		;when done store overflow flag
+	push	b			;into strovc and go to normal overflow mode
+	push	psw			;set up once only overflow mode
+	mvi	a,1
+	sta	flgovc
+	pop	psw
+finchr:	xchg				;save the text pointer in (de)
+	lxi	b,377o+0		;clear flags:  b=decimal place count
+					;c="." flag
+	mov	h,b			;zero (hl)
+	mov	l,b
+	cz	makint			;zero fac, set valtyp to "integer"
+	xchg				;get the text pointer back in (hl) and 
+					; zeros in (de)
+	mov	a,m			;restore char from memory
+	cpi	'&'
+	extrn	octcns
+	jz	octcns
+					;restore [a]
+					;if we are called by val or input or read, the signs may not be crunched
+	cpi	'-'			;see if number is negative
+	push	psw			;save sign
+	jz	fin1			;ignore minus sign
+	cpi	'+'			;ignore a leading sign
+	jz	fin1
+	dcx	h			;set character pointer back one
+fin1:
+					;here to check for a digit, a decimal point, "e" or "d"
+finc:	call	chrgtr			;get the next character of the number
+	jc	findig			;we have a digit
+	cpi	'.'			;check for a decimal point
+	jz	findp			;we have one, i guess
+	cpi	145o			;lower case "e"
+	jz	finc1
+	cpi	'E'			;check for a single precision exponent
+finc1:
+	jnz	note			;no
+	push	h			;save text ptr
+	call	chrgtr			;get next char
+	cpi	'L'+40o			;see if lower case "l"
+	jz	wuzels			;if so possible else
+	cpi	'L'			;is this really an "else"?
+	jz	wuzels			;was else
+	cpi	'Q'+40o			;see if lower case "q"
+	jz	wuzels			;if so possible "eqv"
+	cpi	'Q'			;possible "eqv"
+wuzels:	pop	h			;restore [h,l]
+	jz	wuz			;it was jump!
+	lda	valtyp			;if double don't downgrade to single
+	cpi	10o			;set condition codes
+	jz	finex1
+	mvi	a,0			;make a=0 so number is a single
+	jmp	finex1
+wuz:
+	mov	a,m			;restore original char
+note:
+	cpi	'%'			;trailing % (rsts-11 compatibility)
+	jz	finint			;must be integer.
+	cpi	'#'			;force double precision?
+	jz	findbf			;yes, force it & finish up.
+	cpi	'!'			;force single prec.
+	jz	finsnf
+	cpi	144o			;lower case "d"
+	jz	finex1
+	cpi	'D'			;check for a double precision exponent
+	jnz	fine			;we don't have one, the number is finished
+finex1:	ora	a			;double precision number -- turn off zero flag
+finex:	call	finfrc			;force the fac to be sng or dbl
+	call	chrgtr			;get the first character of the exponent
+	call	minpls			;eat sign of exponent
+					;here to get the next digit of the exponent
+finec:	call	chrgtr			;get the next charater
+	jc	finedg			;pack the next digit into the exponent
+	inr	d			;it was not a digit, put the correct sign on
+	jnz	fine			; the exponent, it is positive
+	xra	a			;the exponent is negative
+	sub	e			;negate it
+	mov	e,a			;save it again
+					;here to finish up the number
+fine:	push	h			;save the text pointer
+	mov	a,e			;find out how many times we have to multiply
+	sub	b			; or divide by ten
+	mov	e,a			;save new exponent in e
+					;here to multiply or divide by ten the correct number of times
+					;if the number is an int, a is 0 here.
+fine2:	cp	finmul			;multiply if we have to
+	cm	findiv			;divide if we have to
+	jnz	fine2			;multiply or divide again if we are not done
+					;here to put the correct sign on the number
+	pop	h			;get the text pointer
+	pop	psw			;get the sign
+	push	h			;save the text pointer again
+	cz	vneg			;negate if necessary
+fine2c:	pop	h			;get the text pointer in (hl)
+	call	getypr			;we want -32768 to be an int, but until now
+					; it would be a sng
+	rpe				;it is not sng, so it is not -32768
+	push	h			;we have a sng, save text pointer
+	lxi	h,pophrt		;get address that pop's h off stack because
+	push	h			; conis2 does funny things with the stack
+	call	conis2			;check if we have -32768
+	ret				;we don't, pophrt is still on the stack so
+					; we can just return
+					;here to check if we have seen 2 decimal points and set the decimal
+					; point flag
+findp:	call	getypr			;set carry if we don't have a double
+	inr	c			;set the flag
+	jnz	fine			;we had 2 decimal points, now we are done
+	cc	finfrc			;this is the first one, convert fac to sng
+					; if we don't already have a double
+	jmp	finc			;continue looking for digits
+finint:	call	chrgtr
+	pop	psw			;get sign off the stack
+	push	h			;save text pointer
+	lxi	h,pophrt		;address pop (hl) and return
+	push	h			;
+	lxi	h,frcint		;address to force integer
+	push	h			;will want to force once d.p. done
+	push	psw			;put sign back on the stack
+	jmp	fine			;all done
+findbf:	ora	a			;set non-zero to force double prec
+finsnf:	call	finfrc			;force the type
+	call	chrgtr			;read after terminator
+	jmp	fine			;all done
+					;force the fac to be sng or dbl
+					;if the zero flag is on, then force the fac to be sng
+					;if the zero flag is off, force the fac to be dbl
+finfrc:	push	h			;save text pointer
+	push	d			;save exponent information
+	push	b			;save decimal point information
+	push	psw			;save what we want the fac to be
+	cz	frcsng			;convert to sng if we have to
+	pop	psw			;get type flag back
+	cnz	frcdbl			;convert to dbl if we have to
+	pop	b			;get decimal point information back
+	pop	d			;get exponent information back
+	pop	h			;get text pointer back
+	ret				;all done
+					;this subroutine muliplies by ten once.
+					;it is a subroutine because it saves bytes when we check if a is zero
+					;alters all registers
+finmul:	rz				;return if exponent is zero, entry from fout
+finmlt:	push	psw			;save exponent, entry from fout
+	call	getypr			;see what kind of number we have
+	push	psw			;save the type
+	cpo	mul10			;we have a sng, multiply by 10.0
+	pop	psw			;get the type back
+	cpe	dmul10			;we have a dbl, multiply by 10d0
+	pop	psw			;get exponent
+dcrart:	dcr	a			;decrease it
+	ret				;all done
+					;this subroutine divides by ten once.
+					;it is used by fin, fout
+					;alters a,b,c
+findiv:	push	d			;save d,e
+	push	h			;save h,l
+	push	psw			;we have to divide -- save count
+	call	getypr			;see what kind of number we have
+	push	psw			;save the type
+	cpo	div10			;we have a sng number
+	pop	psw			;get the type back
+	cpe	ddiv10			;we have a dbl number
+	pop	psw			;get count back
+	pop	h			;get h,l back
+	pop	d			;get d,e back
+	inr	a			;update it
+	ret	
+					;here to pack the next digit of the number into the fac
+					;we multiply the fac by ten and add in the next digit
+findig:
+	push	d			;save exponent information
+	mov	a,b			;increment decimal place count if we are
+	adc	c			; past the decimal point
+	mov	b,a
+	push	b			;save decimal point information
+	push	h			;save text pointer
+	mov	a,m			;get the digit
+	sui	'0'			;convert it to ascii
+	push	psw			;save the digit
+	call	getypr			;see what kind of a number we have
+	jp	findgv			;we do not have an integer
+					;here to pack the next digit of an integer
+	lhld	faclo			;we have an integer, get it in (hl)
+	lxi	d,3277+0		;see if we will overflow
+	call	dcompr			;compar returns with carry on if
+	jnc	findg2			; (hl) .lt. (de), so the number is too big
+	mov	d,h			;copy (hl) into (de)
+	mov	e,l
+	dad	h			;multiply (hl) by 2
+	dad	h			;multiply (hl) by 2, (hl) now is 4*(de)
+	dad	d			;add in old (hl) to get 5*(de)
+	dad	h			;multiply by 2 to get ten times the old (hl)
+	pop	psw			;get the digit
+	mov	c,a			;save it so we can use dad, b is already zero
+	dad	b			;add in the next digit
+	mov	a,h			;check for overflow
+	ora	a			;overflow occured if the msb is on
+	jm	findg1			;we have overflow!!
+	shld	faclo			;everything is fine, store the new number
+findge:	pop	h			;all done, get text pointer back
+	pop	b			;get decimal point information back
+	pop	d			;get exponent information back
+	jmp	finc			;get the next character
+					;here to handle 32768, 32769
+findg1:	mov	a,c			;get the digit
+	push	psw			;put it back on the stack
+					;here to convert the integer digits to single precision digits
+findg2:	call	consi			;convert the integer to single precision
+	stc				;do not take the following jump
+					;here to decide if we have a single or double precision number
+findgv:	jnc	findgd			;fall through if valtyp was 4 i.e. sng prec
+	lxi	b,224q*256+164q
+	lxi	d,044q*256+000q		;get 1000000, do we have 7 digits already?
+	call	fcomp			;if so, fac .ge. 1000000
+	jp	findg3			;we do, convert to double precision
+	call	mul10			;multiply the old number by ten
+	pop	psw			;get the next digit
+	call	finlog			;pack it into the fac
+	jmp	findge			;get flags off stack and we are done
+					;here to convert a 7 digit single precision number to double precision
+findg3:	call	conds			;convert single to double precision
+					;here to pack in the next digit of a double precision number
+findgd:	call	dmul10			;multiply the fac by 10
+	call	vmovaf			;save the fac in arg
+	pop	psw			;get the next digit
+	call	float			;convert the digit to single precision
+	call	conds			;now, convert the digit to double precision
+	call	dadd			;add in the digit
+	jmp	findge			;get the flags off the stack and we are done
+					;subroutine for fin, log
+finlog:	call	pushf			;save fac on stack
+	call	float			;convert a to a floating point number
+faddt:	pop	b
+	pop	d
+					;get previous number off stack
+	jmp	fadd			;add it in
+					;here we pack in the next digit of the exponent
+					;we mutiply the old exponent by ten and add in the next digit
+					;note: exponent overflow is not checked for
+finedg:	mov	a,e			;exponent digit -- multiply exponent by 10
+	cpi	12o			;check that the exponent does not overflow
+					;if it did, e could get garbage in it.
+	jnc	finedo			;we already have two digits
+	rlc				;first by 4
+	rlc	
+	add	e			;add 1 to make 5
+	rlc				;now double to get 10
+	add	m			;add it in
+	sui	'0'			;subtract off ascii code, the result is
+					; positive on length=2 because of the
+					; above check
+	mov	e,a			;store exponent
+	db	372o			;"jm" over the next 2 bytes
+finedo:	mvi	e,127			;an exponent like this will safely cause
+					; overflow or underflow
+	jmp	finec			;continue
+ovfin1:	ora	a			;clear carry
+	jmp	ovfint			;go print overflow
+ovfin9:	pop	psw			;get stack right
+ovfin2:	push	h			;
+	lxi	h,fac-1			;point (hl) to sign byte
+	call	getypr
+	jpo	ovf2a			;sp proceed as normal
+	lda	arg-1
+	jmp	ovf2b
+ovf2a:
+	mov	a,c
+ovf2b:
+	xra	m			;sign in high bit of (a)
+	ral				;sign in carry
+	pop	h			;
+	jmp	ovfint
+ovf2c:	lda	fac+1			;this entry is used by consd
+	jmp	ovfi4b			;when d.p. exp too large for s.p.
+ovfin5:	pop	psw			;need to do 3 pop's then overflow
+ovfin6:	pop	psw
+ovfin7:	pop	psw
+ovfin3:	lda	fac-1
+	ral	
+	jmp	ovfint
+ovfin8:	pop	psw			;do a pop then fall into ovfin4
+ovfin4:	lda	fac+1			;get sign byte
+	cma				;sign was stored complemented
+ovfi4b:	ral				;sign to carry
+	jmp	ovfint
+intdv1:	mov	a,c
+	jmp	intdv2			;
+intdv0:	push	h			;get arg sign byte
+	push	d			;
+	lxi	h,dfaclo
+	lxi	d,infm			;all one's
+	call	move
+	lda	infm			;377
+	sta	dfaclo+2		;(previously 177)
+	call	getypr
+	jpo	indv0a			;not d.p. load arg sign
+	lda	fac-1
+	jmp	indv0b
+indv0a:
+	lda	arg-1
+indv0b:	pop	d
+	pop	h
+intdv2:	ral				;to carry
+	lxi	h,divmsg		;get message address
+	shld	overri			;store so ovfint will pick up
+ovfint:					;ansi overflow routine
+	push	h
+	push	b
+	push	d
+	push	psw			;save machine status
+	push	psw			;again
+	extrn	onelin			;
+	lhld	onelin			;trapping errors?
+	mov	a,h
+	ora	l
+	jnz	ovfprt			;jump print if trapping
+					;otherwise +infinity
+	lda	flgovc			;print indicator flag
+	ora	a			;print if 0,1;set to 2 if 1
+	jz	ov1a			;go print
+	cpi	1
+	jnz	ov1b
+	mvi	a,2
+	sta	flgovc
+ov1a:
+	lhld	overri			;address of overflow message
+	call	strprn			;print
+	sta	ttypos			;set tty position to char 0
+					;set tty position to char 0
+	mvi	a,15o
+	call	caltty
+	mvi	a,12o
+	call	caltty			;carriage return,line feed
+ov1b:
+ovfprt:	pop	psw			;get plus,minus indication back
+	lxi	h,faclo			;must now put right infinity
+					;into the fac
+	lxi	d,infp
+	jnc	ovfina
+	lxi	d,infm			;minus infinity
+ovfina:	call	move			;move into fac
+	call	getypr
+	jpo	ovfinb			;sp all ok
+	lxi	h,dfaclo
+	lxi	d,infm			;all ones
+	call	move
+ovfinb:
+	lhld	onelin			;trapping errors?
+	mov	a,h
+	ora	l
+	jz	noodtp			;jump if not trapping
+	lhld	overri
+	lxi	d,ovrmsg
+	call	dcompr
+	lxi	h,ovrmsg
+	shld	overri
+	jz	overr
+	jmp	dv0err
+noodtp:
+	pop	psw			;
+	lxi	h,ovrmsg		;put "ovrmsg" address in overri
+	shld	overri			;in case this was a div by 0
+	pop	d
+	pop	b
+	pop	h			;all restored 
+	ret				;continue processing
+infp:	db	377o
+	db	377o
+	db	177o
+	db	377o
+infm:	db	377o
+	db	377o
+	db	377o
+	db	377o
+	page
+	subttl	floating point output routine
+					;entry to linprt
+inprt:	push	h			;save line number
+	lxi	h,intxt			;print message
+	call	strout
+	pop	h			;fall into linprt
+					;print the 2 byte number in h,l
+					;alters all registers
+linprt:
+	lxi	b,stroui
+	push	b
+	public	linout
+linout:	call	makint			;put the line number in the fac as an integer
+	xra	a			;set format to free format
+	call	fouini			;set up the sign
+	ora	m			;turn off the zero flag
+	jmp	fout2			;convert the number into digits
+	extrn	stroui
+					;floating output of fac
+					;alters all registers
+					;the original contents of the fac is lost
+;
+;	output the value in the fac according to the format specifications
+;	in a,b,c
+;	all registers are altered
+;	the original contents of the fac is lost
+;
+;	the format is specified in a, b and c as follows:
+;	the bits of a mean the following:
+;bit 7	0 means free format output, i.e. the other bits of a must be zero,
+;	trailing zeros are suppressed, a number is printed in fixed or floating
+;	point notation according to its magnitude, the number is left
+;	justified in its field, b and c are ignored.
+;	1 means fixed format output, i.e. the other bits of a are checked for
+;	formatting information, the number is right justified in its field,
+;	trailing zeros are not suppressed.  this is used for print using.
+;bit 6	1 means group the digits in the integer part of the number into groups
+;	of three and separate the groups by commas
+;	0 means don't print the number with commas
+;bit 5	1 means fill the leading spaces in the field with asterisks ("*")
+;bit 4	1 means output the number with a floating dollar sign ("$")
+;bit 3	1 means print the sign of a positive number as a plus sign ("+")
+;	instead of a space
+;bit 2	1 means print the sign of the number after the number
+;bit 1	unused
+;bit 0	1 means print the number in floating point notation i.e. "e notation"
+;	if this bit is on, the comma specification (bit 6) is ignored.
+;	0 means print the number in fixed point notation.  numbers .ge. 1e16
+;	cannot be printed in fixed point notation.
+;
+;	b and c tell how big the field is:
+;b   =	the number of places in the field to the left of the decimal point
+;	(b does not include the decimal point)
+;c   =	the number of places in the field to the right of the decimal point
+;	(c includes the decimal point)
+;	b and c do not include the 4 positions for the exponent if bit 0 is on
+;	fout assumes b+c .le. 24 (decimal)
+;	if the number is too big to fit in the field, a percent sign ("%") is
+;	printed and the field is extended to hold the number.
+;&
+					;entry to print the fac in free format
+fout:	xra	a			;set format flags to free formated output
+					;entry to print the fac using the format specifications in a, b and c
+pufout:	call	fouini			;save the format specification in a and put
+					;a space for positive numbers in the buffer
+	ani	10o			;check if positive numbers get a plus sign
+	jz	fout1			;they don't
+	mvi	m,'+'			;they do, put in a plus sign
+fout1:	xchg				;save buffer pointer
+	call	vsign			;get the sign of the fac
+	xchg				;put the buffer pointer back in (hl)
+	jp	fout2			;if we have a negative number, negate it
+	mvi	m,'-'			; and put a minus sign in the buffer
+	push	b			;save the field length specification
+	push	h			;save the buffer pointer
+	call	vneg			;negate the number
+	pop	h			;get the buffer pointer back
+	pop	b			;get the field length specifications back
+	ora	h			;turn off the zero flag, this depends on the
+					; fact that fbuffr is never on page 0.
+fout2:	inx	h			;point to where the next character goes
+	mvi	m,'0'			;put a zero in the buffer in case the number
+					; is zero (in free format) or to reserve space
+					; for a floating dollar sign (fixed format)
+	lda	temp3			;get the format specification
+	mov	d,a			;save it for later
+	ral				;put the free format or not bit in the carry
+	lda	valtyp			;get the valtyp, vneg could have changed this
+					; since -32768 is int and 32768 is sng.
+	jc	foutfx			;the man wants fixed formated output
+					;here to print numbers in free format
+	jz	foutzr			;if the number is zero, finish it up
+	cpi	4			;decide what kind of a value we have
+	jnc	foufrv			;we have a sng or dbl
+					;here to print an integer in free format
+	lxi	b,0			;set the decimal point count and comma count
+					; to zero
+	call	foutci			;convert the integer to decimal
+					;fall into foutzs and zero suppress the thing
+					;zero suppress the digits in fbuffr
+					;asterisk fill and zero suppress if necessary
+					;set up b and condition codes if we have a trailing sign
+foutzs:	lxi	h,fbuffr+1		;get pointer to the sign
+	mov	b,m			;save the sign in b
+	mvi	c,' '			;default fill character to a space
+	lda	temp3			;get format specs to see if we have to
+	mov	e,a			; asterisk fill.  save it
+	ani	40o
+	jz	fotzs1			;we don't
+	mov	a,b			;we do, see if the sign was a space
+	cmp	c			;zero flag is set if it was
+	mvi	c,'*'			;set fill character to an asterisk
+	jnz	fotzs1			;set the sign to an asterisk if it was a space
+	mov	a,e			;get format specs again
+	ani	4			;see if sign is trailing
+	jnz	fotzs1			;if so don't asterisk fill
+	mov	b,c			;b has the sign, c the fill character
+fotzs1:	mov	m,c			;fill in the zero or the sign
+	call	chrgtr			;get the next character in the buffer
+					;since there are no spaces, "chrget" is
+					; equivalent to "inx	h"/"mov	a,m"
+	jz	fotzs4			;if we see a real zero, it is the end of
+					; the number, and we must back up and put
+					; in a zero.  chrget sets the zero flag on
+					; real zeros or colons, but we won't see
+					; any colons in this buffer.
+	cpi	'E'			;back up and put in a zero if we see
+	jz	fotzs4			;an "e" or a "d" so we can print 0 in
+	cpi	'D'			;floating point notation with the c format zero
+	jz	fotzs4
+	cpi	'0'			;do we have a zero?
+	jz	fotzs1			;yes, suppress it
+	cpi	54o			;54=","  do we have a comma?
+	jz	fotzs1			;yes, suppress it
+	cpi	'.'			;are we at the decimal point?
+	jnz	fotzs2			;no, i guess not
+fotzs4:	dcx	h			;yes, back up and put a zero before it
+	mvi	m,'0'
+fotzs2:	mov	a,e			;get the format specs to check for a floating
+	ani	20o			; dollar sign
+	jz	fotzs3			;we don't have one
+	dcx	h			;we have one, back up and put in the dollar
+	mvi	m,curncy		; sign
+fotzs3:	mov	a,e			;do we have a trailing sign?
+	ani	4
+	rnz				;yes, return; note the non-zero flag is set
+	dcx	h			;no, back up one and put the sign back in
+	mov	m,b			;put in the sign
+	ret				;all done
+					;here to initially set up the format specs and put in a space for the
+					;sign of a positive number
+fouini:	sta	temp3			;save the format specification
+	lxi	h,fbuffr+1		;get a pointer into fbuffr
+					;we start at fbuffr+1 in case the number will
+					; overflow its field, then there is room in
+					; fbuffr for the percent sign.
+	mvi	m,' '			;put in a space
+	ret				;all done
+					;here to print a sng or dbl in free format
+foufrv:
+					;the following code down to foufrf: is added to address the
+					;ansi standard of printing numbers in fixed format rather than
+					;scientific notation if they can be as accurately rpresented
+					;in fixed format
+	call	pushf			;save in case needed for 2ed pass
+	xchg				;save buffer pointer in (hl)
+	lhld	dfaclo
+	push	h			;save for d.p.
+	lhld	dfaclo+2		;
+	push	h			;
+	xchg				;buffer pointer back to (hl)
+	push	psw			;save in case needed for second pass
+	xra	a			;(a)=0
+	sta	fansii			;initialize fansii flag
+	pop	psw			;get psw right
+	push	psw			;save psw
+	call	foufrf			;format number
+	mvi	b,'E'			;will search for scientific notn.
+	mvi	c,0			;digit counter
+fu1:					;get original fbuffer pointer
+	push	h			;save in case we need to look for "d"
+	mov	a,m			;fetch up first character
+fu2:	cmp	b			;scientific notation?
+	jz	fu4			;if so, jump
+	cpi	72o			;if carry not set not a digit
+	jnc	fu2a
+	cpi	60o			;if carry set not a digit
+	jc	fu2a
+	inr	c			;incremented digits to print
+fu2a:	inx	h			;point to next buffer character
+	mov	a,m			;fetch next character
+	ora	a			;0(binary) at the end of characters
+	jnz	fu2			;continue search if not at end
+	mvi	a,'D'			;now to check to see if searched for d
+	cmp	b
+	mov	b,a			;in case not yet searched for
+	pop	h			;now to check for "d"
+	mvi	c,0			;zero digit count
+	jnz	fu1			;go search for "d" if not done so
+fu3:	pop	psw			;pop	original psw
+	pop	b
+	pop	d
+					;get dfaclo-dfaclo+3
+	xchg				;(de)=buf ptr,(hl)=dfaclo
+	shld	dfaclo			;
+	mov	h,b
+	mov	l,c
+	shld	dfaclo+2
+	xchg	
+	pop	b
+	pop	d
+					;get orig fac off stack
+	ret				;complete
+fu4:					;print is in scientific notation , is this best?
+	push	b			;save type,digit count
+	mvi	b,0			;exponent value (in binary)
+	inx	h			;point to next character of exp.
+	mov	a,m			;fetch next character of exponent
+fu5:	cpi	'+'			;is exponent positive?
+	jz	fu8			;if so no better printout
+	cpi	'-'			;must be negative!
+	jz	fu5a			;must process the digits
+	sui	'0'			;subtract out ascii bias
+	mov	c,a			;digit to c
+	mov	a,b			;fetch old digit
+	add	a			;*2
+	add	a			;*4
+	add	b			;*5
+	add	a			;*10
+	add	c			;add in new digit
+	mov	b,a			;back out to exponent accumulator
+	cpi	20o			;16 d.p. digits for microsoft format
+	jnc	fu8			;if so stop trying
+fu5a:	inx	h			;point to next character 
+	mov	a,m			;fetch up
+	ora	a			;binary zero at end
+	jnz	fu5			;continue if not at end
+	mov	h,b			;save exponent
+	pop	b			;fetch type, digit count
+	mov	a,b			;determine type
+	cpi	'E'			;single precision?
+	jnz	fu7			;no -go process as double precision
+	mov	a,c			;digit count
+	add	h			;add exponent value
+	cpi	11o
+	pop	h			;pop	old buffer pointer
+	jnc	fu3			;can't do better
+fu6:	mvi	a,200o			;
+	sta	fansii			;
+	jmp	fu9			;do fixed point printout
+fu7:	mov	a,h			;save exponent
+	add	c			;total digits necessary
+	cpi	22o			;must produce carry to use fixed point
+	pop	h			;get stack right
+	jnc	fu3
+	jmp	fu6			;go  rint in fixed point
+fu8:	pop	b			;
+	pop	h			;get original buffer ptr back
+	jmp	fu3			;
+fu9:	pop	psw			;get original psw off stack
+	pop	b
+	pop	d
+					;get dfaclo-dfaclo+3
+	xchg				;(de)=buffer ptr,(hl)=dfaclo
+	shld	dfaclo			;
+	mov	h,b
+	mov	l,c
+	shld	dfaclo+2
+	xchg	
+	pop	b
+	pop	d
+					;get original fac back
+	call	movfr			;move to fac
+	inx	h			;because when we originally entered
+					;foufrv the (hl) pointed to a char.
+					;past the sign and the pass through
+					;this code leaves (hl) pointing to
+					;the sign. (hl) must point past sign!
+foufrf:					;
+	cpi	5			;set cc's for z80
+	push	h			;save the buffer pointer
+	sbi	0			;map 4 to 6 and 10 to 20
+	ral				;this calculates how many digits we will
+	mov	d,a			; print
+	inr	d
+	call	foutnv			;normalize the fac so all significant digits
+					; are in the integer part
+	lxi	b,3*400o+0		;b = decimal point count
+					;c = comma count
+					;set comma count to zero and decimal point
+					; count for e notation
+	push	psw			;save for normal case
+	lda	fansii			;see if forced fixed output
+	ora	a			;set condition codes correctly
+	jp	fofv5a			;do normal thing
+	pop	psw			;
+	add	d
+	jmp	foufv6			;fixed output
+fofv5a:	pop	psw			;normal route
+	add	d			;see if number should be printed in e notation
+	jm	fofrs1			;it should, it is .lt. .01
+	inr	d			;check if it is too big
+	cmp	d
+	jnc	fofrs1			;it is too big, it is .gt. 10^d-1
+foufv6:	inr	a			;it is ok for fixed point notation
+	mov	b,a			;set decimal point count
+	mvi	a,2			;set fixed point flag, the exponent is zero
+					; if we are using fixed point notation
+fofrs1:	sui	2			;e notation: add d-2 to original exponent
+					;restore exp if not d.p.
+	pop	h			;get the buffer pointer back
+	push	psw			;save the exponent for later
+	call	foutan			;.01 .le. number .lt. .1?
+	mvi	m,'0'			;yes, put ".0" in buffer
+	cz	inxhrt
+	call	foutcv			;convert the number to decimal digits
+					;here to suppress the trailing zeros
+fofrs2:	dcx	h			;move back to the last character
+	mov	a,m			;get it and see if it was zero
+	cpi	'0'
+	jz	fofrs2			;it was, continue suppressing
+	cpi	'.'			;have we suppressed all the fractional digits?
+	cnz	inxhrt			;yes, ignore the decimal point also
+	pop	psw			;get the exponent back
+	jz	foutdn			;we are done if we are in fixed point notation
+					;fall in and put the exponent in the buffer
+					;here to put the exponent and "e" or "d" in the buffer
+					;the exponent is in a, the condition codes are assumed to be set
+					;correctly.
+fofldn:	push	psw			;save the exponent
+	call	getypr			;set carry for single precision
+	mvi	a,42o			;[a]="d"/2
+	adc	a			;multiply by 2 and add carry
+	mov	m,a			;save it in the buffer
+	inx	h			;increment the buffer pointer
+					;put in the sign of the exponent
+	pop	psw			;get the exponent back
+	mvi	m,'+'			;a plus if positive
+	jp	fouce1
+	mvi	m,'-'			;a minus if negative
+	cma				;negate exponent
+	inr	a
+					;calculate the two digit exponent
+fouce1:	mvi	b,'0'-1			;initialize ten's digit count
+fouce2:	inr	b			;increment digit
+	sui	12o			;subtract ten
+	jnc	fouce2			;do it again if result was positive
+	adi	'0'+12o			;add back in ten and convert to ascii
+					;put the exponent in the buffer
+	inx	h
+	mov	m,b			;put ten's digit of exponent in buffer
+	inx	h			;when we jump to here, a is zero
+	mov	m,a			;put one's digit in buffer
+foutzr:	inx	h			;increment pointer, here to finish up
+					; printing a free format zero
+foutdn:	mvi	m,0			;put a zero at the end of the number
+	xchg				;save the pointer to the end of the number
+					; in (de) for ffxflv
+	lxi	h,fbuffr+1		;get a pointer to the beginning
+	ret				;all done
+					;here to print a number in fixed format
+foutfx:	inx	h			;move past the zero for the dollar sign
+	push	b			;save the field length specifications
+	cpi	4			;check what kind of value we have
+	mov	a,d			;get the format specs
+	jnc	foufxv			;we have a sng or a dbl
+					;here to print an integer in fixed format
+	rar				;check if we have to print it in floating
+	jc	ffxifl			; point notation
+					;here to print an integer in fixed format-fixed point notation
+	lxi	b,6*400o+3+0		;set decimal point count to 6 and
+					; comma count to 3
+	call	fouicc			;check if we don't have to use the commas
+	pop	d			;get the field lengths
+	mov	a,d			;see if we have to print extra spaces because
+	sui	5			; the field is too big
+	cp	fotzer			;we do, put in zeros, they will later be
+					; converted to spaces or asterisks by foutzs
+	call	foutci			;convert the number to decimal digits
+fouttd:	mov	a,e			;do we need a decimal point?
+	ora	a
+	cz	dcxhrt			;we don't, backspace over it.
+	dcr	a			;get how many trailing zeros to print
+	cp	fotzer			;print them
+					;if we do have decimal places, fill them up
+					; with zeros
+					;fall in and finish up the number
+					;here to finish up a fixed format number
+foutts:	push	h			;save buffer pointer
+	call	foutzs			;zero suppress the number
+	pop	h			;get the buffer pointer back
+	jz	ffxix1			;check if we have a trailing sign
+	mov	m,b			;we do, put the sign in the buffer
+	inx	h			;increment the buffer pointer
+ffxix1:	mvi	m,0			;put a zero at the end of the number
+					;here to check if a fixed format-fixed point number overflowed its
+					;field length
+					;d = the b in the format specification
+					;this assumes the location of the decimal point is in temp2
+	lxi	h,fbuffr		;get a pointer to the beginning
+foube1:	inx	h			;increment pointer to the next character
+foube5:	lda	temp2			;get the location of the decimal point
+					;since fbuffr is only 35 (decimal) long, we
+					; only have to look at the low order to see
+					; if the field is big enough
+	sub	l			;figure out how much space we are taking
+	sub	d			;is this the right amount of space to take?
+	rz				;yes, we are done, return from fout
+	mov	a,m			;no, we must have too much since we started
+					; checking from the beginning of the buffer
+					; and the field must be small enough to fit in
+					; the buffer.  get the next character in
+					; the buffer.
+	cpi	' '			;if it is a space or an asterisk, we can
+	jz	foube1			; ignore it and make the field shorter with
+	cpi	'*'			; no ill effects
+	jz	foube1
+	dcx	h			;move the pointer back one to read the
+					; character with chrget
+	push	h			;save the pointer
+					;here we see if we can ignore the leading zero before a decimal point.
+					;this occurs if we see the following: (in order)
+					;	+,-	a sign (either "-" or "+")	[optional]
+					;	$	a dollar sign			[optional]
+					;	0	a zero				[mandatory]
+					;	.	a decimal point			[mandatory]
+					;	0-9	another digit			[mandatory]
+					;if you see a leading zero, it must be the one before a decimal point
+					;or else foutzs would have suppressed it, so we can just "inx	h"
+					;over the character following the zero, and not check for the
+					;decimal point explicitly.
+foube2:	push	psw			;put the last character on the stack.  the
+					; zero flag is set.  the first time the zero
+					; zero flag is not set.
+	lxi	b,foube2		;get address we go to if we see a character
+	push	b			; we are looking for
+	call	chrgtr			;get the next character
+	cpi	'-'			;save it and get the next character if it is
+	rz				; a minus sign, a plus sign or a dollar sign
+	cpi	'+'
+	rz	
+	cpi	curncy
+	rz	
+	pop	b			;it isn't, get the address off the stack
+	cpi	'0'			;is it a zero?
+	jnz	foube4			;no, we can not get rid of another character
+	inx	h			;skip over the decimal point
+	call	chrgtr			;get the next character
+	jnc	foube4			;it is not a digit, we can't shorten the field
+	dcx	h			;we can!!!  point to the decimal point
+	db	001			;"lxi	b" over the next 2 bytes
+foube3:	dcx	h			;point back one character
+	mov	m,a			;put the character back
+					;if we can get rid of the zero, we put the characters on the stack
+					;back into the buffer one position in front of where they originally
+					;were.  note that the maximum number of stack levels this uses is
+					;three -- one for the last entry flag, one for a possible sign,
+					;and one for a possible dollar sign.  we don't have to worry about
+					;the first character being in the buffer twice because the pointer
+					;when fout exits will be pointing to the second occurance.
+	pop	psw			;get the character off the stack
+	jz	foube3			;put it back in the buffer if it is not the
+					; last one
+	pop	b			;get the buffer pointer off the stack
+	jmp	foube5			;see if the field is now small enough
+					;here if the number is too big for the field
+foube4:	pop	psw			;get the characters off the stack
+	jz	foube4			;leave the number in the buffer alone
+	pop	h			;get the pointer to the beginning of the
+					; number minus 1
+	mvi	m,'%'			;put in a percent sign to indicate the number
+					; was too large for the field
+	ret				;all done -- return from fout
+					;here to print a sng or dbl in fixed format
+foufxv:	push	h			;save the buffer pointer
+	rar				;get fixed or floating notation flag in carry
+	jc	ffxflv			;print the number in e-notation
+	jz	ffxsfx			;we have a sng
+					;here to print a dbl in fixed format--fixed point notation
+	lxi	d,ffxdxm		;get pointer to 1d16
+	call	dcompd			;we can't print a number .ge. 10^16 in fixed
+					; point notation
+	mvi	d,20o			;set d = number of digits to print for a dbl
+	jm	ffxsdc			;if the fac was small enough, go print it
+					;here to print in free format with a percent sign a number .ge. 10^16
+ffxsdo:	pop	h			;get the buffer pointer off the stack
+	pop	b			;get the field specification off the stack
+	call	fout			;print the number in free format
+	dcx	h			;point to in front of the number
+	mvi	m,'%'			;put in the percent sign
+	ret				;all done--return from fout
+					;here to print a sng in fixed format--fixed point notation
+ffxsfx:	lxi	b,266q*256+016q
+	lxi	d,033q*256+312q		;get 1e16, check if the number is too big
+	call	fcomp
+	jp	ffxsdo			;it is, print it in free format with a % sign
+	mvi	d,6			;d = number of digits to print in a sng
+					;here to actually print a sng or dbl in fixed format
+ffxsdc:	call	sign			;see if we have zero
+	cnz	foutnv			;if not, normalize the number so all digits to
+					; be printed are in the integer part
+	pop	h			;get the buffer pointer
+	pop	b			;get the field length specs
+	jm	ffxxvs			;do different stuff if exponent is negative
+					;here to print a number with no fractional digits
+ffxsd2:	push	b			;save the field length specs again
+	mov	e,a			;save the exponent in e
+	mov	a,b			;we have to print leading zeros if the field
+	sub	d			; has more characters than there are digits
+	sub	e			; in the number.
+					;if we are using commas, a may be too big.
+					;this doesn't matter because foutts will find
+					; the correct beginning.  there is room in
+					; fbuffr because the maximum value b can be is
+					; 24 (decimal) so d+c .le. 16 (decimal)  since
+					; fac .lt. 10^16.
+					;so we need 8 more bytes for zeros.  4 come
+					; since we will not need to print an exponent.
+					; fbuffr also contains an extra 4 bytes for
+					; this case.
+					;(it would take more than 4 bytes to check for
+					; this.)
+	cp	fotzer			;foutzs will later suppress them
+	call	foutcd			;setup decimal point and comma count
+	call	foutcv			;convert the number to decimal digits
+	ora	e			;put in digits after the number if it
+					; is big enough, here a=0
+	cnz	fotzec			;there can be commas in these zeros
+	ora	e			;make sure we get a decimal point for foutts
+	cnz	fouted
+	pop	d			;get the field length specs
+	jmp	fouttd			;go check the size, zero suppress, etc. and
+					; finish the number
+					;here to print a sng or dbl that has fractional digits
+ffxxvs:	mov	e,a			;save the exponent
+	mov	a,c			;divide by ten the right number of times so
+	ora	a			; the result will be rounded correctly and
+	cnz	dcrart			; have the correct number of significant
+	add	e			; digits
+ffxxs2:	jm	ffxxv8			;for later calculations, we want a zero if the
+	xra	a			; result was not negative
+ffxxv8:	push	b			;save the field specs
+	push	psw			;save this number for later
+ffxxv2:	cm	findiv			;this is the divide loop
+	jm	ffxxv2
+	pop	b			;get the number we saved back in b
+	mov	a,e			;we have two cases depending on whether the
+	sub	b			; the number has integer digits or not
+	pop	b			;get the filed specs back
+	mov	e,a			;save how many decimal places before the
+	add	d			; the number ends
+ffxxs4:	mov	a,b			;get the "b" field spec
+	jm	ffxxv3
+					;here to print numbers with integer digits
+	sub	d			;print some leading zeros if the field is
+	sub	e			; bigger than the number of digits we will
+ffxxs6:	cp	fotzer			; print
+	push	b			;save field spec
+	call	foutcd			;set up decimal point and comma count
+	jmp	ffxxv6			;convert the digits and do the trimming up
+					;here to print a number without integer digits
+ffxxv3:	call	fotzer			;put all zeros before the decimal point
+	mov	a,c			;save c
+	call	foutdp			;put in a decimal point
+	mov	c,a			;restore c
+	xra	a			;decide how many zeros to print between the
+	sub	d			; decimal point and the first digit we will
+	sub	e			; print.
+	call	fotzer			;print the zeros
+	push	b			;save exponent and the "c" in the field spec
+	mov	b,a			;zero the decimal place count
+	mov	c,a			;zero the comma count
+ffxxv6:	call	foutcv			;convert the number to decimal digits
+	pop	b			;get the field specs back
+	ora	c			;check if we have to print any zeros after
+					; the last digit
+	jnz	ffxxv7			;check if there were any decimal places at all
+					;e can never be 200, (it is negative) so if
+					; a=0 here, there is no way we will call fotzer 
+	lhld	temp2			;the end of the number is where the dp is
+ffxxv7:	add	e			;print some more trailing zeros
+	dcr	a
+	cp	fotzer
+	mov	d,b			;get the "b" field spec in d for foutts
+	jmp	foutts			;finish up the number
+					;here to print an integer in fixed format--floating point notation
+ffxifl:	push	h			;save the buffer pointer
+	push	d			;save the format specs
+	call	consi			;convert the integer to a sng
+	pop	d			;get the format specs back
+	xra	a			;set flags to print the number as a sng
+					;fall into ffxflv
+					;here to print a sng or dbl in fixed format-flotating point notation
+ffxflv:	jz	ffxsfl			;if we have a sng, set the right flags
+	mvi	e,20o			;we have a dbl, get how many digits we have
+	db	001			;"lxi	b" over the next two bytes
+ffxsfl:	mvi	e,6			;we have a sng, get how many digits we print
+	call	sign			;see if we have zero
+ffxs03:	stc				;set carry to determine if we are printing
+					;zero. note: this depends on the fact that
+					;foutnv exits with carry off
+	cnz	foutnv			;if not, normalize the number so all digits to
+					; be printed are in the integer part
+	pop	h			;get the buffer pointer back
+	pop	b			;get the field length specs
+	push	psw			;save the exponent
+	mov	a,c			;calculate how many significant digits we must
+	ora	a			; print
+	push	psw			;save the "c" field spec for later
+	cnz	dcrart
+	add	b
+	mov	c,a
+	mov	a,d			;get the "a" field spec
+	ani	4			;see if the sign is a trailing sign
+	cpi	1			;set carry if a is zero
+	sbb	a			;set d=0 if we have a trailing sign,
+	mov	d,a			; d=377 if we do not
+	add	c
+	mov	c,a			;set c=number of significant digits to print
+	sub	e			;if we have less than e, then we must get rid
+	push	psw			;save comparison # of sig digits and the
+					;# of digits we will print
+	push	b			;save the "b" field spec and # of sig digits
+ffxlv1:	cm	findiv			; of some by dividing by ten and rounding
+	jm	ffxlv1
+	pop	b			;get "b" field spec and # of sig digits back
+	pop	psw			;get # of trailing zeros to print
+	push	b			;save the "b" field spec and # of sig digits
+	push	psw			;save # of trailing zeros to print
+	jm	ffxlv3			;take into account digits that were
+	xra	a			;divided off at ffxlv1
+ffxlv3:	cma	
+	inr	a
+	add	b			;set the decimal place count
+	inr	a
+	add	d			;take into account if the sign is trailing
+	mov	b,a			; or not
+	mvi	c,0			;set comma count to zero, the comma spec is
+					; ignored.
+	call	foutcv			;convert the number to decimal digits
+	pop	psw			;get number trailing zeros to print
+					;if the field length is longer than the # of digits
+					;we can print
+	cp	fotznc			;the decimal point could come out in here
+	call	fouted			;in case d.p. is last on list
+	pop	b			;get # of sig digits and "b" field spac back
+	pop	psw			;get the "c" field spec back
+	jnz	ffxlv4			;if non-zero proceed
+	call	dcxhrt			;see if d.p. there
+	mov	a,m			;fetch to make sure d.p.
+	cpi	'.'			;if not must be zero
+	cnz	inxhrt			;if not must leave as is
+	shld	temp2			;need d.p. location in temp2
+ffxlv4:					; so ignore it.
+	pop	psw			;get the exponent back
+	jc	ffxlv2			;exponent=0 if the number is zero
+	add	e			;scale it correctly
+	sub	b
+	sub	d
+ffxlv2:	push	b			;save the "b" field spec
+	call	fofldn			;put the exponent in the buffer
+	xchg				;get the pointer to the end in (hl)
+					; in case we have a trailing sign
+	pop	d			;get the "b" field spec in d, put on a
+	jmp	foutts			; possible trailing sign and we are done
+					;normalize the number in the fac so all the digits are in the integer
+					;part.  return the base 10 exponent in a
+					;d,e are left unaltered
+foutnv:	push	d			;save (de)
+	xra	a			;zero the exponent
+	push	psw			;save it
+	call	getypr			;get type of number to be printed
+	jpo	foundb			;not double, do normal thing
+forbig:	lda	fac			;get exponent
+	cpi	221o			;is it .lt.1d5?
+	jnc	foundb			;no, dont multply
+	lxi	d,tenten		;multiply by 1d10
+	lxi	h,arglo			;move into arg
+	call	vmove			;put in arg
+	call	dmult			;multiply by it
+	pop	psw			;get orig exponent off stack
+	sui	10			;get proper offset for exponent
+	push	psw			;save exponent back
+	jmp	forbig			;force it bigger if possible
+foundb:	call	founvc			;is the fac too big or too small?
+founv1:	call	getypr			;see what kind of value we have so we
+					; can see if the fac is big enough
+	jpe	founv4			;we have a dbl
+	lxi	b,221q*256+103q
+	lxi	d,117q*256+371q		;get 99999.95 to see if the fac is big
+	call	fcomp			; enough yet
+	jmp	founv5			;go do the check
+founv4:	lxi	d,foutdl		;get pointer to 999,999,999,999,999.5
+	call	dcompd			;see if the number is still too small
+founv5:	jp	founv3			;it isn't any more, we are done
+	pop	psw			;it is, multiply by ten
+	call	finmlt
+	push	psw			;save the exponent again
+	jmp	founv1			;now see if it is big enough
+founv2:	pop	psw			;the fac is too big, get the exponent
+	call	findiv			;divide it by ten
+	push	psw			;save the exponent again
+	call	founvc			;see if the fac is small enough
+founv3:	pop	psw			;we are done, get the exponent back
+	ora	a			;clear carry
+	pop	d			;get (de) back
+	ret				;all done
+					;here to see if the fac is small enough yet
+founvc:	call	getypr			;see what type number we have
+	jpe	fonvc1			;we have a dbl
+	lxi	b,224q*256+164q
+	lxi	d,043q*256+370q		;get 999999.5 to see if the fac is too big
+	call	fcomp
+	jmp	fonvc2			;go do the check
+fonvc1:	lxi	d,foutdu		;get pointer to 9,999,999,999,999,999.5
+	call	dcompd			;see if the number is too big
+fonvc2:	pop	h			;get the return address off the stack
+	jp	founv2			;the number is too big, divide it by ten
+	pchl				;it isn't too big, just return
+					;here to put some zeros in the buffer
+					;the count is in a, it can be zero, but the zero flag must be set
+					;only (hl) and a are altered
+					;we exit with a=0
+fotzer:	ora	a			;this is because ffxxv3 call us with the
+					; condition codes not set up
+fotzr1:	rz				;return if we are done
+	dcr	a			;we are not done, so decrement the count
+	mvi	m,'0'			;put a zero in the buffer
+	inx	h			;update the buffer pointer
+	jmp	fotzr1			;go see if we are now done
+					;here to put zeros in the buffer with commas or a decimal point in the
+					;middle.  the count is in a, it can be zero, but the zero flag must be
+					;set.  b the decimal point count and c the comma count are updated
+					;a,b,c,h,l are altered
+fotznc:	jnz	fotzec			;entry after a "call foutcv"
+fotzrc:	rz				;return if we are done
+	call	fouted			;see if we have to put a comma or a decimal
+					; point before this zero
+fotzec:	mvi	m,'0'			;put a zero in the buffer
+	inx	h			;update the buffer pointer
+	dcr	a			;decrement the zero count
+	jmp	fotzrc			;go back and see if we are done
+					;here to put a possible comma count in c, and zero c if we are not
+					;using the comma specification
+foutcd:	mov	a,e			;setup decimal point count
+	add	d
+	inr	a
+	mov	b,a
+	inr	a			;setup comma count
+fotcd1:	sui	3			;reduce [a] mod 3
+	jnc	fotcd1
+	adi	5			;add 3 back in and add 2 more for
+					;scaling
+foutcc:	mov	c,a			;save a possible comma count
+fouicc:	lda	temp3			;get the format specs
+	ani	100o			;look at the comma bit
+	rnz				;we are using commas, just return
+	mov	c,a			;we aren't, zero the comma count
+	ret				;all done
+					;here to put decimal points and commas in their correct places
+					;this subroutine should be called before the next digit is put in the
+					;buffer.  b=the decimal point count, c=the comma count
+					;the counts tell how many more digits have to go in before the comma
+					;or decimal point go in.  the comma or decimal point then goes before 
+					;the last digit in the count.  for example, if the decimal point should
+					;come after the first digit, the decimal point count should be 2.
+foutan:					;save for later
+	dcr	b			;
+	jp	foute1			;process as normal
+	shld	temp2			;save location of decimal point
+	mvi	m,'.'			;put in d.p.
+foutd1:	inx	h			;point to next buffer postion
+	mvi	m,'0'
+	inr	b			;
+	jnz	foutd1
+	inx	h			;point to next available buffer location
+	mov	c,b
+	ret	
+fouted:	dcr	b			;time for d.p.?
+foute1:					;
+	jnz	foued1			;no, check for the comma
+					;entry to put a decimal point in the buffer
+foutdp:	mvi	m,'.'			;yes, put the decimal point in
+	shld	temp2			;save the location of the decimal point
+	inx	h			;increment the buffer pointer
+	mov	c,b			;put zero in c so we won"t print any commas
+	ret				; after the decimal point.  all done
+					;here to see if it is time to print a comma
+foued1:	dcr	c			;is it time?
+	rnz				;nope, we can return
+	mvi	m,54o			;","=54, yes, put a comma in the buffer
+	inx	h			;increment the buffer pointer
+	mvi	c,3			;reset the comma count so we will print a
+	ret				; comma after three more digits.  all done
+					;here to convert a sng or dbl number that has been normalized to
+					;decimal digits.  the decimal point count and comma count are in b and
+					;c respectively.  (hl) points to where the first digit will go.
+					;this exits with a=0.  (de) is left unaltered.
+foutcv:	push	d			;save (de)
+	call	getypr			;see what kind of a number we have
+	jpo	foutcs			;we have a sng
+					;here to convert a double precision number to decimal digits
+	push	b			;save the decimal point and comma counts
+	push	h			;save the buffer pointer
+	call	vmovaf			;move the fac into arg
+	lxi	h,dhalf			;get pointer to .5d0
+	call	vmovfm			;move the constant into the fac
+	call	dadd			;add .5 to the original number to round it
+	xra	a			;clear the carry
+	call	dintfo			;take the integer part of the number
+					;the number is not normalized afterwards
+	pop	h			;get the buffer pointer back
+	pop	b			;get the comma and decimal point counts back
+	lxi	d,fodtbl		;get a pointer to the dbl power of ten table
+	mvi	a,12o			;convert ten digits, the others will be
+					; converted as sng's and int's
+					;because we bracketed the number a
+					;power of ten less in magnitude and
+					;single precision conversion can handle
+					;a magnitude of ten larger
+					;here to convert the next digit
+foucd1:	call	fouted			;see if we have to put in a dp or comma
+	push	b			;save dp and comma information
+	push	psw			;save digit count
+	push	h			;save buffer pointer
+	push	d			;save power of ten pointer
+					;here to divide for the next digit
+	mvi	b,'0'-1			;set up the count for the digit
+foucd2:	inr	b			;increment the digit count
+	pop	h			;get the pointer to the power of ten
+	push	h			;save it again
+	db	076o			;"mvi	a", get the instruction to subtract
+	sbb	m			; the power of ten
+	call	daddfo			;go subtract them
+	jnc	foucd2			;if the number was not less than the power of
+					; ten, subtract again
+	pop	h			;we are done subtracting, but we did it once
+					; too often, so add back in the power of ten
+					;get the pointer to the power of ten
+	db	076o			;"mvi	a", get the instruction to add the
+	adc	m			; power of ten and the number
+	call	daddfo			;add the two numbers
+	xchg				;put the power of ten pointer in (de).  it is
+					; updated for the next power of ten
+	pop	h			;get the buffer pointer back
+	mov	m,b			;put the digit into the buffer
+	inx	h			;increment the buffer pointer
+	pop	psw			;get the digit count back
+	pop	b			;get the decimal point and comma counts
+	dcr	a			;have we printed the last digit?
+	jnz	foucd1			;no, go do the next one
+	push	b			;yes, convert remaining digits using single
+	push	h			; precision, this is faster, move the number
+	lxi	h,dfaclo		; that is left into the sng fac
+	call	movfm
+	jmp	foucdc			;go to it!!
+					;here to convert a single precision number to decimal digits
+foutcs:	push	b			;save the decimal point and comma counts
+	push	h			;save the buffer pointer
+	call	faddh			;round number to nearest integer
+	mvi	a,1			;make a non-zero, since number is positive
+					; and non-zero, round will exit with the ho
+					; in a, so the msb will always be zero and
+					; adding one will never cause a to be zero
+	call	qint			;get integer part in c,d,e
+	call	movfr			;save number in fac
+foucdc:	pop	h			;get the buffer pointer back
+	pop	b			;get the decimal point and comma counts back
+	xra	a			;clear carry, the carry is our flag to
+					; calculate two digits
+	lxi	d,fostbl		;get pointer to power of ten table
+					;here to calculate the next digit of the number
+foucs1:	cmc				;complement flag that tells when we are done
+	call	fouted			;see if a comma or dp goes before this digit
+	push	b			;save comma and decimal point information
+	push	psw			;save carry i.e. digit count
+	push	h			;save character pointer
+	push	d			;save power of ten pointer
+	call	movrf			;get number in c,d,e
+	pop	h			;get power of ten pointer
+	mvi	b,'0'-1			;b = next digit to be printed
+foucs2:	inr	b			;add one to digit
+	mov	a,e			;subtract lo
+	sub	m
+	mov	e,a
+	inx	h			;point to next byte of power of ten
+	mov	a,d			;subtract mo
+	sbb	m
+	mov	d,a
+	inx	h
+	mov	a,c			;subtract ho
+	sbb	m
+	mov	c,a
+	dcx	h			;point to beginning of power of ten
+	dcx	h
+	jnc	foucs2			;subtract again if result was positive
+	call	fadda			;it wasn't, add power of ten back in
+	inx	h			;increment pointer to next power of ten
+	call	movfr			;save c,d,e in fac
+	xchg				;get power of ten pointer in (de)
+	pop	h			;get buffer pointer
+	mov	m,b			;put character in buffer
+	inx	h			;increment buffer pointer
+	pop	psw			;get digit count (the carry) back
+	pop	b			;get comma and dp information back
+	jc	foucs1			;calculate next digit if we have not done 2
+	inx	d			;we have, increment pointer to correct place
+	inx	d			; in the integer power of ten table
+	mvi	a,4			;get the digit count
+	jmp	fouci1			;compute the rest of the digits like integers
+					;note that the carry is off
+					;here to convert an integer into decimal digits
+					;this exits with a=0.  (de) is left unaltered.
+foutci:	push	d			;save (de)
+	lxi	d,foitbl		;get pointer to the integer power of ten table
+	mvi	a,5			;set up a digit count, we have to calculate 5
+					; digits because the max pos integer is 32768
+					;here to calculate each digit
+fouci1:	call	fouted			;see if a comma or dp goes before the digit
+	push	b			;save comma and decimal point information
+	push	psw			;save digit count
+	push	h			;save buffer pointer
+	xchg				;get the power of ten pointer in (hl)
+	mov	c,m			;put the power of ten on the stack
+	inx	h
+	mov	b,m
+	push	b
+	inx	h			;increment the pwr of ten ptr to next power
+	xthl				;get the power of ten in (hl) and put the
+					; pointer on the stack
+	xchg				;put the power of ten in (de)
+	lhld	faclo			;get the integer in (hl)
+	mvi	b,'0'-1			;set up the digit count, b=digit to be printed
+fouci2:	inr	b			;increment the digit count
+	mov	a,l			;subtract (de) from (hl)
+	sub	e			;subtract the low orders
+	mov	l,a			;save the new result
+	mov	a,h			;subtract the high orders
+	sbb	d
+	mov	h,a			;save the new high order
+	jnc	fouci2			;if (hl) was .ge. (de) then subtract again
+	dad	d			;we are done, but we subtracted (de) once too
+					; often, so add it back in
+	shld	faclo			;save in the fac what is left
+	pop	d			;get the power of ten pointer back
+	pop	h			;get the buffer pointer back
+	mov	m,b			;put the new digit in the buffer
+	inx	h			;increment the buffer pointer to next digit
+	pop	psw			;get the digit count back
+	pop	b			;get the comma and dp information back
+	dcr	a			;was that the last digit?
+	jnz	fouci1			;no, go do the next one
+	call	fouted			;yes, see if a dp goes after the last digit
+	mov	m,a			;put a zero at the end of the number, but
+					; don't increment (hl) since an exponent or a
+					; trailing sign may be comming
+	pop	d			;get (de) back
+	ret				;all done, return with a=0
+					;constants used by fout
+tenten:	db	0			;10000000000
+	db	0
+	db	0
+	db	0
+	db	371o
+	db	2
+	db	25o
+	db	242o
+foutdl:	db	341o			; 999,999,999,999,999.5
+	db	377o
+	db	237o
+	db	061o
+	db	251o
+	db	137o
+	db	143o
+	db	262o
+foutdu:	db	376o			; 9,999,999,999,999,999.5
+	db	377o
+	db	003
+	db	277o
+	db	311o
+	db	033o
+	db	016o
+	db	266o
+dhalf:	db	000			; .5d0
+	db	000
+	db	000
+	db	000
+fhalf:	db	000			; .5e0
+	db	000
+	db	000
+	db	200o
+ffxdxm:	db	000			; 1d16
+	db	000
+	db	004
+	db	277o
+	db	311o
+	db	033o
+	db	016o
+	db	266o
+					;double precision power of ten table
+fodtbl:	db	000			; 1d15
+	db	200o
+	db	306o
+	db	244o
+	db	176o
+	db	215o
+	db	003
+	db	000			; 1d14
+	db	100o
+	db	172o
+	db	020o
+	db	363o
+	db	132o
+	db	000
+	db	000			; 1d13
+	db	240o
+	db	162o
+	db	116o
+	db	030o
+	db	011o
+	db	000
+	db	000			; 1d12
+	db	020o
+	db	245o
+	db	324o
+	db	350o
+	db	000
+	db	000
+	db	000			; 1d11
+	db	350o
+	db	166o
+	db	110o
+	db	027o
+	db	000
+	db	000
+	db	000			; 1d10
+	db	344o
+	db	013o
+	db	124o
+	db	002
+	db	000
+	db	000
+	db	000			; 1d9
+	db	312o
+	db	232o
+	db	073o
+	db	000
+	db	000
+	db	000
+	db	000			; 1d8
+	db	341o
+	db	365o
+	db	005
+	db	000
+	db	000
+	db	000
+	db	200o			; 1d7
+	db	226o
+	db	230o
+	db	000
+	db	000
+	db	000
+	db	000
+	db	100o			; 1d6
+	db	102o
+	db	017o
+	db	000
+	db	000
+	db	000
+	db	000
+					;single precision power of ten table
+fostbl:	db	240o			; 1e5
+	db	206o
+	db	001
+	db	020o			; 1e4
+	db	047o
+	db	000
+					;integer power of ten table
+foitbl:	db	020o			; 10000
+	db	047o
+	db	350o			; 1000
+	db	003
+	db	144o			; 100
+	db	000
+	db	012o			; 10
+	db	000
+	db	001			; 1
+	db	000
+;
+; output routines for octal and hex numbers
+;
+	public	fouto,fouth
+fouto:	xra	a			;make a=0, set zero
+	mov	b,a			;save in [b]
+	db	302o			;"jnz" around next two bytes
+fouth:	mvi	b,1			;set hex flag
+	push	b			;save hex/octal flag
+	extrn	frqint
+	call	frqint			;get double byte int in [h,l]
+	pop	b			;get back hex/octal flag
+	lxi	d,fbuffr		;pointer to output buffer in [d,e]
+	push	d			;save so we can return it later
+	xra	a			;get set to have first digit for octal
+	stax	d			;clear digit seen flag
+	dcr	b			;see if octal
+	inr	b			;if so, zero set
+	mvi	c,6			;six digits for octal
+	jz	octone			;do first octal digit
+	mvi	c,4			;four digit for hex
+outhlp:	dad	h			;shift left one bit
+	adc	a			;add in the shifted bit
+outolp:	dad	h			;shift left one bit
+	adc	a
+	dad	h
+	adc	a
+octone:	dad	h			;enter here for first octal digit
+	adc	a
+	ora	a			;see if we got a zero digit
+	jnz	makdig			;no, make a digit
+	mov	a,c			;get digit counter
+	dcr	a			;was it going to go to zero (last dig?)
+	jz	makdig			;if so, force one zero digit
+	ldax	d			;have we printed a non-zero digit?
+	ora	a			;set cc's
+	jz	nolead			;no, dont print this leading zero
+	xra	a			;get zero
+makdig:	adi	'0'			;make numeric digit
+	cpi	'9'+1			;is it a big hex digit? (a-f)
+	jc	nothal			;no, dont add offset
+	adi	'A'-'9'-1		;add offset
+nothal:	stax	d			;save digit in fbuffr
+	inx	d			;bump pointer
+	stax	d			;save here to flag printed sig. dig.
+nolead:	xra	a			;make a zero
+	dcr	c			;all done printing?
+	jz	finoho			;yes, return
+	dcr	b			;see if hex or octal
+	inr	b			;test
+	jz	outolp			;was octal
+	jmp	outhlp			;was hex
+finoho:	stax	d			;store final zero
+	pop	h			;get pointer to fbuffr
+	ret				;all done.
+	page
+	subttl	exponentiation and the square root function
+					;all done
+					;subroutine for fpwr, atn
+pshneg:	lxi	h,neg			;get the address of neg
+	xthl				;switch ret addr and addr of neg
+	pchl				;return, the address of neg is on the stack
+					;square root function
+					;we use sqr(x)=x^.5
+sqr:	call	pushf			;save arg x
+	lxi	h,fhalf			;get 1/2
+	call	movfm			;sqr(x)=x^.5
+	jmp	fpwrt			;skip over the next 3 bytes
+					;entry from the operator dispatch routines
+	public	fpwrq
+fpwrq:	call	frcsng			;make sure the fac is a sng
+fpwrt:	pop	b
+	pop	d
+					;get arg in registers, entry to fpwr if
+					; argument is on stack.  fall into fpwr
+					;exponentiation    ---    x^y
+					;n.b.  0^0=1
+					;first we check if y=0, if so, the result is 1.
+					;next, we check if x=0, if so, the result is 0.
+					;then we check if x is positive, if not, we check that y is a
+					;negative integer, and whether it is even or odd.  if y is a negative
+					;integer, we negate x.  if not, log will give an fc error when we call
+					;it.  if x is negative and y is odd, we push the address of neg on the
+					;stack so we will return to it and get a negative result.  to compute
+					;the result we use x^y=exp(y*log(x))
+fpwr:
+	extrn	clrovc
+	lxi	h,clrovc		;return to routine to set normal
+	push	h			;overflow mode
+	mvi	a,1
+	sta	flgovc			;set up once only overflow mode
+	call	sign			;see if y is zero
+	mov	a,b			;see if x is zero
+	jz	exp			;it is, result is one
+	jp	posexp			;positive exponent
+	ora	a			;is it zero to minus power?
+	jz	intdv2			;give div by zero and continue
+posexp:	ora	a
+	jz	zero0			;it is, result is zero
+	push	d
+	push	b
+					;save x on stack
+	mov	a,c			;check the sign of x
+	ori	177o			;turn the zero flag off
+	call	movrf			;get y in the registers
+					;end intfsw contittonal
+	jp	fpwr1			;no problems if x is positive
+	push	d
+	push	b
+					;save y
+	call	int			;see if y is an integer
+	pop	b
+	pop	d
+					;get y back
+	push	psw			;save lo of int for even and odd information
+	call	fcomp			;see if we have an integer
+	pop	h			;get even-odd information
+	mov	a,h			;put even-odd flag in carry
+	rar	
+fpwr1:	pop	h			;get x back in fac
+	shld	fac-1			;store ho's
+	pop	h			;get lo's off stack
+	shld	faclo			;store them in fac
+	cc	pshneg			;negate number at end if y was odd
+	cz	neg			;negate the negative number
+	push	d
+	push	b
+					;save y again
+	call	log			;compute  exp(y*log(x))
+	pop	b
+	pop	d
+					;if x was negative and y not an integer then
+	call	fmult			; log will blow him out of the water
+;	jmp	exp
+	page
+	subttl	exponential functon
+					;the function exp(x) calculates e^x where e=2.718282
+					;	the technique used is to employ a couple
+					;	of fundamental identities that allows us to
+					;	use the base 2 through the difficult portions of
+					;	the calculation:
+					;
+					;		(1)e^x=2^y  where y=x*log2(e) [log2(e) is
+					;						log base 2
+					;						of e ]
+					;
+					;		(2) 2^y=2^[ int(y)+(y-int(y)]
+					;		(3) if ny=int(y) then
+					;		    2^(ny+y-ny)=[2^ny]*[2^(y-ny)]
+					;
+					;	now, since 2^ny is easy to compute (an exponent
+					;	calculation with mantissa bits of zero) the difficult
+					;	portion is to compute 2^(y-ny) where 0.le.(y-ny).lt.1
+					;	this is accomplished with a polynomial approximation
+					;	to 2^z where 0.le.z.lt.1  . once this is computed we
+					;	have to effect the multiply by 2^ny .
+exp:	lxi	b,201q*256+070q
+	lxi	d,252q*256+073q		;get log2(e)
+	call	fmult			;y=fac*log2(e)
+	lda	fac			;must see if too large
+	cpi	210o			;abs .gt. 128?
+	jnc	exp100			;if so overflow
+	cpi	150o			;if too small answer is 1
+	jc	exp200
+	call	pushf			;save y
+	call	int			;determine integer power of 2
+	adi	201o			;integer was returned in a
+					;bias is 201 because binary
+					;point is to left of understood 1
+	pop	b
+	pop	d			;recall y
+	jz	exp110			;overflow
+	push	psw			;save exponent
+	call	fsub			;fac=y-int(y)
+	lxi	h,expbcn		;will use hart 1302 poly. eval now
+	call	poly			;compute 2^[y-int(y)]
+	pop	b			;integer power of 2 exponent
+	lxi	d,0+0
+	mov	c,d			;now have floating representation 
+					;of int(y) in (bcde)
+	jmp	fmult			;multiply by 2^[y-int(y)] and return
+exp100:	call	pushf			;
+exp110:
+	lda	fac-1			;if neg. then jump to zero
+	ora	a
+	jp	exp115			;overflow if plus
+	pop	psw			;need stack right
+	pop	psw
+	jmp	zero			;go zero the fac
+exp115:	jmp	ovfin6			;overflow
+exp200:	lxi	b,201q*256+000q
+	lxi	d,000q*256+000q		;1.
+	call	movfr
+	ret	
+;*************************************************************
+;	hart 1302 polynomial coefficients
+;*************************************************************
+expbcn:	db	7			;degree + 1
+	db	174o			;.00020745577403-
+	db	210o
+	db	131o
+	db	164o
+	db	340o			;.00127100574569-
+	db	227o
+	db	046o
+	db	167o
+	db	304o			;.00965065093202+
+	db	035o
+	db	036o
+	db	172o
+	db	136o			;.05549656508324+
+	db	120o
+	db	143o
+	db	174o
+	db	032o			;.24022713817633-
+	db	376o
+	db	165o
+	db	176o
+	db	030o			;.69314717213716+
+	db	162o
+	db	061o
+	db	200o
+	db	000			;1.0
+	db	0000
+	db	0000
+	db	201o
+					;end intfsw conditional
+	page
+	subttl	polynomial evaluator and the random number generator
+					;evaluate p(x^2)*x
+					;pointer to degree+1 is in (hl)
+					;the constants follow the degree
+					;constants should be stored in reverse order, fac has x
+					;we compute:
+					; c0*x+c1*x^3+c2*x^5+c3*x^7+...+c(n)*x^(2*n+1)
+polyx:	call	pushf			;save x
+	lxi	d,fmultt		;put address of fmultt on stack so when we
+	push	d			; return we will multiply by x
+polyx2:	push	h			;save constant pointer
+	call	movrf			;square x
+	call	fmult
+	pop	h			;get constant pointer
+					;fall into poly
+					;polynomial evaluator
+					;pointer to degree+1 is in (hl), it is updated
+					;the constants follow the degree
+					;constants should be stored in reverse order, fac has x
+					;we compute:
+					; c0+c1*x+c2*x^2+c3*x^3+...+c(n-1)*x^(n-1)+c(n)*x^n
+poly:	call	pushf			;save x
+	mov	a,m			;get degree
+	inx	h			;increment pointer to first constant
+	call	movfm			;move first constant to fac
+	db	006			;"mvi	b" over next byte
+poly1:	pop	psw			;get degree
+	pop	b
+	pop	d
+					;get x
+	dcr	a			;are we done?
+	rz				;yes, return
+	push	d
+	push	b
+					;no, save x
+	push	psw			;save degree
+	push	h			;save constant pointer
+	call	fmult			;evaluate the poly, multiply by x
+	pop	h			;get location of constants
+	call	movrm			;get constant
+	push	h			;store location of constants so fadd and fmult
+	call	fadd			; will not screw them up, add in constant
+	pop	h			;move constant pointer to next constant
+	jmp	poly1			;see if done
+					;psuedo-random number generator
+					;if arg=0, the last random number generated is returned
+					;if arg .lt. 0, a new sequence of random numbers is started
+					; using the argument
+					;to form the next random number in the sequence, we multiply the
+					;previous random number by a random constant, and add in another
+					;random constant.  then the ho and lo bytes are switched, the
+					;exponent is put where it will be shifted in by normal, and the
+					;exponent in the fac set to 200 so the result will be less than 1.
+					;this is then normalized and saved for the next time.
+					;the ho and lo bytes were switched so we have a random chance of
+					;getting a number less than or greater than .5
+	public	rndcop
+rndcop:	db	122o			;a copy of rndx to copy at run time
+	db	307o
+	db	117o
+	db	200o
+	public	rndmon
+rndmon:	call	chrgtr
+	public	rndmn2
+rndmn2:	push	h			;save text pointer for monadic rnd
+	lxi	h,fone			;pretend arg is 1.0
+	call	movfm
+	call	rnd			;pick up a random value
+	pop	h			;get back the text pointer
+	jmp	valsng
+rnd:	call	sign			;get sign of arg
+	lxi	h,rndcnt+1
+	jm	rndstr			;start new sequence if negative
+	lxi	h,rndx			;get last number generated
+	call	movfm
+	lxi	h,rndcnt+1
+	rz				;return last number generated if zero
+	add	m			;get counter into constants
+					;and add one
+	ani	7
+	mvi	b,0
+	mov	m,a
+	inx	h
+	add	a
+	add	a
+	mov	c,a
+	dad	b
+	call	movrm
+	call	fmult
+	lda	rndcnt
+	inr	a
+	ani	3
+	mvi	b,0
+	cpi	1
+	adc	b
+	sta	rndcnt
+	lxi	h,rndtb2-4
+	add	a
+	add	a
+	mov	c,a
+	dad	b
+	call	fadds
+rnd1:	call	movrf			;switch ho and lo bytes,
+	mov	a,e			;get lo
+	mov	e,c			;put ho in lo byte
+	xri	117o
+	mov	c,a			;put lo in ho byte
+	mvi	m,200o			;make result positive
+	dcx	h			;get pointer to exponent
+	mov	b,m			;put exponent in overflow position
+	mvi	m,200o			;set exp so result will be between 0 and 1
+	lxi	h,rndcnt-1
+	inr	m			;increment the pertubation count
+	mov	a,m			;see if its time
+	sui	253o
+	jnz	ntptrb
+	mov	m,a			;zero the counter
+	inr	c
+	dcr	d
+	inr	e
+ntptrb:	call	normal			;normalize the result
+	lxi	h,rndx			;save random number generated for next
+	jmp	movmf			; time
+rndstr:	mov	m,a			;zero the counters
+	dcx	h
+	mov	m,a
+	dcx	h
+	mov	m,a
+	jmp	rnd1
+					;storage for rnd
+	db	0
+	public	rndcnt
+rndcnt:	db	0
+	db	0
+rndtab:	db	65o
+	db	112o
+	db	312o
+	db	231o
+	db	71o
+	db	34o
+	db	166o
+	db	230o
+	db	42o
+	db	225o
+	db	263o
+	db	230o
+	db	12o
+	db	335o
+	db	107o
+	db	230o
+	db	123o
+	db	321o
+	db	231o
+	db	231o
+	db	012o
+	db	032o
+	db	237o
+	db	230o
+	db	145o
+	db	274o
+	db	315o
+	db	230o
+	db	326o
+	db	167o
+	db	076o
+	db	230o
+	public	rndx
+rndx:	db	122o			;last random number generated, between 0 and 1
+	db	307o
+	db	117o
+	db	200o
+rndtb2:	db	150o
+	db	261o
+	db	106o
+	db	150o
+	db	231o
+	db	351o
+	db	222o
+	db	151o
+	db	020o
+	db	321o
+	db	165o
+	db	150o
+	page
+	subttl	sine, cosine and tangent functions
+					;cosine function
+					;idea:  use cos(x)=sin(x+pi/2)
+bobtst	set	0
+cos:	lxi	h,pi2			;add pi/2 to fac
+	call	fadds
+					;end intfsw
+					;fall into sin
+					;sine function
+					;idea: use identities to get fac in quadrants i or iv
+					;the fac is divided by 2*pi and the integer part is ignored because
+					;sin(x+2*pi)=sin(x).  then the argument can be compared with pi/2 by
+					;comparing the result of the division with pi/2/(2*pi)=1/4.
+					;identities are then used to get the result in quadrants i or iv.
+					;an approximation polynomial is then used to compute sin(x).
+sin:
+	lda	fac			;will see if .lt.2^-10
+					;and if so sin(x)=x
+	cpi	167o			;
+	rc	
+					;sin by hart #3341
+	lxi	b,176q*256+042q
+	lxi	d,371q*256+203q		;will calculate x=fac/(2*pi)
+	call	fmult
+	call	pushf			;save x
+	call	int			;fac=int(x)
+	pop	b
+	pop	d
+					;fetch x to registers
+	call	fsub			;fac=x-int(x)
+	lxi	b,177q*256+000q
+	lxi	d,000q*256+000q		;get 1/4
+	call	fcomp			;fac=fac-1/4
+	jm	sin2a
+	lxi	b,177q*256+200q
+	lxi	d,000q*256+000q		;-1/4
+	call	fadd			;
+	lxi	b,200q*256+200q
+	lxi	d,000q*256+000q		;-1/2
+	call	fadd			;x=x-1/2
+	call	sign
+	cp	neg			;make sure if quadrants ii,iv
+					;we work with 1/4-x
+sin2:	lxi	b,177q*256+000q
+	lxi	d,000q*256+000q		;1/4
+	call	fadd			;
+	call	neg			;
+sin2a:	lda	fac-1			;must reduce to [0,1/4]
+	ora	a			;sign in psw
+	push	psw			;save for possible neg. after calc
+	jp	sin3
+	xri	200o			;
+	sta	fac-1			;now in [0,1/4]
+sin3:	lxi	h,sincon		;point to hart coefficients
+	call	polyx			;do poly eval
+	pop	psw			;now to do sign
+	rp				;ok if pos
+	lda	fac-1			;fetch sign byte
+	xri	200o			;make neg
+	sta	fac-1			;replace sign
+	ret	
+					;end of intfsw cond
+					;constants for sin, cos
+p1b2pi:	db	000			;1/(2*pi)
+	db	000
+	db	000
+	db	000
+	db	203o
+	db	371o
+	db	042o
+	db	176o
+pi2:	db	333o			; pi/2
+	db	017o
+	db	111o
+	db	201o
+fr4:	db	000			; 1/4
+	db	000
+	db	000
+	db	177o
+sincon:					;hart algorithm 3341 constants
+;note that hart constants have been scaled by a power of 2
+;this is due to range reduction as a % of 2*pi rather than pi/2
+;would need to multiply argument by 4 but instead we factor this
+;thru the constants.
+	db	5			;degree
+	db	373o			; .1514851e-3
+	db	327o
+	db	036o
+	db	206o
+	db	145o			; -.4673767e-2
+	db	046o
+	db	231o
+	db	207o
+	db	130o			; .7968968e-1
+	db	064o
+	db	043o
+	db	207o
+	db	341o			; -.6459637
+	db	135o
+	db	245o
+	db	206o
+	db	333o			; 1.570796
+	db	017o
+	db	111o
+	db	203o
+					;tangent function
+					;tan(x)=sin(x)/cos(x)
+tan:	call	pushf			;save arg
+	call	sin			;   tan(x)=sin(x)/cos(x)
+	pop	b			;get x off stack
+	pop	h			;pushf smashes (de)
+	call	pushf
+	xchg				;get lo's where they belong
+	call	movfr
+	call	cos
+	jmp	fdivt
+	page
+	subttl	arctangent function
+					;idea: use identities to get arg between 0 and 1 and then use an
+					;approximation polynomial to compute arctan(x)
+atn:	call	sign			;see if arg is negative
+	cm	pshneg			;if arg is negative, use:
+	cm	neg			;   arctan(x)=-arctan(-x)
+	lda	fac			;see if fac .gt. 1
+	cpi	201o
+	jc	atn2
+	lxi	b,201o*400o+0		;get the constant 1
+	mov	d,c
+	mov	e,c			;compute reciprocal to use the identity:
+	call	fdiv			;  arctan(x)=pi/2-arctan(1/x)
+	lxi	h,fsubs			;put fsubs on the stack so we will return
+	push	h			; to it and subtract the reult from pi/2
+atn2:	lxi	h,atncon		;evaluate approximation polynomial
+	call	polyx
+	lxi	h,pi2			;get pointer to pi/2 in case we have to
+	ret				; subtract the result from pi/2
+					;constants for atn
+atncon:	db	11o			;degree
+	db	112o			; .002866226
+	db	327o
+	db	073o
+	db	170o
+	db	002			; -.01616574
+	db	156o
+	db	204o
+	db	173o
+	db	376o			; .04290961
+	db	301o
+	db	057o
+	db	174o
+	db	164o			; -.07528964
+	db	061o
+	db	232o
+	db	175o
+	db	204o			; .1065626
+	db	075o
+	db	132o
+	db	175o
+	db	310o			; -.142089
+	db	177o
+	db	221o
+	db	176o
+	db	344o			; .1999355
+	db	273o
+	db	114o
+	db	176o
+	db	154o			; -.3333315
+	db	252o
+	db	252o
+	db	177o
+	db	000			; 1.0
+	db	000
+	db	000
+	db	201o
+	end	
+

@@ -1,0 +1,810 @@
+	subttl	common file for basic interpreter
+	.sall	
+conto	set	15			;character to supress output (usually control-o)
+dbltrn	set	0			;for double precision transcendentals
+	if2	
+	.printx	/extended/
+	.printx	/lpt/
+	.printx	/cpm disk/
+	.printx	/z80/
+	.printx	/fast/
+	.printx	/5.0 features/
+	.printx	/ansi compatible/
+	endif
+clmwid	set	14			;make comma columns fourteen characters
+datpsc	set	128			;number of data bytes in disk sector
+linln	set	80			;terminal line length 
+lptlen	set	132
+buflen	set	255			;long lines
+namlen	set	40			;maximum length name -- 3 to 127
+numlev	set	0*20+19+2*5		;number of stack levels reserved
+					;by an explicit call to getstk
+strsiz	set	4
+strsiz	set	3
+numtmp	set	3			;number of string temporaries
+numtmp	set	10
+md.rnd	set	3			;the mode number for random files
+md.sqi	set	1			;the mode number for sequential input files
+					;never written into a file
+md.sqo	set	2			;the mode for sequential output files
+					;and program files
+cpmwrm	set	0			;cp/m warm boot addr
+cpment	set	cpmwrm+5		;cp/m bdos call addr
+	cseg	
+trurom	set	0
+	page
+	title	dskcom - - common routines for disk basics
+	extrn	clsfil,conint,datofs,derbfn,derrpe,error,filou3,chrgtr,curlin
+	extrn	indskb,indskc,nmlofs,prgfil,scrtch,snerr
+	extrn	frmeql,buf
+	extrn	strlt3,derfov
+	extrn	datofc,derbfm,dirtmp,doasig,docnvf,dsctmp,errfdr,fcerr
+	extrn	filpt1,filptr,fin,finbck,finprt,frcstr,frestr,fretop
+	extrn	frmevl,getbyt,getspa,gone,gtbytc,gtmprt,inchri,letcon
+	extrn	linker,list,lstfre,main,maxfil,newstt,nmlofc,omerr
+	extrn	ptrfil,ptrget,putnew,ready,runc
+	extrn	sccptr
+	extrn	savstk,strini,txttab,valtyp,vartab,vmovfm,vmovmf,endcon
+	extrn	getypr,synchr,dcompr
+	public	clsall,filfrm,filidx,filscn,field,prgfli,filind
+	public	filinp,filget,mki$,mks$,mkd$,cvi,cvs,cvd
+	public	dline,prgfl2,lrun,load,prgfin,merge,dirdo,save,close
+	public	okgetm
+	public	rset,lset
+	public	binpsv
+	extrn	prosav,prolod
+	extrn	proflg
+; revision history
+;4/23/78	pga	allow # on close
+;
+;8/6/79  pga	if ^c on mbasic foo, dont return to system. see 'notini'
+;6/27/80	pga	fix input#1,d# so it uses findbl instead of fin
+;		and thus avoids losing significance.
+;
+;%
+	subttl	filinp and filget -- scan a file number and setup ptrfil
+filinp:	mvi	c,md.sqi		;must be sequential input
+filget:	cpi	'#'			;number sign there?
+	rnz				;no, not disk reader
+	push	b			;save expected mode
+	call	filscn			;read and get pointer
+	pop	d			;[e]=file mode
+	cmp	e			;is it right?
+	jz	gdfilm			;good file mode
+	cpi	md.rnd			;allow stuff with random files
+	jnz	derbfm			;if not, "bad file mode"
+gdfilm:
+	call	synchr
+	db	44			;go past the comma
+filset:	xchg				;[d,e]=text pointer
+	mov	h,b			;setup ptrfil
+	mov	l,c
+	shld	ptrfil
+	xchg				;text pointer back into [h,l]
+	ret	
+	page
+	subttl	filscn, filfrm, and filidx
+;
+; at this entry point [h,l] is assumed to be the text pointer and
+; a file number is scanned
+;
+filscn:	dcx	h
+	call	chrgtr
+	cpi	'#'			;make number sign optional
+	cz	chrgtr			;by skipping it if there
+	call	frmevl			;read the file number into the fac
+;
+; at this entry point the fac has the file number in it already
+;
+filfrm:	call	conint			;get the file number into [a]
+;
+; at this point it is assumed the file number is in [a]
+; the file number is returned in [e]
+; [d] is set to zero. [h,l] is saved.
+; [b,c] is set to point at the file data block for file [e]
+; [a] give the mode of the file and zero is set  if the file is
+; mode zero (not open).
+;
+filidx:	mov	e,a			;get file number into [e]
+filid2:	lda	maxfil			;is this file # legal?
+	cmp	e
+	jc	derbfn			;if not, "bad file number"
+	mvi	d,0			;setup double-byte offset to get
+					;pointer to file data block
+	push	h			;save [h,l]
+	lxi	h,filptr		;point at pointer table
+	dad	d			;add on offset twice for double byte
+	dad	d			;entries
+	mov	c,m			;pick up pointer in [b,c]
+	inx	h
+	mov	b,m
+	ldax	b			;get mode of file into [a]
+	ora	a			;set zero if file not open
+	pop	h			;retrieve [h,l]
+	ret	
+; getptr is called from varptr(#<expression>)
+	public	getptr
+getptr:	call	filid2			;index into file data block
+	lxi	h,datofc		;point to data block
+	cpi	md.rnd			;random file?
+	jnz	ntfivd			;no, use notrrmal fooffset
+	lxi	h,0+fd.dat##		;yes
+ntfivd:
+	dad	b			;add start of file data block
+	xchg				;return in [d,e]
+	ret	
+	page
+mki$:	mvi	a,2			;value type for integer and number
+					;of characters result will need
+	db	1			;skip next two bytes with "lxi	b,"
+mks$:	mvi	a,4			;value type of single precision
+	db	1			;skip next two bytes
+mkd$:	mvi	a,8			;value type of double-precision
+	push	psw			;save the number of bytes of
+					;string space we need
+	call	docnvf			;convert fac to proper type
+	pop	psw			;get the number of bytes needed
+	call	strini			;get a place for the string data
+	lhld	dsctmp+1		;point to the place to store the data
+	call	vmovmf			;move the fac value into the string creation
+	jmp	finbck			;finish up these string functions
+cvi:	mvi	a,1			;set [a] to be valtyp-1
+	db	1			;skip the next two bytes with "lxi b,"
+cvs:	mvi	a,3			;also set [a] to number of characters required -1
+	db	1			;skip the next two bytes
+cvd:	mvi	a,7			;double precision value type -1
+	push	psw			;save the valtyp
+	call	frestr			;make sure the argument is a string
+					;and get a pointer to the descriptor
+	pop	psw			;get back number of characters required-1
+	cmp	m			;make sure the string is longer than that
+	jnc	fcerr			;if not, "illegal function call"
+	inr	a			;[a]=true value type
+	inx	h
+	mov	c,m			;[h,l]=pointer at string data
+	inx	h			;to be moved into the fac
+	mov	h,m
+	mov	l,c
+	sta	valtyp			;setup value type for move
+					;and for identification
+	jmp	vmovfm			;move in the string data
+	page
+	subttl	setup to read a sequential item -- filind
+filind:
+	call	getypr			;see if input is string or number
+	lxi	b,doasig		;return address to setup [fac]
+con1	set	0+(44*256)+32
+	lxi	d,con1			;setup terminators space and comma
+	jnz	inpdor			;if numeric, go read the file
+	mov	e,d			;make both terminators comma
+	jmp	inpdor			;go read the file
+	page
+	subttl	line input & read code for item fetching from sequential input files
+dline:	call	filinp			;get file number set up
+	call	ptrget			;read string to store into
+	call	frcstr			;make sure it was a string
+	lxi	b,finprt		;reset to console when done reading
+	push	b			;save on stack
+	push	d			;save pointer at variable
+	lxi	b,letcon		;good return address for assignment
+	xra	a			;set a=0 for string value type
+	mov	d,a			;zero out both terminators
+	mov	e,a
+inpdor:	push	psw			;save value type
+	push	b			;save return address
+	push	h			;save pointer at data coming in
+					;a dummy pointer at bufmin
+notnwt:	call	indskc			;read a character
+	jc	derrpe			;read past end error if eof
+	cpi	' '			;skip leading spaces
+	jnz	notspc			;except for line input
+	inr	d			;check for lineinput
+	dcr	d
+	jnz	notnwt			;skip any number
+notspc:	cpi	34			;quoted string coming in?
+	jnz	notqte
+	mov	b,a			;save the quote
+	mov	a,e			;must be input of a string
+	cpi	44			;which has [e]=44
+	mov	a,b			;quote back into [a]
+	jnz	notqte
+	mov	d,b			;terminators are quotes only
+	mov	e,b
+	call	indskc			;read past quotation
+	jc	quitsi			;if eof, all done
+notqte:
+	lxi	h,buf			;buffer for data
+	mvi	b,255			;maximum number of characters (255)
+lopcrs:	mov	c,a			;save character in [c]
+	mov	a,d			;check for quoted string
+	cpi	34
+	mov	a,c			;restore character
+	jz	notqtl			;don't ignore cr or stop on lf
+	cpi	13			;cr?
+	push	h			;save dest ptr. on stack
+	jz	icaslf			;eat line feed if one
+	pop	h			;restore dest. ptr.
+	cpi	10			;lf?
+	jnz	notqtl			;no, test other terminators
+	mov	c,a			;save current char
+	mov	a,e			;get terminator 2
+	cpi	54o			;check for comma (unquoted string)
+	mov	a,c			;restore orig char
+	cnz	strchr			;if not, store lf (?)
+	call	indskc			;get next char
+	jc	quitsi			;if eof, all done.
+	cpi	13			;is it a cr?
+	jnz	notqtl			;if not see if store normally
+	mov	a,e			;get terminator
+	cpi	' '			;is it numeric input?
+	jz	lpcrgt			;if so, ignore cr, dont put in buffer
+	cpi	44			;is it non-quoted string (term=,)
+	mvi	a,13			;get back cr.
+	jz	lpcrgt			;if so, ignore cr.
+notqtl:	ora	a			;is char zero
+	jz	lpcrgt			;always ignore, as it is terminator
+					;for strlit (see quit2b)
+	cmp	d			;terminator one?
+	jz	quitsi			;stop then
+	cmp	e			;terminator two?
+	jz	quitsi
+	call	strchr			;save the char
+lpcrgt:	call	indskc			;read another character
+	jnc	lopcrs			;if not, check as terminator
+quitsi:	push	h			;save place to stuff zero
+	cpi	34			;stopped on quote?
+	jz	morspc			;don't skip spaces then
+					;but do skip following comma or
+					;crlf though
+	cpi	' '			;stopped on space?
+	jnz	noskcr			;no, don't skip spaces
+					;or any following commas or crlfs either
+morspc:	call	indskc			;read spaces
+	jc	noskcr			;eof, all done.
+	cpi	' '
+	jz	morspc
+	cpi	44			;comma?
+	jz	noskcr			;ok, skip it
+	cpi	13			;carriage return?
+	jnz	bakupt			;back up past this character
+icaslf:
+	call	indskc			;read another
+	jc	noskcr			;eof, all done.
+	cpi	10			;line feed?
+	jz	noskcr			;ok, skip it too
+bakupt:	lhld	ptrfil			;go to number of charaters
+	lxi	b,0+nmlofs
+	dad	b
+	inr	m			;back up by incrementing character count
+noskcr:	pop	h			;get back place to store terminator
+quit2b:	mvi	m,0			;store the terminator
+	lxi	h,buf-1			;item is now stored at this point +1
+	mov	a,e			;was it a numeric input?
+	sui	' '			;if so, [e]=" "
+	jz	numimk			;use fin to scan it
+	extrn	strlt2
+	mov	b,d			;set [b]=44 if scanning unquoted string
+	mvi	d,0
+	call	strlt2
+	pop	h			;get back [h,l]
+	ret				;do assignment
+numimk:	call	getypr			;get type of numeric variable being read
+	push	psw			;save it
+	call	chrgtr			;read first character
+	pop	psw			;restore type of variable
+	push	psw			;save back
+	cc	fin			;single precision input
+	pop	psw			;get back type of var
+	extrn	findbl
+	cnc	findbl			;double precision input
+	pop	h			;get [h,l]
+	ret				;do the assignment
+strchr:	ora	a			;trying to store null byte
+	rz				;return, dont store it
+	mov	m,a			;store the character
+	inx	h
+	dcr	b			;128 yet?
+	rnz				;more space in buffer, return
+	pop	b			;get rid of superfluous stack entry
+	jmp	quit2b			;special quit
+	page
+prgfli:	mvi	d,md.sqi		;sequential input mode
+prgfl2:	xra	a			;internal file number is always zero
+	jmp	prgfil			;scan file name and disk nummer
+					;and do the right thing using md.kil
+					;as a flag
+lrun:
+lrun2::	db	366q			;set non zero to flag "run" command
+load:	xra	a			;flag zero for "load"
+	push	psw			;save "run"/"load" flag
+	call	prgfli			;find that file and setup for
+					;using indskc subroutine
+	lda	maxfil			;save the number of files
+	sta	lstfre+1		;since we make it look like zero
+					;so ,r option can leave files
+					;open
+	dcx	h			;see if no run option
+	call	chrgtr
+	jz	notrnl			;no, just load
+	call	synchr
+	db	44			;gotta have a comma
+	call	synchr
+	db	'R'			;only option is run
+	jnz	snerr			;and that better be the end
+	pop	psw			;get rid of "run"/"load" flag
+	public	chnent
+chnent:
+	xra	a			;so files aren't closed
+	sta	maxfil			;pretend there aren't any
+	db	366o			;flag run with non-zero
+notrnl:	pop	psw			;flag non-run with zero
+	sta	lstfre
+	lxi	h,dirtmp
+	mvi	m,0
+	shld	filptr			;mess up pointer at file zero
+	call	scrtch			;wipe out old stuff
+	lda	lstfre+1		;restore maxfil
+	sta	maxfil			;that was kludged
+	lhld	filpt1
+	shld	filptr			;restore back to normal
+	shld	ptrfil			;ptrfil got zeroed so fix it too
+; below is fix (to label notini) so that if ^c during mbasic foo, wont exit to system
+	lhld	curlin			;get line number
+	inx	h			;see if in initialization
+	mov	a,h
+	ana	l
+	inr	a
+	jnz	notini			;no
+	shld	curlin			;save direct line number
+notini:
+	call	indskc			;read the first character
+	jc	main			;all done if nothing in file
+	cpi	254			;is this a protected file?
+	jnz	ntprol			;no
+	sta	proflg			;set protected file
+	jmp	binlod			;do binary load
+ntprol:
+	inr	a			;is it a binary file?
+	jnz	maingo			;no, since ptrfil is non-zero
+					;inchr will use indskc instead of polling
+					;the terminal
+					;when eof is hit ptrfil will be restored
+					;and lstfre will be used as a flag
+					;to indicate whether to run the
+					;loaded program
+;
+; time for a binary load.
+; after the load, the file is linked together
+; lstfre is used as a flag whether to run or not
+;
+binlod:	lhld	txttab			;get place to start storing into
+lpbldr:	xchg				;see if there is room to spare
+	lhld	fretop
+	lxi	b,0+65536-86
+	dad	b
+	call	dcompr
+	xchg	
+	jc	outlod			;error and wipe out partial garbage
+					;unlinked!! no zeroes at the end!!
+	call	indskb			;read the a data byte
+					;this is semi-weak since memory
+					;is left in a bad bad state
+					;if an i/o error occurs
+	mov	m,a			;store byte
+	inx	h			;incrment pointer
+	jnc	lpbldr			;read the next char
+	shld	vartab			;save end temp for decoding
+	lda	proflg			;is this a protected file?
+	ora	a			;set cc's
+	cnz	prolod			;translate to good stuff
+	call	linker			;fix the links
+	inx	h			;when linker returns, [h,l]
+	inx	h			;points to double zero
+	shld	vartab			;update [vartab]
+	lxi	h,maxfil		;only close file zer0
+	mov	a,m
+	sta	lstfre+1
+	mvi	m,0
+	call	runc			;setup arytab, strend
+	lda	lstfre+1		;restore number of files
+	sta	maxfil
+	extrn	chnflg,chnret
+	lda	chnflg			;chain in progress
+	ora	a			;test
+	jnz	chnret			;yes, go back to chain code
+	lda	lstfre			;run or not?
+	ora	a
+	jz	ready
+	jmp	newstt
+prgfin:	call	finprt			;zero ptrfil
+	call	clsfil			;close file zero
+	jmp	gtmprt			;refetch text pointer
+outlod::call	scrtch
+	jmp	omerr
+merge:	pop	b			;eliminate newstt return
+	call	prgfli			;read the name and disk
+	dcx	h			;must end there
+	call	chrgtr
+	jz	okgetm			;read the file
+	call	prgfin			;close out time
+	jmp	snerr			;and "syntax error"
+okgetm:	xra	a			;no run option with "merge"
+	sta	lstfre			;set up the flag
+	call	indskc			;read from [ptrfil] file
+	jc	main			;go back if eof
+	inr	a			;is it a binary file??
+	jz	derbfm			;binary is wrong file mode
+maingo:	lhld	ptrfil			;get file pointer
+	lxi	b,nmlofc		;point to number of chars in buffer
+	dad	b			;by adding offset
+	inr	m			;back up file by incrementing count
+	jmp	main
+	page
+	subttl	dispatch for direct statement
+;
+; make sure we're not reading a file in
+;
+dirdo:
+	push	h
+	lhld	ptrfil
+	mov	a,h
+	ora	l			;is ptrfil zero so not file reading?
+	lxi	d,0+errfdr		;"direct statement in file"
+	jnz	error			;note: lxi d, is used to
+					;to make source conversions easier
+	pop	h			;get back pointer at bufmin
+	jmp	gone			;execute direct statement
+	page
+	subttl	save command -- ascii or binary
+save:	mvi	d,md.sqo		;eliminate earlier version
+					;and create empty file
+	call	prgfl2			;read file name and disk number and
+					;look it up
+	dcx	h
+	call	chrgtr			;end of statement?
+	jz	binsav			;binary save!!
+	call	synchr
+	db	44			;only option is ",a"
+	extrn	prosav
+	cpi	'P'			;protected save?
+	jz	prosav			;do it
+	call	synchr
+	db	'A'			;for ascii save
+	jmp	list			;use the list code to do the output
+					;control-cs are not allowed
+					;and at the end ptrfil is zeroed
+binsav:
+	call	sccptr			;get rid of pointers before saving
+	extrn	prochk
+	call	prochk			;dont allow binary saves of protected programs
+	mvi	a,255			;always start with 255
+binpsv:	call	filou3			;send to file
+	lhld	vartab			;get stop point
+	xchg				;save in [d,e]
+	lhld	txttab			;get start point
+bsavlp:	call	dcompr			;reached the end?
+	jz	prgfin			;reget text pointer and close file 0
+	mov	a,m			;get line data
+	inx	h			;point at next data
+	push	d			;save limit
+	call	filou3			;send char to file
+	pop	d			;restore limit
+	jmp	bsavlp			;continue with line data
+	subttl	driver code for close
+close:	lxi	b,clsfil		;service routine address
+	lda	maxfil			;highest possible argument
+					;which means do all possible
+rtallr:	jnz	rtloop			;not end of statement, so scan arguments
+	push	h			;save the text pointer
+mrall:	push	b			;save routine address
+	push	psw			;save current value
+	lxi	d,retall		;return address
+	push	d			;save it to come back with
+	push	b			;dispatch to service routine
+	ret	
+retall:	pop	psw			;get back old argument
+	pop	b			;get back service routine address
+	dcr	a			;decrement argument
+	jp	mrall			;loop on more values
+	pop	h			;get back the text pointer
+	ret	
+retrts:	pop	b			;get back service routine address
+	pop	h			;get back the text pointer
+	mov	a,m			;see if more arguments
+	cpi	44			;delimited by comma
+	rnz	
+	call	chrgtr			;read first character of formula
+rtloop:	push	b			;save the service routine address
+	mov	a,m			;get possble "#"
+	cpi	'#'			;is it
+	cz	chrgtr			;skip it, its optional
+	call	getbyt			;read the argument
+	xthl				;save the text pointer on the stack
+					;and set [h,l]=service address
+	push	h			;save the service address
+	lxi	d,retrts		;put a return address on the stack
+	push	d
+	pchl				;dispatch to do the function
+clsall:	push	d
+	push	b			;save [b,c] for stkini
+	xra	a			;make it close all disks
+	call	close
+	pop	b
+	pop	d			;get back [d,e]
+	xra	a			;return with [a]=0 and z on
+	ret	
+	page
+	subttl	"field" statement for setting up i/o strings
+field:	call	filscn			;get data block pointer in [b,c]
+	jz	derbfn			;"bad file number" if file not open
+	sui	md.rnd			;make sure its a random file
+	jnz	derbfm			;if not, "bad file mode"
+	extrn	fd.siz,tempa,tempb,fd.dat
+	xchg				;save text pointer
+	lxi	h,0+fd.siz		;point to record size
+	dad	b
+	mov	a,m			;get it
+	inx	h
+	mov	h,m
+	mov	l,a
+	shld	tempa			;store max allowed
+	lxi	h,0			;zero max # of chars
+	shld	tempb
+	mov	a,h			;make [a]=0
+	xchg				;get back text pointer
+	lxi	d,0+fd.dat		;point to 5.0 field buffer
+lopfld:	xchg				;save text pointer in [d,e]
+	dad	b			;add on data pointer so [h,l] now points
+					;at the start of the data
+	mov	b,a			;setup count of characters past by
+					;in data area, so total is never greater than 128
+	xchg				;text pointer back into [h,l]
+					;[d,e]=pointer into data area
+	mov	a,m			;more "as"s to scan?
+	cpi	44			;comma starts the clause
+	rnz				;back to newstt if not
+	push	d			;save the pointer into the data block
+	push	b			;save [b]=number of characters allocated
+	call	gtbytc			;read number into [a] from text
+	push	psw			;save this number
+	call	synchr
+	db	'A'			;scan the "as"
+	call	synchr
+	db	'S'
+	call	ptrget			;get a pointer at the string descriptor
+	call	frcstr			;into [d,e]
+	pop	psw			;get the number of characters
+	pop	b			;get the number already used
+	xthl				;save the text pointer and
+					;[h,l]=pointer into data block
+	mov	c,a			;save # of characters in [c]
+	push	d			;save [d,e]
+	push	h			;save [h,l]
+	lhld	tempb			;get total so far
+	mvi	b,0			;accumulate count
+	dad	b
+	shld	tempb			;save total again
+	xchg				;total to [d,e]
+	lhld	tempa			;get max allowed
+	call	dcompr			;in range?
+	jc	derfov			;no, give error
+	pop	h			;restore [h,l]
+	pop	d			;restore [d,e]
+	xchg				;[h,l] point at string descriptor
+	mov	m,c			;store the length
+	inx	h
+	mov	m,e			;store the pointer into the data block
+	inx	h
+	mov	m,d
+	pop	h			;get back the text pointer
+	iff	datpsc-256
+	jnz	lopfld			;if total added up to not 256, go back for more
+	mov	a,c			;see how much we added
+	ora	a			;test
+	rnz	
+	endif				;just added up to 256, give syntax error if more
+	jmp	lopfld			;continue scanning "as" clauses if more
+	page
+	subttl	random non-i/o -- lset/rset/field
+;lset/rset stringvar = stringexp
+;
+; if stringvar points to an i/o buffer, use the string size to
+;justify string. if stringvar is a literal, make new var with length
+;of literal. if stringvar points to string space, use it. if the
+;length of the variable is zero, return the null string. if a copy
+;must be created, and stringexp is a temporary, use this space over
+;unless length stringvar greater than stringexp.
+rset:	db	366o			;ori	<stc>
+lset:	stc				;set carry if lset
+	push	psw			;save lset/rset flag
+	call	ptrget			;get pointer to stringvar
+	call	frcstr			;must be a string variable
+	push	d			;save pointer to descriptor
+	call	frmeql			;eat "=" and evaluate stringexp
+	pop	b			; [b,c] = ptr to descr.
+	xthl				;text ptr on bottom of stack
+	push	h			;lset/rset flag next
+	push	b			;put descr. ptr back on
+	call	frestr			;error if not string, free temp.
+	mov	b,m			;get length of stringexp
+	xthl				; [h,l] = descr. of var,save othr
+	mov	a,m			;get length of stringvar
+	mov	c,a			;save in [c]
+	push	b			;save lengths of both
+	push	h			;save descriptor pointer
+	push	psw			;psw zero if was temp.
+	inx	h
+	mov	e,m
+	inx	h
+	mov	d,m			;get ptr to stringvar text
+	ora	a			;stringvar null?
+	jz	retcur			;yes, don't change
+	lhld	txttab
+	call	dcompr			;stringvar in disk buffer?
+	jnc	oldstr			;yes, use it
+	lhld	vartab
+	call	dcompr			;stringvar in program(literal)?
+	jc	oldstr			;no, in string space so use it
+;need to make new string for result since stringvar points to a literal.
+;if stringexp was a temporary, it has been freed. if the length of
+;stringexp is greater than or equal to the length of stringvar, getspa
+;can be called and no garbage collection can occur so temp. can be reused.
+;if stringvar is greater, must get a temp. to point to stringexp if it
+;was a temp. , then call getspa which in this case can garbage collect.
+	mov	e,c
+	mvi	d,0			;# bytes to allocate for result
+	extrn	strend
+	lhld	strend
+	dad	d
+	xchg	
+	lhld	fretop
+	call	dcompr			;will getspa garbage collect?
+	jc	makdsc			;yes, better have stringexp temp.
+madesc:	pop	psw
+	mov	a,c			;get length of stringvar
+	call	getspa			;get space for result
+	pop	h			;get stringvar descr.
+	pop	b			;get lengths off stack
+	xthl				;get what we wanted, stringexp descr.
+	push	d
+	push	b
+	call	frestr			;free temp if any
+	pop	b
+	pop	d
+	xthl	
+	push	b			;restore stack to previous state
+	push	h
+	inx	h
+	mov	m,e
+	inx	h
+	mov	m,d			;set pointer to stringvar copy
+	push	psw
+oldstr:	pop	psw
+	pop	h			;get stringvar descr.
+	inx	h
+	mov	e,m
+	inx	h
+	mov	d,m			;get pointer to text area
+	pop	b			;get lengths off stack
+	pop	h			;get pointer to stringexp descr.
+	push	d
+	inx	h
+	mov	e,m
+	inx	h
+	mov	d,m			;get ptr to stringexp text
+	xchg				;put pointer in [h,l]
+	pop	d
+	mov	a,c			;get length of field(stringvar)
+	cmp	b
+	jnc	fildok			;jump if field large enough for result
+	mov	b,a			;save # of bytes to copy
+fildok:	sub	b
+	mov	c,a			;[c] = # blanks to fill
+	pop	psw			;get lset/rset flag
+	cnc	blkfil			;fill leading if rset
+	inr	b			;in case zero
+coplop:	dcr	b			;decr. # to copy
+	jz	lrstdn			;done when all copied
+	mov	a,m			;get byte from stringexp
+	stax	d			;copy to stringvar
+	inx	h
+	inx	d
+	jmp	coplop
+retcur:	pop	b
+	pop	b
+	pop	b
+	pop	b
+	pop	b			;get garb off stack
+lrstdn:	cc	blkfil			;fill trailing if lset
+	pop	h			;restore text pointer
+	ret	
+blkfil:	mvi	a,' '			;fill with spaces
+	inr	c			;in case zero
+blkfl1:	dcr	c			;decr. # to fill
+	rz				;return when done
+	stax	d			;store space
+	inx	d
+	jmp	blkfl1
+; if stringexp was a temporary, create a new temporary to point to
+; stringexp since old one was freed. this must be done since getspa
+; will be called and garbage collection might occur. if stringexp is
+; not a temporary, return.
+makdsc:	pop	psw			;get temp flag
+	pop	h
+	pop	b
+	xthl				;dig down to stringexp descr.
+	xchg				;fretms wants [d,e]
+	jnz	makds1			;not a temp, don't reallocate
+	push	b
+	mov	a,b
+	call	strini			;make a temp point to stringexp
+	call	putnew			;get a temp to point to it
+	pop	b
+makds1:	xthl	
+	push	b
+	push	h			;restore stack to previous state
+	push	psw
+	jmp	madesc
+	page
+	subttl	program i/o -- fixed length input
+; format:
+;		stringvar = input$(#bytes[,[#] file#])
+;if no file # is given, characters will be read from the user's
+; terminal. no echoing will be done and no editing will be allowed
+; (i.e. rubout,@,_,^u are just input as characters).
+	public	fixinp
+fixinp:	call	chrgtr
+	call	synchr
+	db	'$'			;string function
+	call	synchr
+	db	'('
+	call	getbyt			;get # of bytes to read
+	push	d			;save # of bytes to read
+	mov	a,m
+	cpi	54o			;read from disk file?
+	jnz	redtty			;no, from user's terminal
+	call	chrgtr
+	call	filscn			;set up file #
+	cpi	md.sqo			;sequential output file?
+	jz	derbfm			;then bad file mode
+	call	filset			;set up ptrfil
+	xra	a			;set zero for flag
+redtty:	push	psw			;non zero set if terminal i/o
+	call	synchr
+	db	')'			;must have paren
+	pop	psw			;get flag off stack
+	xthl				;save text ptr, [l]=# to read
+	push	psw			;save flag
+	mov	a,l
+	ora	a			;read no characters?
+	jz	fcerr			;yes, error
+	push	h			;save #
+	call	strini			;get space for string
+	xchg	
+	pop	b			;[c] = # to read
+fixlop:	pop	psw
+	push	psw			;non-zero set if should read from tty
+	jz	dskchr			;read from disk file
+	extrn	charcg
+	call	charcg			;get char if one
+	jnz	charcw			;was one
+	call	inchri			;read a char from terminal
+charcw:
+;note : will check flag on interrupt ^c
+	cpi	3			;control-c?
+	jz	intctc			;yes, stop
+putchr:	mov	m,a			;put char into string
+	inx	h
+	dcr	c			;read enough yet?
+	jnz	fixlop			;no, read more
+	pop	psw			;get flag off stack
+	call	finprt			;clear ptrfil
+	jmp	putnew			;return string as result
+intctc:	lhld	savstk			;get saved stack pointer
+	sphl				;set [h,l] to it
+	jmp	endcon			;stop program
+dskchr:	call	indskc			;get char from file
+	jc	derrpe			;if carry, read past eof
+	jmp	putchr			;put char in string
+	end	
+

@@ -1,0 +1,237 @@
+	subttl	common file for basic interpreter
+	.sall	
+conto	set	15			;character to supress output (usually control-o)
+dbltrn	set	0			;for double precision transcendentals
+	if2	
+	.printx	/extended/
+	.printx	/lpt/
+	.printx	/cpm disk/
+	.printx	/z80/
+	.printx	/fast/
+	.printx	/5.0 features/
+	.printx	/ansi compatible/
+	endif
+clmwid	set	14			;make comma columns fourteen characters
+datpsc	set	128			;number of data bytes in disk sector
+linln	set	80			;terminal line length 
+lptlen	set	132
+buflen	set	255			;long lines
+namlen	set	40			;maximum length name -- 3 to 127
+numlev	set	0*20+19+2*5		;number of stack levels reserved
+					;by an explicit call to getstk
+strsiz	set	4
+strsiz	set	3
+numtmp	set	3			;number of string temporaries
+numtmp	set	10
+md.rnd	set	3			;the mode number for random files
+md.sqi	set	1			;the mode number for sequential input files
+					;never written into a file
+md.sqo	set	2			;the mode for sequential output files
+					;and program files
+cpmwrm	set	0			;cp/m warm boot addr
+cpment	set	cpmwrm+5		;cp/m bdos call addr
+	cseg	
+trurom	set	0
+	page
+	title	inlin basic interpreter input line routine/whg/pga/mbm, etc.
+	subttl	inlin - line input routine
+	public	inlin,qinlin
+	extrn	fininl
+	extrn	buf,crdo,inchr,outdo
+	extrn	lisprt
+	extrn	ctrlpt
+; this is the line input routine
+; it reads characters into buf using _ as the
+; character delete character and @ as the line delete character
+; if more than buflen character are typed, no echoing
+; is done until a  _ @ or carriage-return is typed.
+; control-g will be typed for each extra character.
+; the routine is entered at inlin, at qinlin to type a question mark
+; and a space first
+qinlin:	mvi	a,'?'			;get a qmark
+	call	outdo			;type it
+	mvi	a,' '			;space
+	call	outdo			;type it too
+	jmp	inlin			;no crunching in this case
+inlinc:	call	inchr			;get a char
+	cpi	1			;control a?
+	jnz	inlnc1			;no, treat normally
+	mvi	m,0			;save terminator
+	jmp	inled1			;go edit from here
+inlinq:	mov	m,b			;store zero in buf
+inlin:
+	xra	a			;clear type ahead char
+	extrn	charc
+	sta	charc			;like so
+	public	sinlin
+	extrn	tempa
+	xra	a
+	sta	tempa			;flag to do cr
+sinlin:
+					;save current cursor address (ttypos)
+	call	inchr			;get char
+	cpi	1			;control-a?
+	jnz	inlins			;go do it
+inled1:
+	call	crdo			;type crlf
+	lxi	h,0+65535		;get special line #
+	extrn	inled
+	jmp	inled			;go to edit code.
+					;get char
+rubout:
+	extrn	rubsw
+	lda	rubsw			;are we already rubbing out?
+	ora	a			;set cc's
+	mvi	a,'\'			;get ready to type backslash
+	sta	rubsw			;make rubsw non-zero if not already
+	jnz	notbeg			;not rubbing back to beggining
+	dcr	b			;at beginning of line?
+	jz	inlinq			;set first byte in buf to zero
+	call	outdo			;send backslash
+	inr	b			;effectively skip next instruction
+notbeg:	dcr	b			;back up char count by 1
+	dcx	h			;and line posit
+	jz	inlinn			;and re-set up input
+	mov	a,m			;otherwise get char to echo
+	call	outdo			;send it
+	jmp	inlinc			;and get next char
+linlin:	dcr	b			;back arrow so decrement count
+linln2:	dcx	h			;back up pointer
+	call	outdo
+	jnz	inlinc			;not too many so continue
+inlinn:	call	outdo			;print the @, or a second _ if there
+					;were too many
+inlinu:	call	crdo			;type a crlf
+inlins:	lxi	h,buf
+	mvi	b,1			;character count
+	push	psw
+	xra	a			;always clear rubout switch
+	sta	rubsw			;by storing in
+	pop	psw
+inlnc1:
+	mov	c,a			;save current char in [c]
+	cpi	177o			;character delete?
+	jz	rubout			;do it
+	lda	rubsw			;been doing a rubout?
+	ora	a			;set cc's
+	jz	notrub			;nope.
+	mvi	a,'\'			;get ready to type slash
+	call	outdo			;send it
+	xra	a			;clear rubsw
+	sta	rubsw			;like so.
+notrub:	mov	a,c			;get back current char
+	cpi	7			;is it bob albrecht ringing the bell
+	jz	goodch			;for school kids?
+	cpi	3			;control-c?
+	cz	ctrlpt			;type ^ followed by char, and crlf
+	stc				;return with carry on
+	rz				;if it was control-c
+	cpi	13			;is it a carriage return?
+	jz	gfninl
+	cpi	9			;tab?
+	jz	goodch			;save it
+	cpi	10			;lf?
+	jnz	chkfun			;no, see if funny char
+	dcr	b			;see if only char on line
+	jz	inlin			;it is, ignore
+	inr	b			;restore b
+	jmp	goodch			;is lf and not null line
+chkfun:
+	cpi	'U'-100o		;line delete? (control-u)
+	cz	ctrlpt			;print ^u
+	jz	inlin
+	cpi	8			;backspace? (control-h)?
+	jnz	ntbksp			;no
+drbksp:	dcr	b			;at start of line?
+	jz	sinlin
+	call	outdo			;send backspace
+	mvi	a,' '			;send space to wipe out char
+	call	outdo
+	mvi	a,8			;send another backspace
+	jmp	linln2
+ntbksp:
+	cpi	24			;is it control-x (line delete)
+	jnz	ntctlx			;no
+	mvi	a,'#'			;send number sign
+	jmp	inlinn			;send # sign and echo
+ntctlx:
+	cpi	18			;control-r?
+	jnz	ntctlr			;no
+	push	b			;save [b,c]
+	push	d			;save [d,e]
+	push	h			;save [h,l]
+	mvi	m,0			;store terminator
+	call	crdo			;do crlf
+	lxi	h,buf			;point to start of buffer
+	call	lisprt			;handle line-feeds properly
+	pop	h			;restore [h,l]
+	pop	d			;restore [d,e]
+	pop	b			;restore [b,c]
+	jmp	inlinc			;get next char
+ntctlr:
+	cpi	32			;check for funny characters
+	jc	inlinc
+					;philips must echo controls
+goodch:	mov	a,b			;get current length
+					;*** special check if buffer 255 long for len2
+	inr	a			;bump line length
+	extrn	ptrfil,linget,curlin
+	jnz	outbnd			;no cause for bell
+	push	h			;save [h,l]
+	lhld	ptrfil			;see if reading from disk
+	mov	a,h			;by testing for ptrfil
+	ora	l			;non-zero
+	pop	h			;restore [h,l]
+	mvi	a,7			;get bell char
+	jz	outbel			;not reading from disk, send bell
+	lxi	h,buf			;make [h,l] point to buff
+	call	linget			;get line number
+	xchg				;get line # in [h,l]
+	shld	curlin			;save in current line #
+	extrn	error
+	extrn	lboerr
+	jmp	lboerr			;give line buffer overflow error
+outbnd:
+	mov	a,c			;restore  current character into [a]
+	mov	m,c			;store this character
+	inx	h			;bump pointer into buf
+	inr	b			;increment character count
+outbel:
+	call	outdo			;send the char
+					;send char
+	sui	10			;lf??
+	jnz	inlinc			;no, get next char
+	extrn	ttypos
+	sta	ttypos			;make sure ttypos=0.
+					;make sure ttypos=0
+	mvi	a,13			;send cr.
+	call	outdo			;by calling outchr
+eatnul:	call	inchr			;eat next char
+	ora	a			;null after lf?
+	jz	eatnul			;dont let it get by
+	cpi	13			;a carriage return??
+	jz	inlinc			;eat it & get next char
+	jmp	inlnc1			;use it
+					;must echo the char
+	page
+	extrn	tempa
+	public	scnsem
+	extrn	chrgtr,bufmin
+gfninl:
+	lda	tempa			;do cr or not?
+	ora	a			;test
+	jz	fininl			;yes
+	xra	a			;make zero
+	mov	m,a			;store terminator
+	lxi	h,bufmin		;get pointer to start of buf
+	ret				;done
+scnsem:	push	psw			;save char
+	mvi	a,0			;assume no semi
+	sta	tempa
+	pop	psw			;get back char
+	cpi	';'			;is it a semi?
+	rnz				;no
+	sta	tempa			;flag no cr from inlin
+	jmp	chrgtr
+	end	
+

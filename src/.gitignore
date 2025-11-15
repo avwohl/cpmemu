@@ -1,0 +1,13 @@
+\#*
+*~
+*.lst
+*.o
+*.so
+*.com
+*.ihx
+*.cdb
+*.rel
+*.map
+qkz80
+
+

@@ -1,0 +1,775 @@
+	subttl	common file for basic interpreter
+	.sall	
+conto	set	15			;character to supress output (usually control-o)
+dbltrn	set	0			;for double precision transcendentals
+	if2	
+	.printx	/extended/
+	.printx	/lpt/
+	.printx	/cpm disk/
+	.printx	/z80/
+	.printx	/fast/
+	.printx	/5.0 features/
+	.printx	/ansi compatible/
+	endif
+clmwid	set	14			;make comma columns fourteen characters
+datpsc	set	128			;number of data bytes in disk sector
+linln	set	80			;terminal line length 
+lptlen	set	132
+buflen	set	255			;long lines
+namlen	set	40			;maximum length name -- 3 to 127
+numlev	set	0*20+19+2*5		;number of stack levels reserved
+					;by an explicit call to getstk
+strsiz	set	4
+strsiz	set	3
+numtmp	set	3			;number of string temporaries
+numtmp	set	10
+md.rnd	set	3			;the mode number for random files
+md.sqi	set	1			;the mode number for sequential input files
+					;never written into a file
+md.sqo	set	2			;the mode for sequential output files
+					;and program files
+cpmwrm	set	0			;cp/m warm boot addr
+cpment	set	cpmwrm+5		;cp/m bdos call addr
+	cseg	
+trurom	set	0
+	page
+	title	fiveo 5.0 features -while/wend, call, chain, write /p. allen
+	.sall	
+	extrn	chrgtr,synchr,dcompr
+	extrn	getypr
+	extrn	snerr,getstk,ptrget,subflg,temp,crdo
+	extrn	vmovfm,frcint
+	page
+	subttl	while, wend
+	public	while,wend
+	extrn	endfor,error,frmevl,$for,$while,wndscn
+	extrn	savstk,newstt,nxtlin,curlin,forszc,errwe
+;
+; this code handles the statements while/wend
+; the 8080 stack is used to put an entry on for each active while
+; the same way active gosub and for entries are made.
+; the format is as follows:
+;	$while - the token identifying the entry (1 byte)
+;	a text pointer at the character after the wend of the while body (2 bytes)
+;	a text pointer at the character after the while of the while body (2 bytes)
+;	the line number of the line that the while is on (2 bytes)
+;
+;	total	7 bytes
+;
+while:	shld	endfor			;keep the while text pointer here
+	call	wndscn			;scan for the matching wend
+					;cause an errwh if no wend to match
+	call	chrgtr			;point at charactwer after wend
+	xchg				;[d,e]= position of matching wend
+	call	fndwnd			;see if there is a stack entry for this while
+	inx	sp			;get rid of the newstt address on the stack
+	inx	sp
+	jnz	wnotol			;if no match no need to truncate the stack
+	dad	b			;eliminate everything up to and including
+					;the matching while entry
+	sphl	
+	shld	savstk
+wnotol:	lhld	curlin			;make the stack entry
+	push	h
+	lhld	endfor			;get text pointer for while back
+	push	h
+	push	d			;save the wend text pointer
+	jmp	fnwend			;finish using wend code
+wend:	jnz	snerr			;statement has no arguments
+	xchg				;find matching while entry on stack
+	call	fndwnd
+	jnz	weerr			;must match or else error
+	sphl				;truncate stack at match point
+	shld	savstk
+	xchg				;save [h,l] pointing into stack entry
+	lhld	curlin			;remember wend line #
+	shld	nxtlin			;in nxtlin
+	xchg	
+	inx	h			;index into stack entry to get values
+	inx	h			;skip over text pointer of wend
+	mov	e,m			;set [d,e]=text pointer of while
+	inx	h
+	mov	d,m
+	inx	h
+	mov	a,m			;[h,l]=line number of while
+	inx	h
+	mov	h,m
+	mov	l,a
+	shld	curlin			;in case of error or continuation fix curlin
+	xchg				;get text pointer of while formula into [h,l]
+fnwend:	call	frmevl			;evaluate formula
+	extrn	vsign
+	push	h			;save text pointer
+	call	vsign			;get if true or false
+	pop	h			;get back while text pointer
+	jz	flswhl			;go back at wend if false
+	lxi	b,0+$while		;complete while entry
+	mov	b,c			;need it in the high byte
+	push	b
+	inx	sp			;only use one byte
+	jmp	newstt
+flswhl:	lhld	nxtlin			;setup curlin for wend
+	shld	curlin
+	pop	h			;take off text of wend as new text pointer
+	pop	psw			;get rid of text pointer of while
+	pop	psw			;take off line number of while
+	jmp	newstt
+;
+; this subroutine searches the stack for an while entry
+; whose wend text pointer matches [d,e]. it returns with zero true
+; if a match is found and zero false otherwise. for entries
+; are skipped over, but gosub entries are not.
+;
+whlsiz	set	6
+fndwnd:	lxi	h,0+4			;skip over return address and newstt
+	dad	sp
+fndwn2:
+	mov	a,m			;get the entry type
+	inx	h
+	lxi	b,0+$for
+	cmp	c			;see if its $for
+	jnz	fndwn3
+	lxi	b,forszc
+	dad	b
+	jmp	fndwn2
+fndwn3:	lxi	b,0+$while
+	cmp	c
+	rnz	
+	push	h
+	mov	c,m			;pick up the wend text pointer
+	inx	h
+	mov	b,m
+	mov	h,b
+	mov	l,c
+	call	dcompr
+	pop	h
+	lxi	b,0+whlsiz
+	rz				;return if entry matches
+	dad	b
+	jmp	fndwn2
+weerr:	lxi	d,0+errwe
+	jmp	error
+	page
+	subttl	call statement
+	public	calls
+; this is the call <simple var>[(<simple var>[,<simple var>]..)]
+; stragegy:
+;
+; 1.) make sure suboutine name is simple var, get value & save it
+;
+; 2.) allocate space on stack for param adresses
+;
+; 3.) evaluate params & stuff pointers on stack
+;
+; 3.) pop off pointers ala calling convention
+;
+; 4.) call suboutine with return address on stack
+maxprm	set	32			;max # of params to assembly language subroutine
+	extrn	tempa
+calls:
+	mvi	a,200o			;flag ptrget not to allow arrays
+	sta	subflg
+	call	ptrget			;evaluate var pointer
+	push	h			;save text pointer
+	xchg				;var pointer to [h,l]
+	call	getypr			;get type of var
+	call	vmovfm			;store value in fac
+	call	frcint			;evaluate var
+	shld	tempa			;save it
+	mvi	c,maxprm		;check to see if we have space for max parm block
+	call	getstk
+	pop	d			;get text pointer off stack
+	lxi	h,0-2*maxprm		;get space on stack for parms
+	dad	sp
+	sphl				;adjust stack
+	xchg				;put text pointer in [h,l], stack pointer in [d,e]
+	mvi	c,maxprm		;get # of params again
+	dcx	h			;back up text pointer
+	call	chrgtr			;get char
+	shld	temp			;save text pointer
+	jz	callst			;if end of line, go!
+	call	synchr
+	db	'('			;eat left paren
+getpar:	push	b			;save count
+	push	d			;save pointer into stack
+	call	ptrget			;evaluate param address
+	xthl				;save text pointer get pointer into stack
+	mov	m,e			;save var address on stack
+	inx	h
+	mov	m,d
+	inx	h
+	xthl				;save back var pointer, get text pointer
+	pop	d
+	pop	b
+	mov	a,m			;look at terminator
+	cpi	54o			;comma?
+	jnz	endpar			;test
+	dcr	c			;decrement count of params
+	call	chrgtr			;get next char
+	jmp	getpar			;back for more
+endpar:	call	synchr
+	db	')'			;should have left paren
+	shld	temp			;save text pointer
+	mvi	a,maxprm+1		;calc # of params
+	sub	c
+	pop	h			;at least one, get its address in [h,l]
+	dcr	a			;was it one?
+	jz	callst			;yes
+	pop	d			;next address in [d,e]
+	dcr	a			;two?
+	jz	callst			;yes
+	pop	b			;final in [b,c]
+	dcr	a			;three?
+	jz	callst			;yes
+	push	b			;save back third parm
+	push	h			;save back first
+	lxi	h,0+2			;point to rest of parm list
+	dad	sp
+	mov	b,h			;get into [b,c]
+	mov	c,l
+	pop	h			;restore parm three
+callst:	push	h			;save parm three
+	lxi	h,callrt		;where subroutines return
+	xthl				;put it on stack, get back parm three
+	push	h			;save parm three
+	lhld	tempa			;get subroutine address
+	xthl				;save, get back parm three
+	ret				;dispatch to subroutine
+callrt:	lhld	savstk			;restore stack to former state
+	sphl	
+	lhld	temp			;get back text poiner
+	jmp	newstt			;get next statement
+	page
+	subttl	chain
+	extrn	txttab,frmevl,$commo,omerr,scrtch,valtyp,$merge,linget
+	extrn	$delete
+	public	chain,comptr,compt2,common
+	extrn	garba2,fretop,move1,newstt,ptrget,strcpy
+	extrn	savfre
+	extrn	iadahl
+	extrn	subflg,temp3,temp9,vartab,arytab,bltuc,chnflg,chnlin,data
+	extrn	fndlin,strend,userr,curlin,ersfin,fcerr,noarys,savstk,endbuf
+	extrn	del,cmeptr,cmsptr,mrgflg,mdlflg,linker,scnlin,frqint
+; this is the code for the chain statement
+; the syntax is:
+; chain [merge]<file name>[,[<line number>][,all][,delete <range>]]
+; the steps required to execute a chain are:
+;
+; 1.) scan arguments
+;
+; 2.) scan program for all common statements and 
+;	mark specified variables.
+;
+; 3.) squeeze unmarked entries from symbol table.
+;
+; 4.) copy string literals to string space
+;
+; 5.) move all simple variables and arrays into the
+;	bottom of string space.
+;
+; 6.) load new program
+;
+; 7.) move variables back down positioned after program.
+;
+; 8.) run program
+chain:
+	xra	a			;assume no merge
+	sta	mrgflg
+	sta	mdlflg			;also no merge w/ delete option
+	mov	a,m			;get current char
+	lxi	d,0+$merge		;is it merge?
+	cmp	e			;test
+	jnz	ntchnm			;no
+	sta	mrgflg			;set merge flag
+	inx	h
+ntchnm:	dcx	h			;rescan file name
+	call	chrgtr
+	extrn	prgfli
+	call	prgfli			;evaluate file name and open it
+	push	h			;save text pointer
+	lxi	h,0			;get zero
+	shld	chnlin			;assume no chain line #
+	pop	h			;restore text pointer
+	dcx	h			;back up pointer
+	call	chrgtr			;scan char
+	jz	ntchal			;no line number etc.
+	call	synchr
+	db	54o			;must be comma
+	cpi	54o			;ommit line # (use all for instance)
+	jz	ntlinf			;yes
+	call	frmevl			;evaluate line # formula
+	push	h			;save text poiner
+	call	frqint			;force to int in [h,l]
+	shld	chnlin			;save it for later
+	pop	h			;restore text poiner
+	dcx	h			;rescan last char
+	call	chrgtr
+	jz	ntchal			;no all i.e. preserve all vars across chain
+ntlinf:	call	synchr
+	db	54o			;should be comma here
+	lxi	d,0+$delete		;test for delete option
+	cmp	e			;is it?
+	jz	chmwdl			;yes
+	call	synchr
+	db	'A'			;check for "all"
+	call	synchr
+	db	'L'
+	call	synchr
+	db	'L'
+	jz	dncmda			;goto step 3
+	call	synchr
+	db	54o			;force comma to appear
+	cmp	e			;must be delete
+	jnz	snerr			;no, give error
+	ora	a			;flag to goto dncmda
+chmwdl:	push	psw			;save all flag
+	sta	mdlflg			;set merge w/ delete
+	call	chrgtr			;get char after comma
+	call	scnlin			;scan line range
+	extrn	deptr
+	push	b
+	call	deptr			;change pointers back to numbers
+	pop	b
+	pop	d			;pop max line off stack
+	push	b			;save pointer to start of 1st line
+	mov	h,b			;save pointer to start line
+	mov	l,c
+	shld	cmsptr
+	call	fndlin			;find the last line
+	jnc	fcerrg			;must have exact match on end of range
+	mov	d,h			;[d,e] =  pointer at the start of the line
+	mov	e,l			;beyond the last line in the range
+	shld	cmeptr			;save pointer to end line
+	pop	h			;get back pointer to start of range
+	call	dcompr			;make sure the start comes before the end
+fcerrg:	jnc	fcerr			;if not, "illegal function call"
+	pop	psw			;flag that says whether to go to dncmda
+	jnz	dncmda			;"all" option was present
+ntchal:	lhld	txttab			;start searching for commons at program start
+	dcx	h			;compensate for next instr
+clpsc1:	inx	h			;look at first char of next line
+clpscn:	mov	a,m			;get char from program
+	inx	h
+	ora	m			;are we pointing to program end?
+	jz	clpfin			;yes
+	inx	h
+	mov	e,m			;get line # in [d,e]
+	inx	h
+	mov	d,m
+	xchg				;save current line # in curlin for errors
+	shld	curlin
+	xchg	
+cstscn:	call	chrgtr			;get statment type
+aftcom:	ora	a
+	jz	clpsc1			;eol scan next one
+	cpi	':'			;are we looking at colon
+	jz	cstscn			;yes, get next statement
+	lxi	d,0+$commo		;test for common, avoid byte externals
+	cmp	e			;is it a common?
+	jz	docomm			;yes, handle it
+	call	chrgtr			;get first char of statement
+	call	data			;skip over statement
+	dcx	h			;back up to rescan terminator
+	jmp	cstscn			;scan next one
+docomm:	call	chrgtr			;get thing after common
+	jz	aftcom			;get next thing
+nxtcom:	push	h			;save text pointer
+	mvi	a,1			;call ptrget to search for array
+	sta	subflg
+	call	ptrget			;this subroutine in f3 scans variables
+	jz	fndaay			;found array
+	mov	a,b			;try finding array with common bit set
+	ori	128
+	mov	b,a
+	xra	a			;set zero cc
+	call	ersfin			;search array table
+	mvi	a,0			;clear subflg in all cases
+	sta	subflg
+	jnz	ntfn2t			;not found, try simple
+	mov	a,m			;get terminator, should be "("
+	cpi	'('			;test
+	jnz	scnsmp			;must be simple then
+	pop	psw			;get rid of saved text pointer
+	jmp	comady			;already was common, ignore it
+ntfn2t:	mov	a,m			;get terminator
+	cpi	'('			;array specifier?
+	jz	fcerr			;no such animal, give "function call" error
+scnsmp:	pop	h			;rescan variable name for start
+	call	ptrget			;evaluate as simple
+comptr:	mov	a,d			;if var not found, [d,e]=0
+	ora	e
+	jnz	comfns			;found it
+	mov	a,b			;try to find in common
+	ori	128			;set common bit
+	mov	b,a
+	lda	valtyp			;must have valtyp in [d]
+	mov	d,a
+	call	noarys			;search symbol table
+compt2:	mov	a,d			;found?
+	ora	e
+	jz	fcerr			;no, who is this guy?
+comfns:	push	h			;save text pointer
+	mov	b,d			;get pointer to var in [b,c]
+	mov	c,e
+	lxi	h,bckucm		;loop back here
+	push	h
+cbakbl:	dcx	b			;point at first char of rest
+lpbknc:	ldax	b			;back up until plus byte
+	dcx	b
+	ora	a
+	jm	lpbknc
+					;now point to 2nd char of var name
+	ldax	b			;set common bit
+	ori	128
+	stax	b
+	ret				;done
+fndaay:	sta	subflg			;array found, clear subflg
+	mov	a,m			;make sure really array spec
+	cpi	'('			;really an array?
+	jnz	scnsmp			;no, scan as simp
+	xthl				;save text pointer, get rid of saved text pointer
+bakcom:	dcx	b			;point at last char of name extension
+	dcx	b
+	call	cbakbl			;back up before variable and mark as common
+bckucm:	pop	h			;restore text pointer
+	dcx	h			;rescan terminator
+	call	chrgtr
+	jz	aftcom			;end of common statement
+	cpi	'('			;end of common array spec?
+	jnz	chkcst			;no, should be comma
+comady:	call	chrgtr			;fetch char after paren
+	call	synchr
+	db	')'			;right paren should follow
+	jz	aftcom			;end of common
+chkcst:	call	synchr
+	db	54o			;force comma to appear here
+	jmp	nxtcom			;get next common variable
+; step 3 - squeeze..
+clpfin:	lhld	arytab			;end of simple var squeeze
+	xchg				;to [d,e]
+	lhld	vartab			;start of simps
+clpslp:	call	dcompr			;are we done?
+	jz	dncmds			;yes done, with simps
+	push	h			;save where this simp is
+	mov	c,m			;get valtyp
+	inx	h
+	inx	h
+	mov	a,m			;get common bit
+	ora	a			;set minus if common
+	push	psw			;save indicator
+	ani	177o			;clear common bit
+	mov	m,a			;save back
+	inx	h
+	call	iadahl			;skip over rest of var name
+	mvi	b,0			;skip valtyp bytes
+	dad	b
+	pop	psw			;get indicator whether to delete
+	pop	b			;pointer to where var started
+	jm	clpslp
+	push	b			;this is where we will resume scanning vars later
+	call	vardls			;delete variable
+	lhld	arytab			;now correct arytab by # of bytes deleted
+	dad	d			;add negative difference between old and new
+	shld	arytab			;save new arytab
+	xchg				;to [d,e]
+	pop	h			;get current place back in [h,l]
+	jmp	clpslp
+vardls:	xchg				;point to where var ends
+	lhld	strend			;one beyond last byte to move
+dlsvlp:	call	dcompr			;done?
+	ldax	d			;grab byte
+	stax	b			;move down
+	inx	d			;increment pointers
+	inx	b
+	jnz	dlsvlp
+	mov	a,c			;get difference between old and new
+	sub	l			;into [d,e] ([d,e]=[b,c]-[h,l])
+	mov	e,a
+	mov	a,b
+	sbb	h
+	mov	d,a
+	dcx	d			;correct # of bytes
+	dcx	b			;moved one too far
+	mov	h,b			;get new strend [h,l]
+	mov	l,c
+	shld	strend			;store it
+	ret	
+dncmds:	lhld	strend			;limit of array search
+	xchg				;to [d,e]
+clpakp:	call	dcompr			;done?
+	jz	dncmda			;yes
+	push	h			;save pointer to valtyp
+	inx	h			;move down to common bit
+	inx	h
+	mov	a,m			;get it
+	ora	a			;set cc's
+	push	psw			;save common indicator
+	ani	177o			;clear common bit
+	mov	m,a			;save back
+	inx	h			;point to length of array
+	call	iadahl			;add length of var name
+	mov	c,m			;get length of array in [b,c]
+	inx	h
+	mov	b,m
+	inx	h
+	dad	b			;[h,l] now points after array
+	pop	psw			;get back common indicator
+	pop	b			;get pointer to start of array
+	jm	clpakp			;common, dont delete!
+	push	b			;save so we can resume
+	call	vardls			;delete variable
+	xchg				;put strend in [d,e]
+	pop	h			;point to next var
+	jmp	clpakp			;look at next array
+; step 4 - copy literals into string space
+; this code is very smilar to the string garbage collect code
+dncmda:	lhld	vartab			;look at simple strings
+csvar:	xchg				;into [d,e]
+	lhld	arytab			;limit of search
+	xchg				;start in [h,l], limit in [d,e]
+	call	dcompr			;done?
+	jz	cayvar			;yes
+	mov	a,m			;get valtyp
+	inx	h			;point to length of long var name
+	inx	h
+	inx	h
+	push	psw			;save valtyp
+	call	iadahl			;move past long variable name
+	pop	psw			;ge back valtyp
+	cpi	3			;string?
+	jnz	cskpva			;skip this var, not string
+	call	cdvars			;copy this guy into string space if nesc
+	xra	a			;cdvars has already incremented [h,l]
+cskpva:	mov	e,a
+	mvi	d,0			;add length of valtyp
+	dad	d
+	jmp	csvar
+cayva2:	pop	b			;adjust stack
+cayvar:	xchg				;save where we are
+	lhld	strend			;new limit of search
+	xchg				;in [d,e], limit in [h,l]
+	call	dcompr			;done?
+	jz	dnccls			;yes
+	mov	a,m			;get valtyp of array
+	inx	h
+	inx	h
+	push	psw			;save valtyp
+	inx	h
+	call	iadahl			;skip over rest of array name
+	mov	c,m			;get length of array
+	inx	h
+	mov	b,m			;into [b,c]
+	inx	h
+	pop	psw			;get back valtyp
+	push	h			;save pointer to array element
+	dad	b			;point after array
+	cpi	3			;string array?
+	jnz	cayva2			;no, look at next one
+	shld	temp3			;save pointer to end of array
+	pop	h			;get back pointer to array start
+	mov	c,m			;pick up number of dims
+	mvi	b,0			;make double with high zero
+	dad	b			;go past dims
+	dad	b
+	inx	h			;one more to account for # of dims
+caystr:	xchg				;save current position in [d,e]
+	lhld	temp3			;get end of array
+	xchg	
+	call	dcompr			;see if at end of array
+	jz	cayvar			;get next array
+	lxi	b,caystr		;do next str in array
+	push	b			;save branch address on stack
+cdvars:	xra	a			;get length of array and
+	ora	m			;set cc's on valtyp
+	inx	h			;also pick up pointer into [d,e]
+	mov	e,m
+	inx	h
+	mov	d,m
+	inx	h			;[h,l] points after descriptor
+	rz				;ignore null strings
+	push	h			;save where we are
+	lhld	vartab			;is string in program text or disk buffers?
+	call	dcompr			;compare
+	pop	h			;restore where we are
+	rc				;no, must be in string space
+	push	h			;save where we are again.
+	lhld	txttab			;is it in buffers?
+	call	dcompr			;test
+	pop	h			;restore where we are
+	rnc				;in buffers, do nothing
+	push	h			;save where we are for nth time
+	dcx	h			;point to start of descriptor
+	dcx	h
+	dcx	h
+	push	h			;save pointer to start
+	call	strcpy			;copy string into dsctmp
+	pop	h			;destination in [h,l], source in [d,e]
+	mvi	b,3			;# of bytes to move
+	call	move1			;move em
+	pop	h			;where we are
+	ret	
+; step 5 - move stuff up into string space!
+dnccls:	call	garba2			;get rid of unused strings
+	lhld	strend			;load end of vars
+	mov	b,h			;into [b,c]
+	mov	c,l
+	lhld	vartab			;start of simps into [d,e]
+	xchg	
+	lhld	arytab
+	mov	a,l			;get length of simps in [h,l]
+	sub	e
+	mov	l,a
+	mov	a,h
+	sbb	d
+	mov	h,a
+	shld	temp9			;save here
+	lhld	fretop			;destination of high byte
+	shld	savfre			;save fretop to restore later
+	call	bltuc			;move stuff up
+	mov	h,b			;now adjust top of memory below saved vars
+	mov	l,c
+	dcx	h			;one lower to be sure
+	shld	fretop			;update fretop to reflect new value
+	lda	mdlflg			;merge w/ delete?
+	ora	a			;test
+	jz	ntmdlt			;no
+	lhld	cmsptr			;start of lines to delete
+	mov	b,h			;into [b,c]
+	mov	c,l
+	lhld	cmeptr			;end of lines to delete
+	call	del			;delete the lines
+	call	linker			;re-link lines just in case
+; step 6 - load new program
+ntmdlt:	mvi	a,1			;set chain flag
+	sta	chnflg
+	extrn	chnent,maxfil,lstfre,okgetm
+	lda	mrgflg			;mergeing?
+	ora	a			;set cc's
+	jnz	okgetm			;do merge
+	lda	maxfil			;save the number of files
+	sta	lstfre+1		;since we make it look like zero
+	jmp	chnent			;jump to load code
+; step 7 - move stuff back down
+	public	chnret
+chnret:	xra	a			;clear chain, merge flags
+	sta	chnflg
+	sta	mrgflg
+	lhld	vartab			;get current vartab
+	mov	b,h			;into [b,c]
+	mov	c,l
+	lhld	temp9			;get length of simps
+	dad	b			;add to present vartab to get new arytab
+	shld	arytab
+	lhld	fretop			;where to start moving
+	inx	h			;one higher
+	xchg				;into [d,e]
+	lhld	savfre			;last byte to move
+	shld	fretop			;restore fretop from this
+mvbkvr:	call	dcompr			;done?
+	ldax	d			;move byte down
+	stax	b
+	inx	d			;increment pointers
+	inx	b
+	jnz	mvbkvr
+	dcx	b			;point to last var byte
+	mov	h,b			;[h,l]=last var byte
+	mov	l,c
+	shld	strend			;this is new end
+	lhld	chnlin			;get chain line #
+	mov	a,h			;test for zero
+	ora	l
+	xchg				;put in [d,e]
+	lhld	txttab			;get prog start in [h,l]
+	dcx	h			;point at zero before program
+	jz	newstt			;line #=0, go...
+	call	fndlin			;try to find destination line
+	jnc	userr			;not there...
+	dcx	b			;point to zero on previous line
+	mov	h,b			;make text pointer for newstt
+	mov	l,c
+	jmp	newstt			;bye...
+common:	jmp	data
+	page
+	subttl	write
+	extrn	finprt
+	extrn	fout,strlit,strprt,outdo,faclo
+	public	write
+write:
+	extrn	filget
+	mvi	c,md.sqo		;setup output file
+	call	filget
+wrtchr:	dcx	h
+	call	chrgtr			;get another character
+	jz	wrtfin			;done with write
+wrtmlp:	call	frmevl			;evaluate formula
+	push	h			;save the text pointer
+	call	getypr			;see if we have a string
+	jz	wrtstr			;we do
+	call	fout			;convert to a string
+	call	strlit			;literalize string
+	lhld	faclo			;get pointer to string
+	inx	h			;point to address field
+	mov	e,m
+	inx	h
+	mov	d,m
+	ldax	d			;is number positive?
+	cpi	' '			;test
+	jnz	wrtneg			;no, must be negative
+	inx	d
+	mov	m,d
+	dcx	h
+	mov	m,e
+	dcx	h
+	dcr	m			;adjust length of string
+wrtneg:	call	strprt			;print the number
+nxtwrv:	pop	h			;get back text pointer
+	dcx	h			;back up pointer
+	call	chrgtr			;get next char
+	jz	wrtfin			;end
+	cpi	59			;semicolon?
+	jz	wasemi			;was one
+	call	synchr
+	db	54o			;only possib left is comma
+	dcx	h			;to compensate for later chrget
+wasemi:	call	chrgtr			;fetch next char
+	mvi	a,54o			;put out comma
+	call	outdo
+	jmp	wrtmlp			;back for more
+wrtstr:	mvi	a,34			;put out double quote
+	call	outdo			;send it
+	call	strprt			;print the string
+	mvi	a,34			;put out another double quote
+	call	outdo			;send it
+	jmp	nxtwrv			;get next value
+wrtfin:
+	extrn	cmpfbc,crdo,ptrfil
+	push	h			;save text pointer
+	lhld	ptrfil			;see if disk file
+	mov	a,h
+	ora	l
+	jz	ntrndw			;no
+	mov	a,m			;get file mode
+	cpi	md.rnd			;random?
+	jnz	ntrndw			;no
+	call	cmpfbc			;see how many bytes left
+	mov	a,l			;do subtract
+	sub	e
+	mov	l,a
+	mov	a,h
+	sbb	d
+	mov	h,a
+crlfsq	set	2			;number of bytes in cr/lf sequence
+	lxi	d,0-crlfsq		;subtract bytes in <cr>
+	dad	d
+	jnc	ntrndw			;not enough, give error eventually
+nxtwsp:	mvi	a,' '			;put out spaces
+	call	outdo			;send space
+	dcx	h			;count down
+	mov	a,h			;count down
+	ora	l
+	jnz	nxtwsp
+ntrndw:	pop	h			;restore [h,l]
+	call	crdo			;do crlf
+	jmp	finprt
+	end	
+

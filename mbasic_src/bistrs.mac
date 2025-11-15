@@ -1,0 +1,1002 @@
+	subttl	common file for basic interpreter
+	.sall	
+conto	set	15			;character to supress output (usually control-o)
+dbltrn	set	0			;for double precision transcendentals
+	if2	
+	.printx	/extended/
+	.printx	/lpt/
+	.printx	/cpm disk/
+	.printx	/z80/
+	.printx	/fast/
+	.printx	/5.0 features/
+	.printx	/ansi compatible/
+	endif
+clmwid	set	14			;make comma columns fourteen characters
+datpsc	set	128			;number of data bytes in disk sector
+linln	set	80			;terminal line length 
+lptlen	set	132
+buflen	set	255			;long lines
+namlen	set	40			;maximum length name -- 3 to 127
+numlev	set	0*20+19+2*5		;number of stack levels reserved
+					;by an explicit call to getstk
+strsiz	set	4
+strsiz	set	3
+numtmp	set	3			;number of string temporaries
+numtmp	set	10
+md.rnd	set	3			;the mode number for random files
+md.sqi	set	1			;the mode number for sequential input files
+					;never written into a file
+md.sqo	set	2			;the mode for sequential output files
+					;and program files
+cpmwrm	set	0			;cp/m warm boot addr
+cpment	set	cpmwrm+5		;cp/m bdos call addr
+	cseg	
+trurom	set	0
+	page
+	title	bistrs	basic interpreter string  routines/whg/pga etc.
+	extrn	movrm
+	extrn	arytab,bltuc,conint,crfin,dsctmp,errls,error,errso,errst
+	extrn	eval,faclo,fcerr,fout,fretop,frmeql,frmevl,frmprn
+	extrn	getbyt,memsiz,outdo,pophrt,ptrget,signs,snerr
+	extrn	strend,temppt,tempst,tstop,valtyp,vartab,sngflt,temp8
+	extrn	givdbl,fin,aryta2,chkstr
+	public	lhsmid
+	extrn	aryta2,findbl,getbcd,prmprv,temp9,vmove
+	extrn	getypr
+	extrn	chrgtr,dcompr,synchr
+	extrn	iadahl
+	public	chr$,strprt,stroui,len,frestr,strcmp,val,asc,asc2,strlti
+	public	strout,fretms,fretmp,right$,left$,garba2,str$
+	public	fre,strlit,strcpy,cat,strlt3,mid$
+	public	strini,strin1,strad1,putdei
+;
+; the following routine compares two strings
+; one with desc in [d,e] other with desc. in [faclo, faclo+1]
+; a=0 if strings equal
+; a=377 if b,c,d,e .gt. faclo
+; a=1 if b,c,d,e .lt. faclo
+;
+strcmp:	call	frestr			;free up the fac string, and get the
+					;pointer to the fac descriptor in [h,l]
+	mov	a,m			;save the length of the fac string in [a]
+	inx	h
+	mov	c,m			;save the pointer at the fac string
+					;data in [b,c]
+	inx	h
+	mov	b,m
+	pop	d			;get the stack string pointer
+	push	b			;save the pointer at the fac string data
+	push	psw			;save the fac string length
+	call	fretmp			;free up the stack string and return
+					;the pointer to the stack string descriptor
+					;in [h,l]
+	pop	d			;[d]=length of fac string
+	mov	e,m			;[e]=length of stack string
+	inx	h
+	mov	c,m			;[b,c]=pointer at stack string
+	inx	h
+	mov	b,m
+	pop	h			;get back 2nd character pointer
+csloop:	mov	a,e			;both strings ended
+	ora	d			;test by or'ing the lengths together
+	rz				;if so, return with a zero
+	mov	a,d			;get faclo string length
+	sui	1			;set carry and make [a]=255 if [d]=0
+	rc				;return if that string ended
+	xra	a			;must not have been zero, test case
+	cmp	e			;of b,c,d,e string having ended first
+	inr	a			;return with a=1
+	rnc				;test the condition
+;here when neither string ended
+	dcr	d			;decrement both character counts
+	dcr	e
+	ldax	b			;get character from b,c,d,e string
+	inx	b
+	cmp	m			;compare with faclo string
+	inx	h			;bump pointers (inx doesnt clobber cc's)
+	jz	csloop			;if both the same, must be more to strings
+	cmc				;here when strings differ
+	jmp	signs			;set [a] according to carry
+	subttl	string functions
+	extrn	fouto,fouth
+	public	stro$,strh$
+; the stro$ function takes a number and gives
+; a string with the characters the number would give if
+; output in octal
+;
+stro$:	call	fouto			;put octal number in fbuffr
+	jmp	str$1			;jump into str$ code
+; strh$ same as stro$ except uses hex instead of octal
+strh$:	call	fouth			;put hex number in fbuffr
+	jmp	str$1			;jump into str$ code
+;
+; the str$ function takes a number and gives
+; a string with the characters the output of the number
+; would have given
+;
+str$:
+					;is a numeric
+	call	fout			;do its output
+str$1:	call	strlit			;scan it and turn it into a string
+	call	frefac			;free up the temp
+	lxi	b,finbck
+	push	b			;set up answer in new temp
+;
+; strcpy creates a copy of the string
+; whose descriptor is pointed to by [h,l].
+; on return [d,e] points to dsctmp
+; which has the string info (length,where copied to)
+;
+strcpy:	mov	a,m			;get length
+	inx	h			;move up to the pointer
+	push	h			;get pointer to pointer of arg
+	call	getspa			;get the space
+	pop	h			;find out where string to copy
+	mov	c,m
+	inx	h
+	mov	b,m
+	call	strad2			;setup dsctmp
+	push	h			;save pointer to dsctmp
+	mov	l,a			;get character count into [l]
+	call	movstr			;move the chars in
+	pop	d			;restore pointer to dsctmp
+	ret				;return
+strin1:	mvi	a,1			;make one char string (chr$, inkey$)
+strini:	call	getspa			;get some string space ([a] chars)
+strad2:	lxi	h,dsctmp		;get desc. temp
+strad1:	push	h			;save desc. pointer
+	mov	m,a			;save character count
+putdei:	inx	h			;store [d,e]=pointer to free space
+	mov	m,e
+	inx	h
+	mov	m,d
+	pop	h			;and restore [h,l] as the descriptor pointer
+	ret	
+;
+; strlt2 takes the string literal whose first character
+; is pointed by [h,l]+1 and builds a descriptor for it.
+; the descriptor is initially built in dsctmp, but putnew
+; transfers it into a temporary and leaves a pointer
+; at the temporary in faclo. the characters other than
+; zero that terminate the string should be set up in [b]
+; and [d]. it the terminator is a quote, the quote is skipped
+; over. leading quotes should be skipped before call. on return
+; the character after the string literal is pointed to
+; by [h,l] and is in [a], but the condition codes are
+; not set up.
+;
+	public	strlt2
+strlit:	dcx	h
+strlti:	mvi	b,34			;assume str ends on quote
+strlt3:	mov	d,b
+strlt2:	push	h			;save pointer to start of literal
+	mvi	c,255			;initialize character count
+strget:	inx	h
+	mov	a,m			;get char
+	inr	c			;bump character count
+	ora	a			;if 0, (end of line) done
+	jz	strfin			;test
+	cmp	d
+	jz	strfin
+	cmp	b			;closing quote
+	jnz	strget			;no, go back for more
+strfin:	cpi	34			;if quote terminates the string
+	cz	chrgtr			;skip over the quote
+	push	h			;save pointer at end of string
+	mov	a,b			;were we scanning an unquoted string?
+	cpi	44
+	jnz	nttrls			;if not, don't suppress trailing spaces
+	inr	c			;fix [c] which is the character count
+lptrls:	dcr	c			;decrement until we find a non-space character
+	jz	nttrls			;don't go past start (all spaces)
+	dcx	h			;look at previous character
+	mov	a,m
+	cpi	' '
+	jz	lptrls			;if so continue looking
+nttrls:	pop	h
+	xthl	
+	inx	h
+	xchg				;get pointer to temp
+	mov	a,c			;get character count in a
+	call	strad2			;save str info
+;
+; some string function is returning a result in dsctmp
+; we want to setup a temp descriptor with dcstmp in it
+; put a pointer to the descriptor in faclo and flag the 
+; result as type string
+;
+	public	putnew
+putnew:	lxi	d,dsctmp		;[d,e] point at result descriptor
+	public	puttmp
+	db	76q			;skip the next byte ("mvi al,")
+puttmp:	push	d			;save a pointer to the start of the string
+	lhld	temppt			;[h,l]=pointer to first free temp
+	shld	faclo			;pointer at where result descriptor will be
+	mvi	a,3
+	sta	valtyp			;flag this as a string
+	call	vmove			;and move the value into a temporary
+	lxi	d,dsctmp+3		;if the call is to puttmp, [d,e]
+					;will not equal dsctmp +3
+	call	dcompr			;dsctmp is just beyond the temps
+					;and if temppt points at it there
+					;are no free temps
+	shld	temppt			;save new temporary pointer
+	pop	h			;get the text pointer
+	mov	a,m			;get current character into [a]
+	rnz	
+	lxi	d,0+errst		;"string temporary" error
+	jmp	error			;go tell him
+;
+; print the string pointed to by [h,l] which ends with a zero
+; if the string is below dsctmp it will be copied into string space
+;
+stroui:	inx	h			;point at next character
+strout:	call	strlit			;get a string literal
+;
+; print the string whose descriptor is pointed to by faclo.
+;
+strprt:	call	frefac			;return temp pointer by faclo
+	call	getbcd			;[d]=length [b,c]=pointer at data
+	inr	d			;increment and decrement early
+					;to check for null string
+strpr2:	dcr	d			;decrement the length
+	rz				;all done
+	ldax	b			;get character to print
+	call	outdo
+	cpi	13
+	cz	crfin
+	inx	b			;point to the next character
+	jmp	strpr2			;and print it...
+	page
+	subttl	string garbage collection - getspa, garbag
+;
+; getspa - get space for character string
+; may force garbage collection.
+;
+; # of chars (bytes) in [a]
+; returns with pointer in [d,e] otherwise if cant get space
+; blows off to "out of string space" type error.
+;
+	public	getspa
+getspa:	ora	a			;must be non zero. signal no garbag yet
+	db	16q			;"mvi c" around the next byte 
+trygi2:	pop	psw			;in case collected what was length?
+	push	psw			;save it back
+	lhld	strend
+	xchg				;in [d,e]
+	lhld	fretop			;get top of free space in [h,l]
+	cma				;-# of chars
+	mov	c,a			;in [b,c]
+	mvi	b,255
+	dad	b			;subtract from top of free
+	inx	h
+	call	dcompr			;compare the two
+	jc	garbag			;not enough room for string, offal time
+	shld	fretop			;save new bottom of memory
+	inx	h			;move back to point to string
+	xchg				;return with pointer in [d,e]
+	public	ppswrt
+ppswrt:	pop	psw			;get character count
+	ret				;return from getspa
+garbag:	pop	psw			;have we collected before?
+	lxi	d,0+errso		;get ready for out of string space error
+	jz	error			;go tell user he lost
+	cmp	a			;set zero flag to say weve garbaged
+	push	psw			;save flag back on stack
+	lxi	b,trygi2		;place for garbag to return to.
+	push	b			;save on stack
+garba2:	lhld	memsiz			;start from top down
+fndvar:	shld	fretop			;like so
+	lxi	h,0			;get double zero
+	push	h			;say didnt see vars this pass
+	lhld	strend			;force dvars to ignore strings
+					;in the program text (literals, data)
+	push	h			;force find high address
+	lxi	h,tempst		;get start of string temps
+tvar:	xchg				;save in [d,e]
+	lhld	temppt			;see if done
+	xchg				;flip
+	call	dcompr			;test
+					;cannot run in ram since it stores to mess up basic
+	lxi	b,tvar			;force jump to tvar
+	jnz	dvar2			;do temp var garbage collect
+	lxi	h,prmprv		;setup iteration for parameter blocks
+	shld	temp9
+	lhld	arytab			;get stopping point in [h,l]
+	shld	aryta2			;store in stop location
+	lhld	vartab			;get starting point in [h,l]
+svar:	xchg	
+	lhld	aryta2			;get stopping location
+	xchg	
+	call	dcompr			;see if at end of simps
+	jz	aryvar
+	mov	a,m			;get valtyp
+	inx	h			;bump pointer twice
+	inx	h			;
+	inx	h			;point at the value
+	push	psw			;save valtyp
+	call	iadahl			;and skip over extra characters and count
+	pop	psw
+	cpi	3			;see if its a string
+	jnz	skpvar			;if not, just skip around it
+	call	dvars			;collect it
+	xra	a			;and don't skip anything more
+skpvar:	mov	e,a
+	mvi	d,0			;[d,e]=amount to skip
+	dad	d
+	jmp	svar			;get next one
+aryvar:	lhld	temp9			;get link in parameter block chain
+	mov	a,m			;go back one level
+	inx	h
+	mov	h,m
+	mov	l,a
+	ora	h			;was that the end?
+	xchg				;setup to start arrays
+	lhld	arytab
+	jz	aryva4			;otherwise garbage collect arrays
+	xchg	
+	shld	temp9			;setup next link in chain for iteration
+	inx	h			;skip chain pointer
+	inx	h
+	mov	e,m			;pick up the length
+	inx	h
+	mov	d,m
+	inx	h
+	xchg				;set [d,e]= actual end address by
+	dad	d			;adding base to length
+	shld	aryta2			;set up stop location
+	xchg	
+	jmp	svar
+aryva2:	pop	b			;get rid of stack garbage
+aryva4:	xchg				;save aryvar in [d,e]
+	lhld	strend			;get end of arrays
+	xchg				;flip back
+	call	dcompr			;see if done with arrays
+	jz	grbpas			;yes, see if done collecting
+	mov	a,m			;get the value type into [a]
+	inx	h
+	push	psw			;save the valtyp
+	inx	h			;skip the name characters
+	inx	h
+	call	iadahl			;skip the extra characters
+	mov	c,m			;pick up the length
+	inx	h
+	mov	b,m
+	inx	h
+	pop	psw			;restore the valtyp
+	push	h			;save pointer to dims
+	dad	b			;add to current pointer position
+	cpi	3			;see if its a string
+	jnz	aryva2			;if not just skip it
+	shld	temp8			;save end of array
+	pop	h			;get back current position
+	mov	c,m			;pick up number of dims
+	mvi	b,0			;make double with high zero
+	dad	b			;go past dims
+	dad	b			;by adding on twice #dims (2 byte guys)
+	inx	h			;one more to account for #dims.
+arystr:	xchg				;save current posit in [d,e]
+	lhld	temp8			;get end of array
+	xchg				;fix [h,l] back to current
+	call	dcompr			;see if at end of array
+	jz	aryva4			;end of array, try next array
+	lxi	b,arystr		;addr of where to return to
+dvar2:	push	b			;goes on stack
+dvar:
+dvars:	xra	a
+	ora	m			;see if its the null string
+	inx	h
+	mov	e,m
+	inx	h
+	mov	d,m
+	inx	h			;[d,e]=pointer at the value
+	rz				;null string, return
+	mov	b,h			;move [h,l] to [b,c]
+	mov	c,l
+	lhld	fretop			;get pointer to top of string free space
+	call	dcompr			;is this strings pointer .lt. fretop
+	mov	h,b			;move [b,c] back to [h,l]
+	mov	l,c
+	rc				;if not, no need to mess with it furthur
+	pop	h			;get return address off stack
+	xthl				;get max seen so far & save return address
+	call	dcompr			;lets see
+	xthl				;save max seen & get return address off stack
+	push	h			;save return address back
+	mov	h,b			;move [b,c] back to [h,l]
+	mov	l,c
+	rnc				;if not, lets look at next var
+	pop	b			;get return addr off stack
+	pop	psw			;pop off max seen
+	pop	psw			;and variable pointer
+	push	h			;save new variable pointer
+	push	d			;and new max pointer
+	push	b			;save return address back
+	ret				;and return
+;
+; here when made one complete pass thru string vars
+;
+grbpas:	pop	d			;pop off max pointer
+	pop	h			;and get variable pointer
+	mov	a,l			;get low in
+	ora	h			;see if zero pointer
+	rz				;if end of collection,
+					;then maybe return to getspa
+	dcx	h			;currently just past the descriptor
+	mov	b,m			;[b]=high byte of data pointer
+	dcx	h
+	mov	c,m			;[b,c]=pointer at string data
+	push	h			;save this location so the pointer
+					;can be updated after the string is
+					;moved
+	dcx	h
+	mov	l,m			;[l]=string length
+	mvi	h,0			;[h,l] get character count
+	dad	b			;[h,l]=pointer beyond string
+	mov	d,b
+	mov	e,c			;[d,e]=original pointer
+	dcx	h			;don't move one beyond string
+	mov	b,h			;get top of string in [b,c]
+	mov	c,l
+	lhld	fretop			;get top of free space
+	call	bltuc			;move string
+	pop	h			;get back pointer to desc.
+	mov	m,c			;save fixed addr
+	inx	h			;move pointer
+	mov	m,b			;high part
+	mov	l,c
+	mov	h,b			;[h,l]=new pointer
+	dcx	h			;fix up fretop
+	jmp	fndvar			;and try to find high again
+	page
+	subttl	string concatenation
+;
+; the following routine concatenates two strings
+; the faclo contains the first one at this point,
+; [h,l] points beyond the + sign after it
+;
+cat:	push	b			;put old precedence back on
+	push	h			;save text pointer
+	lhld	faclo			;get pointer to string desc.
+	xthl				;save on stack & get text pointer back
+	call	eval			;evaluate rest of formula
+	xthl				;save text pointer, get back desc.
+	call	chkstr
+	mov	a,m
+	push	h			;save desc. pointer.
+	lhld	faclo			;get pointer to 2nd desc.
+	push	h			;save it
+	add	m			;add two lengths together
+	lxi	d,0+errls		;see if result .lt. 256
+	jc	error			;error "long string"
+	call	strini			;get initial string
+	pop	d			;get 2nd desc.
+	call	fretmp
+	xthl				;save pointer to it
+	call	fretm2			;free up 1st temp
+	push	h			;save desc. pointer (first)
+incstr	set	2
+incstr	set	1
+	lhld	dsctmp+incstr		;get pointer to first
+	xchg				;in [d,e]
+	call	movins			;move in the first string
+	call	movins			;and the second
+	lxi	h,tstop			;cat reenters formula evaluation at tstop
+	xthl	
+	push	h			;text pointer off first
+	jmp	putnew			;then return address of tstop
+movins:	pop	h			;get return addr
+	xthl				;put back, but get desc.
+	mov	a,m			;[a]=string length
+	inx	h
+	mov	c,m			;[b,c]=pointer at string data
+	inx	h
+	mov	b,m
+	mov	l,a			;[l]=string length
+movstr:	inr	l
+movlp:	dcr	l			;set cc's
+	rz				;0, no byte to move
+	ldax	b			;get char
+	stax	d			;save it
+	inx	b			;move pointers
+	inx	d
+	jmp	movlp			;keep doing it
+	page
+	subttl	free up string temporary - frestr, frefac, fretmp, fretms
+;
+; fretmp is passed a pointer to a string descriptor in [d,e]
+; this value is returned in [h,l]. all the other registers are modified.
+; a check to is made to see if the string descriptor [d,e] points
+; to is the last temporary descriptor allocated by putnew.
+; if so, the temporary is freed up by the updating of temppt.
+; if a temporary is freed up, a further check is made to see if the
+; string data that that string temporary pointed to is the
+; the lowest part of string space in use.
+; if so, fretmp is updated to reflect the fact that that space is no
+; longer in use.
+;
+	public	frefac
+frestr:	call	chkstr			;make sure its a string
+frefac:	lhld	faclo
+	public	fretm2
+fretm2:	xchg				;free up the temp in the faclo
+fretmp:	call	fretms			;free up the temporary
+	xchg				;put the string pointer into [h,l]
+	rnz	
+	push	d			;save [d,e] to return in [h,l]
+	mov	d,b			;[d,e]=pointer at string
+	mov	e,c
+	dcx	d			;subtract one
+	mov	c,m			;[c]=length of the string freed up
+	lhld	fretop			;see if its the first 
+					;one in string space
+	call	dcompr
+	jnz	notlst			;no so don't add
+	mov	b,a			;make [b]=0
+	dad	b			;add
+	shld	fretop			;and update fretop
+notlst:	pop	h			;get pointer at current descriptor
+	ret	
+fretms:	lhld	temppt			;get temp pointer
+	dcx	h			;look at what is in the last temp
+	mov	b,m			;[b,c]=pointer at string
+	dcx	h			;decrement temppt by strsiz
+	mov	c,m
+	dcx	h
+	call	dcompr			;see if [d,e] point at the last 
+	rnz				;return now if now freeing done
+	shld	temppt			;update the temp pointer since
+					;its been decremented by 4
+	ret	
+	page
+	subttl	string functions - len, asc, chr$
+;
+; the function len($) returns the length of the
+; string passed as an argument
+;
+len:	lxi	b,sngflt		;call sngflt when done
+	push	b			;like so
+len1:	call	frestr			;free up temp pointed to by faclo
+	xra	a			;force numeric flag
+	mov	d,a			;set high of [d,e] to zero for val
+	mov	a,m
+	ora	a			;set condition codes on length
+	ret				;return
+;
+; the following is the asc($) function. it returns an integer
+; which is the decimal ascii equivalent
+;
+asc:
+	lxi	b,sngflt		;where to go when done
+	push	b			;save return addr on stack
+asc2:	call	len1			;set up original str
+	jz	fcerr			;null str, bad arg.
+	inx	h			;bump pointer
+	mov	e,m			;[d,e]=pointer at string data
+	inx	h
+	mov	d,m
+	ldax	d			;[a]=first character
+	ret	
+;
+; chr$(#) creates a string which contains as its only
+; character the ascii equivalent of the integer arg (#)
+; which must be .le. 255.
+;
+chr$:	call	strin1			;get string in dsctmp
+	call	conint			;get integer in range
+incstr	set	2
+incstr	set	1
+	public	setstr,finbck
+setstr:	lhld	dsctmp+incstr		;get addr of str
+	mov	m,e			;save ascii byte
+finbck:	pop	b			;return to higher level &
+					;skip the chknum call.
+	jmp	putnew			;go call putnew
+	public	strng$
+strng$:	call	chrgtr			;get next char following "string$"
+	call	synchr
+	db	'('			;make sure left paren
+	call	getbyt			;evaluate first arg (length)
+	push	d			;save it
+	call	synchr
+	db	54o			;comma
+	call	frmevl			;get formula arg 2
+	call	synchr
+	db	')'			;expect right paren
+	xthl				;save text pointer on stack, get rep factor
+	push	h			;save back rep factor
+	call	getypr			;get type of arg
+	jz	strstr			;was a string
+	call	conint			;get ascii value of char
+	jmp	calspa			;now call space code
+strstr:	call	asc2			;get value of char in [a]
+calspa:	pop	d			;get rep factor in [e]
+	call	space2			;into space code, put dummy entry
+					;on stack popped off by finbck
+	public	space$
+space$:	call	conint			;get number of chars in [e]
+	mvi	a,32			;get space char
+space2:	push	psw			;save char
+	mov	a,e			;get number of chars in [a]
+	call	strini			;get a string that long
+	mov	b,a			;count of chars back in [b]
+	pop	psw			;get back char to put in string
+	inr	b			;test for null string
+	dcr	b
+	jz	finbck			;yes, all done
+	lhld	dsctmp+incstr		;get desc. pointer
+splp$:	mov	m,a			;save char
+	inx	h			;bump ptr
+					;decr count
+	dcr	b
+	jnz	splp$			;keep storing char
+	jmp	finbck			;put temp desc when done
+	page
+	subttl	string functions - left$, right$, mid$
+;
+; the following is the left$($,#) function.
+; it takes the leftmost # chars of the str.
+; if # is .gt. than the len of the str, it returns the whole str.
+;
+left$:	call	pream			;test the parameters
+	xra	a			;left never changes string pointer
+left3:	xthl				;save text pointer
+	mov	c,a			;offset now in [c]
+	db	76q			;skip the next byte with "mvi a,"
+;
+; this is print usings entry point into left$
+;
+	public	leftus
+leftus:	push	h			;this is a dummy push to offset
+					;the extra pop in putnew
+left2:	push	h			;save desc. for  fretmp
+	mov	a,m			;get string length
+	cmp	b			;entire string wanted?
+	jc	allstr			;if #chars asked for.ge.length,yes
+	mov	a,b			;get truncated length of string
+	db	21q			;skip over mvi using "lxi d,"
+allstr:	mvi	c,0			;make offset zero
+	push	b			;save offset on stack
+	call	getspa			;get space for new string
+	pop	b			;get back offset
+	pop	h			;get back desc pointer.
+	push	h			;but keep on stack
+	inx	h			;move to string pointer field
+	mov	b,m			;get pointer low
+	inx	h			;
+	mov	h,m			;pointer high
+	mov	l,b			;get low in  l
+	mvi	b,0			;get ready to add offset to pointer
+	dad	b			;add  it
+	mov	b,h			;get offset pointer in [b,c]
+	mov	c,l
+	call	strad2			;save info in dsctmp
+	mov	l,a			;get#  of chars to  move in l
+	call	movstr			;move them in
+	pop	d			;get back desc. pointer
+	call	fretmp			;free it up.
+	jmp	putnew			;put temp in temp list
+right$:	call	pream			;check arg
+	pop	d			;get desc. pointer
+	push	d			;save back for left
+	ldax	d			;get present len of str
+	sub	b			;subtract 2nd parm
+	jmp	left3			;continue with left code
+;
+; mid ($,#) returns str with chars from # position
+; onward. if # is gt len($) then return null string.
+; mid ($,#,#) returns str with chars from # position
+; for #2 chars. if #2 goes past end of string, return
+; as much as possible.
+;
+mid$:	xchg				;put the text pointer in [h,l]
+	mov	a,m			;get the first character
+	call	pream2			;get offset off stack and make
+	inr	b
+	dcr	b			;see if equal to zero
+	jz	fcerr			;it must not be 0
+					;sure does not = 0.
+	push	b			;put offset on to the stack
+	call	midrst			;duplicate of code conditioned out
+					;below
+	pop	psw			;get offset back in a
+	xthl				;save text pointer, get desc.
+	lxi	b,left2			;where to return to.
+	push	b			;goes on stack
+	dcr	a			;sub one from offset
+	cmp	m			;pointer past end of str?
+	mvi	b,0			;assume null length str
+	rnc				;yes, just use null str
+	mov	c,a			;save offset of character pointer
+	mov	a,m			;get present len of str
+	sub	c			;subtract index (2nd arg)
+	cmp	e			;is it truncation
+	mov	b,a			;get calced length in b
+	rc				;if not use partial str
+	mov	b,e			;use truncated length
+	ret				;return to left2
+;
+; the val function takes a string and turn it into
+; a number by interpreting the ascii digits. etc..
+; except for the problem that a terminator must be supplied
+; by replacing the character beyond the string, val
+; is merely a call to floating input (fin).
+;
+val:	call	len1			;do setup, set result=real
+	jz	sngflt			;make sure type set up ok in extended
+	mov	e,a			;get length of str
+	inx	h			;to handle the fact the if
+	mov	a,m
+	inx	h
+	mov	h,m			;two strings "1" and "2"
+	mov	l,a			;are stored next to each other
+	push	h			;and fin is called pointing to
+	dad	d			;the first twelve will be returned
+	mov	b,m			;the idea is to store 0 in the
+	mov	m,d			;string beyond the one val
+	xthl				;is being called on
+	push	b			;the first character of the next string
+	dcx	h			;***call chrget to make sure
+	call	chrgtr			;val(" -3")=-3
+	call	findbl			;in extended, get all the precision we can
+	pop	b			;get the modified character of the next
+					;string into [b]
+	pop	h			;get the pointer to the modified character
+	mov	m,b			;restore the character
+					;if string is highest in string space
+					;we are modifying [memsiz] and
+					;this is why [memsiz] can't be used to store
+					;string data because what if the
+					;user took val off that high string
+	ret	
+;used by right$ and left$ for parameter checking and setup
+pream:	xchg				;put the text pointer in [h,l]
+	call	synchr
+	db	')'			;param list should end
+;used by mid$ for parameter checking and setup
+pream2:	pop	b			;get return addr off stack
+	pop	d			;get length of arg off stack
+	push	b			;save return addr back on
+	mov	b,e			;save init length
+	ret	
+	page
+	subttl	string functions - instr
+; this is the instr fucntion. it takes one of two
+; forms: instr(i%,s1$,s2$) or instr(s1$,s2$)
+; in the first form the string s1$ is searched for the
+; character s2$ starting at character position i%.
+; the second form is identical, except that the search
+; starts at position 1. instr returns the character
+; position of the first occurance of s2$ in s1$.
+; if s1$ is null, 0 is returned. if s2$ is null, then
+; i% is returned, unless i% .gt. len(s1$) in which
+; case 0 is returned.
+	public	instr
+instr:	call	chrgtr			;eat first char
+	call	frmprn			;evaluate first arg
+	call	getypr			;set zero if arg a string.
+	mvi	a,1			;if so, assume, search starts at first char
+	push	psw			;save offset in case string
+	jz	wuzstr			;was a string
+	pop	psw			;get rid of saved offset
+	call	conint			;force arg1 (i%) to be integer
+	ora	a			;dont allow zero offset
+	jz	fcerr			;kill him.
+	push	psw			;save for later
+	call	synchr
+	db	44			;eat the comma
+	call	frmevl			;eat first string arg
+	call	chkstr			;blow up if not string
+wuzstr:	call	synchr
+	db	44			;eat comma after arg
+	push	h			;save the text pointer
+	lhld	faclo			;get descriptor pointer
+	xthl				;put on stack & get back text pnt.
+	call	frmevl			;get last arg
+	call	synchr
+	db	')'			;eat right paren
+	push	h			;save text pointer
+	call	frestr			;free up temp & check string
+	xchg				;save 2nd desc. pointer in [d,e]
+	pop	b			;get text pointer in b
+	pop	h			;desc. pointer for s1$
+	pop	psw			;offset
+	push	b			;put text pointer on bottom
+	lxi	b,pophrt		;put address of pop h, ret on
+	push	b			;push it
+	lxi	b,sngflt		;now address of [a] returner
+	push	b			;onto stack
+	push	psw			;save offset back
+	push	d			;save desc. of s2
+	call	fretm2			;free up s1 desc.
+	pop	d			;restore desc. s2
+	pop	psw			;get back offset
+	mov	b,a			;save unmodified offset
+	dcr	a			;make offset ok
+	mov	c,a			;save in c
+	cmp	m			;is it beyond length of s1?
+	mvi	a,0			;if so, return zero. (error)
+	rnc	
+	ldax	d			;get length of s2$
+	ora	a			;null??
+	mov	a,b			;get offset back
+	rz				;all if s2 null, return offset
+	mov	a,m			;get length of s1$
+	inx	h			;bump pointer
+	mov	b,m			;get 1st byte of address
+	inx	h			;bump pointer
+	mov	h,m			;get 2nd byte
+	mov	l,b			;get 1st byte set up
+	mvi	b,0			;get ready for dad
+	dad	b			;now indexing into string
+	sub	c			;make length of string s1$ right
+	mov	b,a			;save length of 1st string in [b]
+	push	b			;save counter, offset
+	push	d			;put 2nd desc (s2$) on stack
+	xthl				;get 2nd desc. pointer
+	mov	c,m			;set up length
+	inx	h			;bump pointer
+	mov	e,m			;get first byte of address
+	inx	h			;bump pointer again
+	mov	d,m			;get 2nd byte
+	pop	h			;restore pointer for 1st string
+chk1:	push	h			;save position in search string
+	push	d			;save start of substring
+	push	b			;save where we started search
+chk:	ldax	d			;get char from substring
+	cmp	m			; = char pointer to by [h,l]
+	jnz	ohwell			;no
+	inx	d			;bump compare pointer
+	dcr	c			;end of search string?
+	jz	gotstr			;we found it!
+	inx	h			;bump pointer into string being searched
+					;decrement length of search string
+	dcr	b
+	jnz	chk			;end of string, you lose
+retzer:	pop	d			;get rid of pointers
+	pop	d			;get rid of garb
+	pop	b			;like so
+retzr1:	pop	d
+	xra	a			;go to sngflt.
+	ret				;return
+gotstr:	pop	h
+	pop	d			;get rid of garb
+	pop	d			;get rid of excess stack
+	pop	b			;get counter, offset
+	mov	a,b			;get original source counter
+	sub	h			;subtract final counter
+	add	c			;add original offset (n1%)
+	inr	a			;make offset of zero = posit 1
+	ret				;done
+ohwell:	pop	b
+	pop	d			;point to start of substring
+	pop	h			;get back where we started to compare
+	inx	h			;and point to next char
+					;decr. # char left in source string
+	dcr	b
+	jnz	chk1			;try searching some more
+	jmp	retzr1			;end of string, return 0
+	page
+	subttl	string functions - left hand side mid$
+lhsmid:	call	synchr
+	db	'('			;must have ( 
+	call	ptrget			;get a string var
+	call	chkstr			;make sure it was a string
+	push	h			;save text pointer
+	push	d			;save desc. pointer
+	xchg				;put desc. pointer in [h,l]
+	inx	h			;move to address field
+	mov	e,m			;get address of lhs in [d,e]
+	inx	h			;bump desc. pointer
+	mov	d,m			;pick up high byte of address
+	lhld	strend			;see if lhs string is in string space
+	call	dcompr			;by comparing it with stktop
+	jc	ncpmid			;if already in string space
+					;dont copy.
+					;9/23/79 allow mid$ on field strings
+	extrn	txttab
+	lhld	txttab
+	call	dcompr			;is this a fielded string?
+	jnc	ncpmid			;yes, don't copy!!
+	pop	h			;get back desc. pointer
+	push	h			;save back on stack
+	call	strcpy			;copy the string literal into string space
+	pop	h			;get back desc. pointer
+	push	h			;back on stack again
+	call	vmove			;move new desc. into old slot.
+ncpmid:	pop	h			;get desc. pointer
+	xthl				;get text pointer to [h,l] desc. to stack
+	call	synchr
+	db	54o			;must have comma
+	call	getbyt			;get arg#2 (offset into string)
+	ora	a			;make sure not zero
+	jz	fcerr			;blow him up if zero
+	push	psw			;save arg#2 on stack
+	mov	a,m			;restore current char
+	call	midrst			;use mid$ code to evaluate posible third arg.
+	push	d			;save third arg ([e]) on stack
+					;must have = sign
+	call	frmeql			;evaluate rhs of thing.
+	push	h			;save text pointer.
+	call	frestr			;free up temp rhs if any.
+	xchg				;put rhs desc. pointer in [d,e]
+	pop	h			;text pointer to [h,l]
+	pop	b			;arg #3 to c.
+	pop	psw			;arg #2 to a.
+	mov	b,a			;and [b]
+	xthl				;get lhs desc. pointer to [h,l]
+					;text pointer to stack
+	push	h			;save text pointer
+	lxi	h,pophrt		;get addr to return to
+	xthl				;save on stack & get back txt ptr.
+	mov	a,c			;get arg #3
+	ora	a			;set cc's
+	rz				;if zero, do nothing
+	mov	a,m			;get length of lhs
+	sub	b			;see how many chars in emainder of string
+	jc	fcerr			;cant assign past len(lhs)!
+	inr	a			;make proper count
+	cmp	c			;see if # of chars is .gt. third arg
+	jc	biglen			;if so, dont truncate
+	mov	a,c			;truncate by using 3rd arg.
+biglen:	mov	c,b			;get offset of string in [c]
+	dcr	c			;make proper offset
+	mvi	b,0			;set up [b,c] for later dad b.
+	push	d			;save [d,e]
+	inx	h			;pointer to address field.
+	mov	e,m			;get low byte in [e]
+	inx	h			;bump pointer
+	mov	h,m			;get high byte in [h]
+	mov	l,e			;now copy low byte back to [l]
+	dad	b			;add offset
+	mov	b,a			;set count of lhs in [b]
+	pop	d			;restore [d,e]
+	xchg				;move rhs. desc. pointer to [h,l]
+	mov	c,m			;get len(rhs) in [c]
+	inx	h			;move pointer
+	mov	a,m			;get low byte of address in [a]
+	inx	h			;bump pointer.
+	mov	h,m			;get high byte of address in [h]
+	mov	l,a			;copy low byte to [l]
+	xchg				;address of rhs now in [d,e]
+	mov	a,c			;is rhs null?
+	ora	a			;test
+	rz				;then all done.
+; now all set up for assignment.
+; [h,l] = lhs pointer
+; [d,e] = rhs pointer
+; c = len(rhs)
+; b = len(lhs)
+mid$lp:	ldax	d			;get byte from rhs.
+	mov	m,a			;store in lhs
+	inx	d			;bump rhs pointer
+	inx	h			;bump lhs pointer.
+	dcr	c			;bump down count of rhs.
+	rz				;if zero, all done.
+					;if lhs ended, also done.
+	dcr	b
+	jnz	mid$lp			;if not done, more copying.
+	ret				;back to newstt
+midrst:	mvi	e,255			;if two arg guy, truncate.
+	cpi	')'
+	jz	mid2			;[e] says use all chars
+					;if one argument this is correct
+	call	synchr
+	db	44			;comma? must delineate 3rd arg.
+	call	getbyt			;get argument  in  [e]
+mid2:	call	synchr
+	db	')'			;must be followed by )
+	ret				;all done.
+	subttl	fre  function and integer to floating  routines
+fre:
+	call	getypr
+	jnz	clcdif
+	call	frefac			;free up argument and setup
+					;to give free string space
+	call	garba2			;do garbage collection
+clcdif:	lhld	strend
+	xchg	
+	lhld	fretop			;top of free area
+	jmp	givdbl			;return [h,l]-[d,e]
+	end	
+

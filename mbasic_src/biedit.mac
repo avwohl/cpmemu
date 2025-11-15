@@ -1,0 +1,359 @@
+	subttl	common file for basic interpreter
+	.sall	
+conto	set	15			;character to supress output (usually control-o)
+dbltrn	set	0			;for double precision transcendentals
+	if2	
+	.printx	/extended/
+	.printx	/lpt/
+	.printx	/cpm disk/
+	.printx	/z80/
+	.printx	/fast/
+	.printx	/5.0 features/
+	.printx	/ansi compatible/
+	endif
+clmwid	set	14			;make comma columns fourteen characters
+datpsc	set	128			;number of data bytes in disk sector
+linln	set	80			;terminal line length 
+lptlen	set	132
+buflen	set	255			;long lines
+namlen	set	40			;maximum length name -- 3 to 127
+numlev	set	0*20+19+2*5		;number of stack levels reserved
+					;by an explicit call to getstk
+strsiz	set	4
+strsiz	set	3
+numtmp	set	3			;number of string temporaries
+numtmp	set	10
+md.rnd	set	3			;the mode number for random files
+md.sqi	set	1			;the mode number for sequential input files
+					;never written into a file
+md.sqo	set	2			;the mode for sequential output files
+					;and program files
+cpmwrm	set	0			;cp/m warm boot addr
+cpment	set	cpmwrm+5		;cp/m bdos call addr
+	cseg	
+trurom	set	0
+	page
+	title	biedit	basic interpreter edit routines/pga etc.
+	subttl	edit command
+;
+;
+;[c] contains count of characters in line
+;[b] contains current character position 0=first in line.
+;[d] contains number of times to repeat this subcommand
+;[h,l] point to current character
+;
+;*
+	public	erredt,edit,editrt,popart
+	extrn	buf,buflin,crdo,dot,edent,errflg,fininl,fndlin,inchri,outch1
+	extrn	linprt,linspc,lisprt,makups,outdo,pophrt,ready,userr
+	extrn	bltuc,errlin
+erredt:	sta	errflg			;reset the flag to call edit
+	lhld	errlin			;get the line number
+	ora	h			;see if it was direct
+	ana	l
+	inr	a			;set zero flag on direct
+	xchg				;line number into [d,e]
+	rz				;go back if direct
+	jmp	eredit
+edit:	call	linspc			;get the argument line number
+	rnz				;error if not end of line
+eredit:	pop	h			;get rid of newstt address
+eedits:	xchg				;save current line in dot
+	shld	dot			;for later edit or list
+	xchg				;get back line # in [h,l]
+	call	fndlin			;find the line in question
+	jnc	userr			;if not found, undefined statement error.
+	mov	h,b			;ponter to line is in [b,c]
+	mov	l,c			;transfer it to [h,l]
+	inx	h			;pass over pointer to next line
+	inx	h			;like so.
+	mov	c,m			;get first byte of line #
+	inx	h			;move to 2nd byte
+	mov	b,m			;pick it up into b
+	inx	h			;advance to point to first byte of line
+	push	b			;save line # on stack
+	call	buflin			;unpack line into buf
+	public	inled
+lled:	pop	h			;get back line #
+inled:	push	h			;save it back on stack
+	mov	a,h			;test for double byte zero
+	ana	l
+	inr	a
+	mvi	a,'!'			;get prompt for direct edit
+	cz	outdo			;send it
+	cnz	linprt			;print line # if not inlin edit
+	mvi	a,' '			;type a space
+	call	outdo			;...
+	lxi	h,buf			;get start of buf in [h,l]
+	push	h			;save [h,l] while we calc line length
+	mvi	c,255			;assume 0 char line
+lenlp:	inr	c			;bump count of chars
+	mov	a,m			;get char from line
+	inx	h			;bump pointer
+	ora	a
+	jnz	lenlp			;if not zero (end of line) keep counting...
+	pop	h			;get back pointer to line
+	mov	b,a			;set current line posit to zero
+disped:	mvi	d,0			;assume repition count is zero
+dispi:
+	call	inchri			;get a char from user
+	ora	a			;ignore nulls
+	jz	dispi
+	call	makups			;make upper case command
+	sui	'0'			;get rid of offset
+	jc	notdgi			;...
+	cpi	10
+	jnc	notdgi
+	mov	e,a			;save char
+	mov	a,d			;get accum repitition
+	rlc				;multiply by 2
+	rlc				;by 4
+	add	d			;and add to get 5*d
+	rlc				;*2 to get 10*d
+	add	e			;add digit
+	mov	d,a			;save back new accum
+	jmp	dispi			;get next char
+notdgi:	push	h			;save text pointer
+	lxi	h,disped		;put return address to disped
+	xthl				;on the stack
+	dcr	d			;see if d=0 (rep factor)
+	inr	d			;set condition codes
+	jnz	ntzerd			;branch around
+	inr	d			;make it 1
+ntzerd:
+	cpi	8-'0'			;backspace?
+	jz	baked			;handle it
+	cpi	177o-'0'		;del?
+	jz	deled			;backspace pointer
+	cpi	13-'0'			;carriage return
+	jz	cred			;done editing
+	cpi	' '-'0'			;space
+	jz	sped			;go to routine
+	cpi	'A'+40o-'0'		;command in lower case?
+	jc	notlw4			;no, so ok.
+	sui	40o			;convert to upper case
+notlw4:	cpi	'Q'-'0'			;quit?
+	jz	qed			;if so, quit & print "ok" or return to inlin
+	cpi	'L'-'0'			;l?
+	jz	led			;branch
+	cpi	'S'-'0'			;s?
+	jz	sed			;search
+	cpi	'I'-'0'			;i?
+	jz	ied			;insert
+	cpi	'D'-'0'			;d?
+	jz	ded			;delete
+	cpi	'C'-'0'			;c?
+	jz	ced			;change
+	cpi	'E'-'0'			;end?
+	jz	eed			;(same as <cr> but doesnt print rest)
+	cpi	'X'-'0'			;extend?
+	jz	xed			;go to end of line & insert
+	cpi	'K'-'0'			;kill??
+	jz	ked			;(same as "s" but deletes chars)
+	cpi	'H'-'0'			;hack??
+	jz	hed			;hack off the rest of the line & insert
+	cpi	'A'-'0'			;again??
+	mvi	a,7			;get ready to type bel.
+	jnz	outdo			;no match, send bel and return to dispatcher
+	pop	b			;dispi return address
+	pop	d			;line number into [d,e]
+	call	crdo			;type a carriage return line-feed
+	jmp	eedits			;restart editing
+sped:	mov	a,m			;get char from curent posit
+	ora	a			;are we at end of line?
+	rz				;if so, return
+	inr	b			;bump current position
+	call	outch1			;type character
+	inx	h			;move pointer to next char
+	dcr	d			;test if done with repititions
+	jnz	sped			;repeat
+	ret				;return to dispatcher
+ked:	push	h			;save current char posit
+	lxi	h,typslh		;type slash when done
+	xthl				;put it on stack & get posit back
+	stc				;set the carry flag
+sed:	push	psw			;save condition codes
+	call	inchri			;get search char
+	mov	e,a			;save it
+	pop	psw
+	push	psw
+	cc	typslh			;type beginning slash for "k"
+srcalp:	mov	a,m
+	ora	a
+	jz	popart
+	call	outch1			;type the char
+	pop	psw			;get kill flag
+	push	psw			;save back
+	cc	delchr			;delete the char if k command.
+	jc	notsrc			;and dont move pointer as delchr already did
+	inx	h
+	inr	b			;increment line posit
+notsrc:	mov	a,m			;are we at end
+	cmp	e			;are current char & search
+	jnz	srcalp			;char the same? if not, look more
+	dcr	d			;look for n matches
+	jnz	srcalp			;if not 0, keep looking
+popart:	pop	psw			;get rid of kill flag
+	ret				;done searching
+led:	call	lisprt			;type rest of line
+	call	crdo			;type carriage return
+	pop	b			;get rid of return to disped
+	jmp	lled			;go to main code
+ded:	mov	a,m			;get char which we are trying to delete
+	ora	a			;is it the end of line marker?
+	rz				;done if so
+	mvi	a,'\'			;type backslash
+	call	outch1			;like so
+dellp:	mov	a,m			;get char from line
+	ora	a			;are we at end?
+	jz	typslh			;type slash
+	call	outch1			;type char we're going to delete
+	call	delchr			;delete current char
+	dcr	d			;decrement delete count
+	jnz	dellp			;keep doing it
+typslh:
+	mvi	a,'\'			;type ending slash
+	call	outdo			;like so
+	ret	
+ced:	mov	a,m			;are we at end of line?
+	ora	a			;see if 0
+	rz				;return
+ced2:	call	inchri			;get char to replace char
+	cpi	32			;is it control char?
+	jnc	notccc			;no
+	cpi	10			;is it lf?
+	jz	notccc			;yes
+	cpi	7			;or bell?
+	jz	notccc			;ok
+	cpi	9			;or tab?
+	jz	notccc			;ok
+	mvi	a,7			;get bell
+	call	outdo			;send it
+	jmp	ced2			;retry
+notccc:	mov	m,a			;save in memory
+	call	outch1			;echo the char were using to replace
+	inx	h			;bump pointer
+	inr	b			;increment position within line
+	dcr	d			;are we done changing?
+	jnz	ced			;if not, change some more.
+	ret				;done
+hed:	mvi	m,0			;make line end at current position
+	mov	c,b			;set up line length correctly
+xed:	mvi	d,255			;find end of line
+	call	sped			;by calling spacer
+;now fall into insert code
+ied:
+	call	inchri			;get char to insert
+	cpi	177o			;delete??
+	jz	typarw			;yes, act like "_"
+	cpi	8			;backspace?
+	jz	typar1			;do delete
+	cpi	15o			;is it a carriage return?
+	jz	cred			;dont insert, and simulate <cr>
+	cpi	33o			;is it escape?
+	rz				;if so, done.
+	cpi	8			;backspace?
+	jz	typar1			;type backarrow and delete
+	cpi	10			;line feed?
+	jz	ntarrw			;allow it
+	cpi	7			;bell?
+	jz	ntarrw			;allow it
+	cpi	9			;tab?
+	jz	ntarrw			;allow it
+	cpi	32			;is it illegal char
+	jc	ied			;too small
+	cpi	'_'			;delete previous char inserted?
+	jnz	ntarrw			;if not, jump around next code
+typarw:
+	mvi	a,'_'			;type it
+typar1:	dcr	b			;are we at start of line?
+	inr	b			;lets see
+	jz	dingi			;if so, type ding.
+	call	outch1			;type the back arrow
+	dcx	h			;back up the pointer
+	dcr	b			;move back posit in line
+	lxi	d,ied			;set up return address
+	push	d			;save it  on stack & fall through
+; subroutine to delete char pointed to by [h,l]. corrects c.
+delchr:	push	h			;save current posit pointer
+	dcr	c			;make length of line one less
+cmprss:	mov	a,m			;get char to delete
+	ora	a			;are we at end of line
+	stc				;flag that delchr was called (for k)
+	jz	pophrt			;if so, done compressing
+	inx	h			;point to next byte
+	mov	a,m			;pick it up
+	dcx	h			;now back again
+	mov	m,a			;deposit it
+	inx	h			;now to next byte
+	jmp	cmprss			;keep crunching
+ntarrw:	push	psw			;save the char to be inserted
+	mov	a,c			;get length of line
+	cpi	buflen			;see if we arent trying to make line too long
+	jc	okins			;if length ok, go insert
+	pop	psw			;get the unlawful char
+dingi:
+	mvi	a,7			;type a bell to let user know
+	call	outdo			;it all over
+iedg:	jmp	ied			;he has to type <esc> to get out
+okins:	sub	b			;calc pointer to 0 at end of line
+	inr	c			;we are going to have line longer by 1
+	inr	b			;position moves up one also
+	push	b			;save [b,c]
+	xchg				;save [d,e] in [h,l]
+	mov	l,a			;save # of bytes to move in [l]
+	mvi	h,0			;get set to add [d,e] to [h,l]
+	dad	d			;calc high pointer
+	mov	b,h			;get high byte to move pointer
+	mov	c,l			;in [b,c]
+	inx	h			;always move at least zero at end
+	call	bltuc			;move line out 1 char
+	pop	b			;restore [b,c]
+	pop	psw			;get char back
+	mov	m,a			;save it in line
+	call	outch1			;type the char
+	inx	h			;point to next char
+	jmp	iedg			;and go get more chars
+baked:	mov	a,b			;are we moving back past the
+	ora	a			;first character
+	rz				;don't allow it
+	dcx	h			;move char pointer back
+	mvi	a,8
+	call	outch1			;echo it
+	dcr	b			;change current position
+	dcr	d			;are we done moving back?
+	jnz	deled			;if not, go back more
+	ret				;return
+deled:	mov	a,b			;are we moving back past the
+	ora	a			;first character
+	rz				;don't allow it
+	dcr	b			;change current position
+	dcx	h			;move char pointer back
+	mov	a,m			;get current char
+	call	outch1			;echo it
+	dcr	d			;are we done moving back?
+	jnz	deled			;if not, go back more
+	ret				;return
+cred:	call	lisprt			;type rest of line
+eed:	call	crdo			;type carriage return
+	pop	b			;get rid of disped address
+	pop	d			;get line # off stack
+	mov	a,d			;double byte zero.
+	ana	e
+	inr	a			;set zero if [d,e] = all ones.
+editrt:					;used by auto code
+	lxi	h,buf-1			;start krunching at buf
+	rz				;return to inlin if called from there
+	stc				;flag line # was seen to fool insert code
+	push	psw			;psw is on stack
+	inx	h			;now point at buf.
+	jmp	edent			;go to entry point in main code
+qed:	pop	b			;get rid of disped address
+	pop	d			;get line # off stack
+	mov	a,d			;double byte zero.
+	ana	e
+	inr	a			;set zero if [d,e] = all ones.
+	jz	fininl			;type cr and store zero in buf.
+	jmp	ready			;otherwise called from main
+	end	
+

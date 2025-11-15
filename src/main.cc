@@ -1,0 +1,253 @@
+#include "qkz80.h"
+#include <stdio.h>
+#include <cstdlib>
+#include <set>
+#include "qkz80_trace.h"
+#include "qkz80_cpu_flags.h"
+#include <stdarg.h>
+#include <string>
+#include <stack>
+#include <vector>
+#include <iostream>
+
+bool gl_debug=false;
+
+class op_fetch {
+public:
+  qkz80_uint8 op;
+  qkz80_uint16 addr;
+  op_fetch():op(0),addr(0) {
+  }
+  op_fetch(qkz80_uint8 aop,
+	   qkz80_uint16 aaddr):op(aop),addr(aaddr) {
+  }
+
+};
+  
+class debug_trace : public qkz80_trace {
+  qkz80 *cpu;
+  std::set<qkz80_uint8> reg8s;
+  std::set<qkz80_uint8> reg16s;
+  std::string comment_str;
+  std::string op_str;
+  std::vector<op_fetch> ops;
+
+ public:
+  debug_trace(qkz80 *acpu);
+  virtual void comment(const char *fmt,...) {
+#define COM_BUF_SIZE (100)
+    char com_buf[COM_BUF_SIZE];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(com_buf,COM_BUF_SIZE-1, fmt, ap);
+    va_end(ap);
+    comment_str=std::string(com_buf);
+  }
+
+  virtual void asm_op(const char *fmt,...) {
+#define OPBUF_SIZE (100)
+    char op_buf[OPBUF_SIZE];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(op_buf,OPBUF_SIZE-1, fmt, ap);
+    va_end(ap);
+    op_str=std::string(op_buf);
+  }
+  
+  virtual void flush(void) {
+    if(op_str.size()>0) {
+      std::cout
+	<< op_str
+	<< " "
+	;
+      for(int i=0;i<ops.size();i++) {
+	op_fetch afetch(ops[i]);
+	int addr(afetch.addr);
+	std::cout
+	  << std::hex
+	  << addr
+	  << "["
+	  << std::hex
+	  << int(afetch.op)
+	  << std::dec
+	  << "] ";
+      }
+
+      if(comment_str.size()>0) {
+	std::cout
+	  << " ;"
+	  << comment_str;
+      }
+
+      for(auto areg16: reg16s) {
+	std::cout
+	  << cpu->name_reg16(areg16) << "=" << std::hex << int(cpu->get_reg16(areg16)) << " ";
+      }
+
+      for(auto areg8: reg8s) {
+	std::cout
+	  << cpu->name_reg8(areg8) << "=" << std::hex << int(cpu->get_reg8(areg8));
+	if(areg8 == cpu->reg_A) {
+	  qkz80_uint8 flags(cpu->regs.get_flags());
+	  std::cout << ":";
+	  if((flags&qkz80_cpu_flags::qkz80_cpu_flags::CY)!=0)
+	    std::cout << "C";
+	  if((flags&qkz80_cpu_flags::qkz80_cpu_flags::S)!=0)
+	    std::cout << "S";
+	  if((flags&qkz80_cpu_flags::qkz80_cpu_flags::P)!=0)
+	    std::cout << "P";
+	  if((flags&qkz80_cpu_flags::qkz80_cpu_flags::Z)!=0)
+	    std::cout << "Z";
+	  if((flags&qkz80_cpu_flags::qkz80_cpu_flags::AC)!=0)
+	    std::cout << "H";
+	}
+	std::cout << " ";
+      }
+      std::cout
+	<< std::endl
+	;
+    }
+    op_str=std::string("");
+    comment_str=std::string("");
+    reg8s.clear();
+    reg16s.clear();
+    ops.clear();
+  }
+
+  virtual void fetch(qkz80_uint8 opstream_byte,qkz80_uint16 pc) {
+    op_fetch afetch(opstream_byte,pc);
+    ops.push_back(afetch);
+  }
+
+  virtual void add_reg8(qkz80_uint8 areg) {
+    reg8s.insert(areg);
+  }
+
+  virtual void add_reg16(qkz80_uint16 areg) {
+    reg16s.insert(areg);
+  }
+};
+
+debug_trace::debug_trace(qkz80 *acpu) {
+  cpu=acpu;
+};
+
+bool cpm_emulate(qkz80 *cpu) {
+  const qkz80_uint16 pc=cpu->regs.PC.get_pair16();
+
+  // jmp 0 to exit
+  if(pc==0)  {
+    fprintf(stderr,"exit jmp 0000\n");
+    exit(0);
+  }
+
+  // bdos call?
+  if(pc==5) {
+    {
+      // simulate RET from bdos
+      qkz80_uint16 addr(cpu->pop_word());
+
+      cpu->regs.PC.set_pair16(addr);
+    }
+
+    qkz80_uint8 regc(cpu->get_reg8(qkz80::reg_C));
+    if(regc==9) {		// print string?
+      qkz80_uint16 addr(cpu->get_reg16(qkz80::regp_DE));
+      std::string print_me;
+      while(1) {
+	char ch=cpu->mem.fetch_mem(addr);
+	if(ch == '$')
+	  break;
+	addr++;
+	print_me.push_back(char(ch));
+      };
+      std::cout << print_me;
+      return true;
+    }
+
+    if(regc==12) {
+      // cpm version
+      const int cpm_version=0x22;
+      cpu->set_reg8(cpm_version,qkz80::reg_A);
+      cpu->set_reg8(cpm_version,qkz80::reg_L);
+      // cpm type
+      const int cpm_type=0;
+      cpu->set_reg8(cpm_type,qkz80::reg_B);
+      cpu->set_reg8(cpm_type,qkz80::reg_H);
+      return true;
+    } 
+
+    // print character
+    if(regc==2) {
+      qkz80_uint8 ch(cpu->get_reg8(qkz80::reg_E));
+      ch&0x7f;
+      std::cout << ch;
+      return true;
+    }
+    
+    {
+      fprintf(stderr,"unimplemented bdos call=%d\n",int(regc));
+      exit(1);
+    }
+  }
+  return false;
+}
+
+static void run_program(const char *file_to_run,
+			bool cpm_mode) {
+
+  qkz80 proc;
+  debug_trace deb_trace(&proc);
+  proc.set_debug(gl_debug); 
+  if(gl_debug) 
+    proc.set_trace(&deb_trace);
+  
+  FILE *code_file(fopen(file_to_run,"rb"));
+  if(code_file==0) {
+    fprintf(stderr,"open failed");
+    exit(1);
+  }
+  char *code_buf(proc.get_mem()); 
+  int start_offset=0;
+  if(cpm_mode)
+    start_offset=0x100;
+  char *load_at(code_buf+start_offset);
+  int buf_size=0x10000;
+  int did_read(fread(load_at,1,buf_size,code_file));
+  fprintf(stderr,"read %d bytes\n",did_read);
+  fclose(code_file);
+
+  // start at 100h for cpm
+  proc.regs.PC.set_pair16(start_offset);
+  // starting stack
+  proc.regs.SP.set_pair16(0xfff0);
+  if(cpm_mode)
+    proc.cpm_setup_memory();
+
+  while(1) {
+    deb_trace.flush();
+    if(cpm_mode && cpm_emulate(&proc))
+      continue;
+
+    proc.execute();
+  }
+
+}
+
+int main(int argc,char **argv) {
+  run_program("4kbas40.bin",false);
+
+  run_program("../../8080/8kbas.bin",false);
+
+  run_program("../../mbasic.com",true);
+
+
+
+  run_program("../../ddt.com",true);
+
+
+  run_program("../../8080ex1.com",true);
+  run_program("../../8080exm.com",true);
+  run_program("../../ex8080.com",true);
+
+}

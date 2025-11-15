@@ -1,0 +1,710 @@
+	subttl	common file for basic interpreter
+	.sall	
+conto	set	15			;character to supress output (usually control-o)
+dbltrn	set	0			;for double precision transcendentals
+	if2	
+	.printx	/extended/
+	.printx	/lpt/
+	.printx	/cpm disk/
+	.printx	/z80/
+	.printx	/fast/
+	.printx	/5.0 features/
+	.printx	/ansi compatible/
+	endif
+clmwid	set	14			;make comma columns fourteen characters
+datpsc	set	128			;number of data bytes in disk sector
+linln	set	80			;terminal line length 
+lptlen	set	132
+buflen	set	255			;long lines
+namlen	set	40			;maximum length name -- 3 to 127
+numlev	set	0*20+19+2*5		;number of stack levels reserved
+					;by an explicit call to getstk
+strsiz	set	4
+strsiz	set	3
+numtmp	set	3			;number of string temporaries
+numtmp	set	10
+md.rnd	set	3			;the mode number for random files
+md.sqi	set	1			;the mode number for sequential input files
+					;never written into a file
+md.sqo	set	2			;the mode for sequential output files
+					;and program files
+cpmwrm	set	0			;cp/m warm boot addr
+cpment	set	cpmwrm+5		;cp/m bdos call addr
+	cseg	
+trurom	set	0
+	page
+	title	biptrg	basic interpreter pointer get routines/whg/pga
+	subttl	dimension & variable searching - ptrget
+	extrn	aryta2,arytab,bltu,dimflg,errbs,error,fac,fcerr
+	extrn	faclo,getstk,intidx,islet,islet2,omerr,reason,snerr,strend
+	extrn	subflg,temp2,temp3,umult,valtyp,vartab,reddy,pophrt,errdd,retvar
+	extrn	chrgtr,dcompr,synchr
+	extrn	getypr
+	extrn	nambuf,namcnt,namtmp
+	extrn	optval
+	extrn	parm1,prmflg,prmlen,deftbl,nofuns
+	public	ptrget,bserr,ptrgt2,dim,noarys
+dimcon:	dcx	h			;see if comma ended this variable
+	call	chrgtr
+	rz				;if terminator, good bye
+	call	synchr
+	db	44			;must be comma
+;
+; the "dim" code sets dimflg and then falls into the variable
+; search routine. the variable search routine looks at
+; dimflg at three different points:
+;
+;	1) if an entry is found, dimflg being on indicates
+;		a "doubly dimensioned" variable
+;	2) when a new entry is being built dimflg's being on
+;		indicates the indices should be used for
+;		the size of each indice. otherwise the default
+;		of ten is used.
+;	3) when the build entry code finishes, only if dimflg is
+;		off will indexing be done
+;
+dim:	lxi	b,dimcon		;place to come back to
+	push	b
+	db	366q			;"ori" non zero thing
+					;must turn the msb on
+;
+; routine to read the variable name at the current text position
+; and put a pointer to its value in [d,e]. [h,l] is updated
+; to point to the character after the variable name.
+; valtyp is setup. note that evaluating subscripts in
+; a variable name can cause recursive calls to ptrget so at
+; that point all values must be stored on the stack.
+; on return, [a] does not reflect the value of the terminating character
+;
+ptrget:	xra	a			;make [a]=0
+	sta	dimflg			;flag it as such
+	mov	c,m			;get first character in [c]
+ptrgt2:	call	islet			;check for letter
+	jc	snerr			;must have a letter
+	xra	a
+	mov	b,a			;assume no second character
+	sta	namcnt			;zero namcnt
+	inx	h			;incrment text pointer
+	mov	a,m			;get char
+	cpi	'.'			;is it a dot?
+	jc	nosec			;too small for anything reasonable
+	jz	issec			;"." is valid var char
+	cpi	'9'+1			;too big for numeric?
+	jnc	ptrgt3			;yes
+	cpi	'0'			;in right range?
+	jnc	issec			;yes, was numeric
+ptrgt3:	call	islet2			;set carry if not alphabetic
+	jc	nosec			;allow alphabetics
+issec:	mov	b,a			;it is a number--save in b
+	push	b			;save [b,c]
+	mvi	b,255			;[b] counts the characters past #2
+	lxi	d,nambuf-1		;the place to put the characters
+vmorch:	ori	128			;extra characters must have the high bit on
+					;so erase can scan backwards over them
+	inr	b			;increase the chacracter count
+	stax	d			;and store into the buffer
+	inx	d			;and update the buffer pointer
+	inx	h			;increment text pointer
+	mov	a,m			;get char
+	cpi	'9'+1			;too big?
+	jnc	vmorc1			;yes
+	cpi	'0'			;in range for digit
+	jnc	vmorch			;yes, valid char
+vmorc1:	call	islet2			;as are alphabetics
+	jnc	vmorch
+	cpi	'.'			;dots also ok
+	jz	vmorch			;so eat it
+	mov	a,b			;check for maximum count
+	cpi	namlen-1		;limited to size of nambuf only
+	jnc	snerr			;must be bad syntax
+	pop	b			;get back the stored [b,c]
+	sta	namcnt			;always set up count of extras
+	mov	a,m			;restore terminating char
+nosec:
+	cpi	'%'+1			;not a type indicator
+	jnc	tabtyp			;then dont check them
+	lxi	d,havtyp		;save jumps by using return address
+	push	d
+	mvi	d,2			;check for integer
+	cpi	'%'
+	rz	
+	inr	d			;check for string
+	cpi	'$'
+	rz	
+	inr	d			;check for single precision
+	cpi	'!'
+	rz	
+	mvi	d,8			;assume its double precision
+	cpi	'#'			;check the character
+	rz				;when we match, setup valtyp
+	pop	psw			;pop off non-used havtyp address
+tabtyp:	mov	a,c			;get the starting character
+	ani	127			;get rid of the user-defined
+					;function bit in [c]
+	mov	e,a			;build a two byte offset
+	mvi	d,0
+	push	h			;save the text pointer
+	lxi	h,deftbl-'A'		;see what the default is
+	dad	d
+	mov	d,m			;get the type out of the table
+	pop	h			;get back the text pointer
+	dcx	h			;no marking character
+havtyp:	mov	a,d			;setup valtyp
+	sta	valtyp
+	call	chrgtr			;read past type marker
+	lda	subflg			;get flag whether to allow arrays
+	dcr	a			;if subflg=1, "erase" has called
+	jz	ersfin			;ptrget, and special handling must be done
+	jp	noarys			;no arrays allowed
+	mov	a,m			;get char back
+	sui	'('			;array perhaps (if subflg set never will match)
+	jz	isary			;it is!
+	sui	'['-')'+1		;see if left bracket
+	jz	isary			;if so, ok subscript
+noarys:	xra	a			;allow parens again
+	sta	subflg			;save in flag location
+	push	h			;save the text pointer
+	lda	nofuns			;are functions active?
+	ora	a
+	sta	prmflg			;indicate if parm1 needs searching
+	jz	snfuns			;no functions so no special search
+	lhld	prmlen			;get the size to search
+	lxi	d,parm1			;get the base of the search
+	dad	d			;[h,l]= place to stop searching
+	shld	aryta2			;set up stopping point
+	xchg				;[h,l]=start [d,e]=end
+	jmp	lopfnd			;start looping
+loptop:	ldax	d			;get the valtyp of this simple variable
+	mov	l,a			;save so we know how much to skip
+	inx	d
+	ldax	d			;[a]=first character of this variable
+	inx	d			;point to 2nd char of var name
+	cmp	c			;see if our variable matches
+	jnz	notit1
+	lda	valtyp			;get type were looking for
+	cmp	l			;compare with our valtyp
+	jnz	notit1			;not right kind -- skip it
+	ldax	d			;see if second chacracter matches
+	cmp	b
+	jz	finptr			;that was it, all done
+notit1:	inx	d
+nfinpt:	ldax	d			;get length of var name in [a]
+snomat:
+					;skip over the
+					;current variable since we didn't match
+	mvi	h,0			;[h,l]=number of bytes to skip
+	add	l			;add valtype to length of var
+	inr	a			;plus one
+	mov	l,a			;save in [l] to make offset
+	dad	d			;add on the pointer
+lopfnd:	xchg				;[d,e]=pointer into simple variables
+	lda	aryta2			;are low bytes different
+	cmp	e			;test
+	jnz	loptop			;yes
+	lda	aryta2+1		;are high bytes different
+	cmp	d			;the same?
+	jnz	loptop			;no, must be more vars to examine
+notfns:	lda	prmflg			;has parm1 been searched
+	ora	a
+	jz	smkvar			;if so, create variable
+	xra	a			;flag parm1 as searched
+	sta	prmflg
+snfuns:	lhld	arytab			;stopping point is [aryta2]
+	shld	aryta2
+	lhld	vartab			;set up starting point
+	jmp	lopfnd
+; this is exit for varptr and others
+varnot:
+	mov	d,a			;zero [d,e]
+	mov	e,a
+	pop	b			;get rid of pushed [d,e]
+	xthl				;put return address back on stack
+	ret				;return from ptrget
+smkvar:	pop	h			;[h,l]= text pointer
+	xthl				;[h,l]= return address
+	push	d			;save current variable table position
+	extrn	varret
+	lxi	d,varret		;are we returning to varptr?
+	call	dcompr			;compare
+	jz	varnot			;yes.
+	extrn	comptr,compt2		;return here if not found
+	lxi	d,comptr
+	call	dcompr
+	jz	varnot
+	lxi	d,compt2		;2nd one
+	call	dcompr
+	jz	varnot
+	lxi	d,retvar		;did eval call us?
+	call	dcompr			;if so, don't make a new variable
+	pop	d			;restore the position
+	jz	finzer			;make fac zero (all types) and skip return
+	xthl				;put return address back
+	push	h			;put the text pointer back
+	push	b			;save the looks
+	lda	valtyp			;get length of symbol table entry
+	mov	b,a			;[b]=valtyp
+	lda	namcnt			;include extra characters in size
+	add	b
+	inr	a			;as well as the extra character count
+	mov	c,a			;[b,c]=length of this variable
+	push	b			;save the valtyp on the stack
+	mvi	b,0			;[b]=0
+	inx	b			;make the length include
+					;the looks too
+	inx	b
+	inx	b
+					;everything up by
+	lhld	strend			;the current end of storage
+	push	h			;save this #
+	dad	b			;add on the amount of space
+					;extra now being used
+	pop	b			;pop off high address to move
+	push	h			;save new candidate for strend
+	call	bltu			;block transfer and make sure
+					;we are not overflowing the
+					;stack space
+	pop	h			;[h,l]=new strend
+	shld	strend			;store since was ok
+					;there was room, and block transfer
+					;was done, so update pointers
+	mov	h,b			;get back [h,l] pointing at the end
+	mov	l,c			;of the new variable
+	shld	arytab			;update the array table pointer
+zeroer:	dcx	h			;[h,l] is returned pointing to the
+	mvi	m,0			;end of the variable so we
+	call	dcompr			;zero backwards to [d,e] which
+	jnz	zeroer			;points to the start of the variable
+	pop	d			;[e]=valtyp
+	mov	m,d			;valtyp is in high order
+	inx	h
+	pop	d
+	mov	m,e			;put description
+	inx	h
+	mov	m,d			;of this variable
+					;into memory
+	call	nputsb			;save the extra characters in the name
+	xchg				;pointer at variable into [d,e]
+	inx	d			;point at the value
+	pop	h			;restore the text pointer
+	ret	
+finptr:	inx	d			;point at the extra character count
+	lda	namcnt			;see if the extra counts match
+	mov	h,a			;save length of new var
+	ldax	d			;get length of current var
+	cmp	h			;are they the same?
+	jnz	nfinpt			;skip extras and continue search
+	ora	a			;length zero?
+	jnz	ntfprt			;no, more chars to look at
+	inx	d			;point to value of var
+	pop	h			;restore text pointer
+	ret				;all done with this var
+ntfprt:	xchg	
+	call	matsub			;see if the characters match
+	xchg				;table pointer back into [d,e]
+	jnz	snomat			;if not, continue search
+	pop	h			;get back the text pointer
+	ret	
+;
+; make all types zero and skip return
+;
+finzer:
+	sta	fac			;make singles and doubles zero
+	mov	h,a			;make integers zero
+	mov	l,a
+	shld	faclo
+	call	getypr			;see if its a string
+	jnz	pophr2			;if not, done
+	lxi	h,reddy-1		;make it a null string by
+	shld	faclo			;pointing at a zero
+pophr2:	pop	h			;get the text pointer
+	ret				;return from eval
+	page
+	subttl	multiple dimension code
+;
+; format of arrays in core
+;
+; descriptor 
+;	low byte = second charcter (200 bit is string flag)
+;	high byte = first character
+; length of array in core in bytes (does not include descriptor)
+; number of dimensions 1 byte
+; for each dimension starting with the first a list
+; (2 bytes each) of the max indice+1
+; the values
+;
+isary:	push	h			;save dimflg and valtyp for recursion
+	lhld	dimflg
+	xthl				;text pointer back into [h,l]
+	mov	d,a			;set # dimensions =0
+indlop:	push	d			;save number of dimensions
+	push	b			;save looks
+	lxi	d,namcnt		;point at the area to save
+	ldax	d			;get length
+	ora	a			;is it zero?
+	jz	shtnam			;yes, short name
+	xchg				;save the text pointer in [d,e]
+	adi	2			;we want smallest int .ge.(namcnt+1)/2
+	rar	
+	mov	c,a			;see if there is room to save this stuff
+	call	getstk
+	mov	a,c			;restore count of pushes
+lppsnm:	mov	c,m			;get values to push
+	inx	h
+	mov	b,m
+	inx	h
+	push	b			;and do the save
+	dcr	a			;[a] times
+	jnz	lppsnm
+	push	h			;save the address to store to
+	lda	namcnt			;save the number of bytes for a count
+	push	psw
+	xchg				;restore the text pointer
+	call	intidx			;evaluate indice into [d,e]
+	pop	psw			;count telling how much to restore
+	shld	namtmp			;save the text pointer
+	pop	h			;the place to restore to
+	adi	2			;calculate byte pops again
+	rar	
+lplnam:	pop	b
+	dcx	h
+	mov	m,b
+	dcx	h
+	mov	m,c
+	dcr	a			;loop [a] times poping name back into nambuf
+	jnz	lplnam
+	lhld	namtmp
+	jmp	lngnam			;was long one
+shtnam:	call	intidx			;evaluate it
+	xra	a			;make sure namcnt=0
+	sta	namcnt
+lngnam:
+	lda	optval			;see what the option base is
+	ora	a
+	jz	optb0			;if base 0 do nothing
+	mov	a,d			;check for 0 subscript
+	ora	e			;which is illegal in base 1
+	dcx	d			;adjust subscript
+	jz	bserr
+optb0:
+	pop	b			;pop off the looks
+	pop	psw			;[a] = number of dimensions so far
+	xchg				;[d,e]=text pointer
+					;[h,l]=indice
+	xthl				;put the indice on the stack
+					;[h,l]=valtyp & dimflg
+	push	h			;resave valtyp and dimflg
+	xchg				;[h,l]=text pointer
+	inr	a			;increment # of dimensions
+	mov	d,a			;[d]=number of dimensions
+	mov	a,m			;get terminating character
+	cpi	44			;a comma so more indices follow?
+	jz	indlop			;if so, read more
+	cpi	')'			;expected terminator?
+	jz	dochrt			;do chrget for next one
+	cpi	']'			;bracket?
+	jnz	snerr			;no, give error
+dochrt:	call	chrgtr
+subsok:	shld	temp2			;save the text pointer
+	pop	h			;[h,l]= valtyp & dimflg
+	shld	dimflg			;save valtyp and dimflg
+	mvi	e,0			;when [d,e] is poped into psw, we
+					;don't want the zero flag to be set, so
+					;"erase" will have a unique condition
+	push	d			;save number of dimensions
+	public	ersfin
+	db	21o			;"lxi	d," over the next two bytes
+ersfin:	push	h			;save the text pointer
+	push	psw			;save a dummy number of dimensions
+					;with the zero flag set
+;
+; at this point [b,c]=looks. the text pointer is in temp2.
+; the indices are all on the stack, followed by the number of dimensions.
+;
+	lhld	arytab			;[h,l]=place to start the search
+	db	76o			;"mvi a," around the next byte
+lopfda:	dad	d			;skip over this array since it's
+					;not the one
+	xchg				;[d,e]=current search point
+	lhld	strend			;get the place to stop into [h,l]
+	xchg				;[h,l]=search point
+	call	dcompr			;stopping time?
+	jz	notfdd			;yes, couldn't find this array
+	mov	e,m			;get valtyp in [e]
+	inx	h
+	mov	a,m			;get first character
+	inx	h
+	cmp	c			;see if it matches
+	jnz	nmary1			;not this one
+	lda	valtyp			;get type of var were looking for
+	cmp	e			;same as this one?
+	jnz	nmary1			;no, skip this var
+	mov	a,m			;get second character
+	cmp	b			;another match?
+	jz	cmpnam			;match, check out rest of name
+nmary1:	inx	h			;point to size entry
+bnamsz:	mov	e,m			;get var name length in [e]
+	inr	e			;add one to get correct length
+	mvi	d,0			;high byte of zero
+	dad	d			;add offset
+cnomat:
+	mov	e,m			;[d,e]=length
+	inx	h			;of the array being looked at
+	mov	d,m
+	inx	h
+	jnz	lopfda			;if no match, skip this one
+					;and try again
+	lda	dimflg			;see if called by "dim"
+	ora	a			;zero means no
+	extrn	dderr
+	jnz	dderr			;preserve [d,e], and dispatch to
+					;"redimensioned variable" error
+					;if its "dim" calling ptrget
+;
+; temp2=the text pointer
+; we have located the variable we were looking for
+; at this point [h,l] points beyond the size to the number of dimensions
+; the indices are on the stack followed by the number of dimensions
+;
+	pop	psw			;[a]=number of dimensions
+	mov	b,h			;set [b,c] to point at number of dimensions
+	mov	c,l
+	jz	pophrt			;"erase" is done at this point, so return
+					;to do the actual erasure
+	sub	m			;make sure the number given now and
+					;and when the array was set up are the
+					;same
+	jz	getdef			;jump off and read
+					;the indices....
+bserr:	lxi	d,0+errbs		;"subscript out of range"
+	jmp	error
+cmpnam:	inx	h			;point to length of name
+	lda	namcnt			;see if count matches count in complex table
+	cmp	m
+	jnz	bnamsz			;bad name size just skip and set nz cc
+	inx	h			;point one byte after length field
+	ora	a			;length zero?
+	jz	cnomat			;then found, exit
+	dcx	h			;move back one
+	call	matsub			;otherwise try to match characters
+	jmp	cnomat			;using common subroutine
+;
+; here when variable is not found in the array table
+;
+; building an entry:
+; 
+;	put down the descriptor	
+;	setup numer of dimensions
+;	make sure there is room for the new entry
+;	remember varptr
+;	tally=4 (valtyp for the extended)
+;	skip 2 locs for later fill in -- the size
+; loop:	get an indice
+;	put number +1 down at varptr and increment varptr
+;	tally= tally * number+1
+;	decrement number-dims
+;	jnz	loop
+;	call reason with [h,l] reflecting last loc of variable
+;	update strend
+;	zero backwards
+;	make tally include maxdims
+;	put down tally
+;	if called by dimension, return
+;	otherwise index into the variable as if it
+;	were found on the initial search
+;
+notfdd:
+	lda	valtyp			;get valtyp of new var
+	mov	m,a			;put down the variable type
+	inx	h
+	mov	e,a
+	mvi	d,0			;[d,e]=size of one value (valtyp)
+	pop	psw			;[a]=number of dimensions
+	jz	ptrrnz			;called by chain, just return non-zero
+	mov	m,c			;put down the descriptor
+	inx	h
+	mov	m,b
+	call	nputsb			;store the extra characters in the table
+	inx	h
+	mov	c,a			;[c]=number of two byte entries needed
+					;to store the size of each dimension
+	call	getstk			;get space for dimension entries
+	inx	h			;skip over the size locations
+	inx	h
+	shld	temp3			;save the location to put the size
+					;in -- points at the number of dimensions
+	mov	m,c			;store the number of dimensions
+	inx	h
+	lda	dimflg			;called by dimension?
+	ral				;set carry if so
+	mov	a,c			;[a]=number of dimensions
+loppta:
+	jc	popdim
+	push	psw
+	lda	optval			;get the option base
+	xri	11			;map 0 to 11 and 1 to 10
+	mov	c,a			;[b,c]=default dimension
+	mvi	b,0
+	pop	psw
+	jnc	notdim			;default dimensions to ten
+popdim:	pop	b			;pop off an indice into [b,c]
+	inx	b			;add one to it for the zero entry
+notdim:	mov	m,c			;put the maximum down
+	push	psw			;save the number of dimensions and
+					;dimflg (carry)
+	inx	h
+	mov	m,b
+	inx	h
+	call	umult			;multiply [b,c]=newmax by curtol=[d,e]
+	pop	psw			;get the number of dimensions and
+					;dimflg (carry) back
+	dcr	a			;decrement the number of dimensions left
+	jnz	loppta			;handle the other indices
+	push	psw			;save dimflg (carry)
+	mov	b,d			;[b,c]=size
+	mov	c,e
+	xchg				;[d,e]=start of values
+	dad	d			;[h,l]=end of values
+	jc	omerr			;out of memory pointer being generated?
+	call	reason			;see if there is room for the values
+	shld	strend			;update the end of storage
+zerita:	dcx	h			;zero the new array
+	mvi	m,0
+	call	dcompr			;back at the beginning?
+	jnz	zerita			;no, zero more
+	inx	b			;add one to the size to include
+					;the byte for the number of dimensions
+	mov	d,a			;[d]=zero
+	lhld	temp3			;get a pointer at the number of dimensions
+	mov	e,m			;[e]=number of dimensions
+	xchg				;[h,l]=number of dimensions
+	dad	h			;[h,l]=number of dimensions times two
+	dad	b			;add on the size
+					;to get the total number of bytes used
+	xchg				;[d,e]=total size
+	dcx	h			;back up to point to location to put
+	dcx	h			;the size of the array in bytes in.
+	mov	m,e			;put down the size
+	inx	h
+	mov	m,d
+	inx	h
+	pop	psw			;get back dimflg (carry) and set [a]=0
+	jc	finnow
+;
+; at this point [h,l] points beyond the size to the number of dimensions
+; strategy:
+;	numdim=number of dimensions
+;	curtol=0
+; inlpnm:get a new indice
+;	pop new max into curmax
+;	make sure indice is not too big
+;	mutliply curtol by curmax
+;	add indice to curtol
+;	numdim=numdim-1
+;	jnz	inlpnm
+;	use curtol*4 (valtyp for extended) as offset
+;
+getdef:	mov	b,a			;[b,c]=curtol=zero
+	mov	c,a
+	mov	a,m			;[a]=number of dimensions
+	inx	h			;point past the number of dimensions
+	db	26q			;"mvi d," around the next byte
+inlpnm:	pop	h			;[h,l]= pointer into variable entry
+	mov	e,m			;[d,e]=maximum for the current indice
+	inx	h
+	mov	d,m
+	inx	h
+	xthl				;[h,l]=current indice
+					;pointer into the variable goes on the stack
+	push	psw			;save the number of dimensions
+	call	dcompr			;see if the current indice is too big
+	jnc	bserr			;if so "bad subscript" error
+	call	umult			;curtol=curtol*current maximum
+	dad	d			;add the indice to curtol
+	pop	psw			;get the number of dimensions in [a]
+	dcr	a			;see if all the indices have been processed
+	mov	b,h			;[b,c]=curtol in case we loop back
+	mov	c,l
+	jnz	inlpnm			;process the rest of the indices
+	lda	valtyp			;see how big the values are
+					;and multiply by that size
+	mov	b,h			;save the original value for multiplying
+	mov	c,l			;by three
+	dad	h			;multiply by two at least
+	sui	4			;for integers and strings
+					;no more multiplying by two
+	jc	smlval
+	dad	h			;now multiplied by four
+	jz	donmul			;if single all done
+	dad	h			;by eight for doubles
+smlval:
+	ora	a			;fix cc's for z-80
+	jpo	donmul			;for strings
+	dad	b			;add in the original
+donmul:
+	pop	b			;pop off the address of where the values
+					;begin
+	dad	b			;add it onto curtol to get the
+					;place the value is stored
+	xchg				;return the pointer in [d,e]
+finnow:	lhld	temp2			;reget the text pointer
+	ret	
+ptrrnz:	stc				;return with non-zero in [a]
+	sbb	a			;and condition codes set
+	pop	h			;restore test pointer
+	ret	
+;
+; long variable name subroutines. after the normal 2 character name
+; the count of additional characters is stored. following this
+; comes the characters in order with the high bit turned on so a backward
+; scan is possible
+;
+	public	iadahl
+iadahl:	mov	a,m			;get the character count
+	inx	h
+addahl:	push	b			;add [a] to [h,l]
+	mvi	b,0
+	mov	c,a
+	dad	b
+	pop	b			;restore the saved [b,c]
+	ret	
+nputsb:	push	b			;this routine store the "long" name at [h,l]
+	push	d
+	push	psw
+	lxi	d,namcnt		;point at data to save
+	ldax	d			;get the count
+	mov	b,a
+	inr	b			;[b]= number of bytes to save
+slplng:	ldax	d			;fetch store value
+	inx	d
+	inx	h			;move up to store name into table
+	mov	m,a			;do the store
+	dcr	b			;and repeat [b] times
+	jnz	slplng			;for the count and data
+	pop	psw
+	pop	d
+	pop	b
+	ret	
+matsub:	push	d			;this routine tries to perform a match
+	push	b
+	lxi	d,nambuf		;point at count and data
+	mov	b,a			;[b]=character count
+	inx	h			;point at the data
+	inr	b			;start off loop
+slpmat:	dcr	b			;matched all characters yet?
+	jz	ismat2			;if so, its a match
+	ldax	d			;get another character
+	cmp	m			;see if its the same
+	inx	h			;move forward in definition table
+	inx	d			;more forward in stored name
+	jz	slpmat			;if match keep going until end
+	mov	a,b			;need to advance by [b]-1 to skip bad chars
+	dcr	a
+	cnz	addahl			;use the common subroutine. [h,l]=[h,l]+[a]
+	xra	a			;set cc's non zero for no match
+	dcr	a			;and return [a]=ff
+ismat2:	pop	b			;restore saved registers
+	pop	d
+	ret	
+	page
+	end	
+

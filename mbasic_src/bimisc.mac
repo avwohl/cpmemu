@@ -1,0 +1,735 @@
+	subttl	common file for basic interpreter
+	.sall	
+conto	set	15			;character to supress output (usually control-o)
+dbltrn	set	0			;for double precision transcendentals
+	if2	
+	.printx	/extended/
+	.printx	/lpt/
+	.printx	/cpm disk/
+	.printx	/z80/
+	.printx	/fast/
+	.printx	/5.0 features/
+	.printx	/ansi compatible/
+	endif
+clmwid	set	14			;make comma columns fourteen characters
+datpsc	set	128			;number of data bytes in disk sector
+linln	set	80			;terminal line length 
+lptlen	set	132
+buflen	set	255			;long lines
+namlen	set	40			;maximum length name -- 3 to 127
+numlev	set	0*20+19+2*5		;number of stack levels reserved
+					;by an explicit call to getstk
+strsiz	set	4
+strsiz	set	3
+numtmp	set	3			;number of string temporaries
+numtmp	set	10
+md.rnd	set	3			;the mode number for random files
+md.sqi	set	1			;the mode number for sequential input files
+					;never written into a file
+md.sqo	set	2			;the mode for sequential output files
+					;and program files
+cpmwrm	set	0			;cp/m warm boot addr
+cpment	set	cpmwrm+5		;cp/m bdos call addr
+	cseg	
+trurom	set	0
+	page
+	title	bimisc	basic interpreter miscellaneous routines/whg/pga etc.
+	extrn	arytab,brktxt,crdo,crdonz,curlin,datptr,error,fadds
+	extrn	fcerr,fcomp,fndfor,fndlin,fretop,frmevl,inchri,inlin,linget
+	extrn	memsiz,movfm,movmf,movrm,newstt,oldlin,oldtxt,overr,ptrget
+	extrn	snerr,strend,subflg,outdo,savtxt,chrcon
+	extrn	topmem
+	extrn	temp,temppt,tempst,tmerr,txttab,userr,valtyp,vartab
+	extrn	errcn,errfin,errom,getbyt,stprdy,nferr,intid2,nxtcon
+	public	synchr,dcompr
+	extrn	chrgtr
+	extrn	getypr
+	extrn	vmove,prmlen,prmln2,deftbl,frqint,funact,iadd,icomp,nofuns,prmstk
+	extrn	optflg,optval
+	public	stoprg
+	public	ton,toff
+	extrn	oneflg,onelin,trcflg,savstk
+	extrn	nxtflg
+	public	clearc,scrath,stop,islet,islet2,stkini,getstk,scrtch
+	public	stpend,bltu,cont,bltuc,ends,gtmprt,runc,stpend,endcon,restor
+	public	stop,resfin,stkerr,reason,omerr
+	public	next
+;
+; this is the block transfer routine
+; it makes space by shoving everything forward
+;
+; [h,l] = destination of high address
+; [d,e] = low address to be transferred
+; [b,c] = high address to be transferred
+;
+; a check is made to make sure a reasonable amount
+; of space remains between the top of the stack and
+; the highest location transferred into
+;
+; on exit [h,l]=[d,e]=low [b,c]=location low was moved into
+;
+bltu:	call	reason			;check destination to make
+					;sure the stack won't be overrun
+bltuc:	push	b			;exchange [b,c] and [h,l]
+	xthl	
+	pop	b
+bltlop:	call	dcompr			;see if we are done
+	mov	a,m			;get the word to transfer
+	stax	b			;transfer it
+	rz	
+	dcx	b
+	dcx	h			;backup for next guy
+	jmp	bltlop
+;
+; this routine is used to make sure a certain number
+; of locations remain available for the
+; stack. the call is :
+;	mvi	c,number of 2 byte entries necessary
+;	call	getstk
+;
+; this routine must be called by any routine which puts
+; an arbitrary amount of stuff on the stack
+; (i.e. any recursive routine like frmevl)
+; it is also called by routines such as "gosub" and "for"
+; which make permanent entries on the stack
+; routines which merely use and free up the guaranteed
+; numlev stack locations need not call this
+;
+getstk:	push	h			;save [h,l]
+	lhld	memsiz
+	mvi	b,0
+	dad	b
+	dad	b			;see if we can have this many
+;
+; [h,l]= some address
+; [h,l] is examined to make sure at least numlev
+; locations remain between it and the top of the stack
+;
+cons1	set	256-(2*numlev)
+	mvi	a,cons1			;set [h,l]=-[h,l]-2*numlev
+	sub	l
+	mov	l,a
+	mvi	a,255
+	sbb	h
+	jc	omerr			;in case [h,l] was too big(mbm 3/18**)
+	mov	h,a			;now see if [sp] is larger
+	dad	sp			;if so, carry will be set
+	pop	h			;get back original [h,l]
+	rc				;was ok?
+omerr:
+					;for space reasons leave this code out
+					;only important in versions where
+					;stack context survives other errors
+	lhld	topmem
+	dcx	h			;up some memory space
+	dcx	h			;make sure the fndfor stopper is saved
+	shld	savstk			;place stack is restored from
+omerrr:	lxi	d,0+errom		;"out of memory"
+	jmp	error
+	extrn	garba2
+reason:	call	really			;enough space between string & stack
+	rnc				;yes
+	push	b			;save all regs
+	push	d
+	push	h
+	call	garba2			;do a garbage collection
+	pop	h			;restore all regs
+	pop	d
+	pop	b
+	call	really			;enough space this time?
+	rnc				;yes
+	jmp	omerrr			;no, give "out of memory but dont touch stack
+really:	push	d			;save [d,e]
+	xchg				;save [h,l] in [d,e]
+	lhld	fretop			;get where strings are
+	call	dcompr			;is top of vars less than strings?
+	xchg				;back to [d,e]
+	pop	d			;restore [d,e]
+	ret				;done
+	page
+	subttl	nodsks, scratch (new), runc, clearc, stkini, qinlin
+	public	nodsks
+	extrn	filptr,maxfil
+; the code below sets the file mode to 0 (closed) for all fcb's
+nodsks:	lda	maxfil			;get largest file #
+	mov	b,a			;into b for counter
+	lxi	h,filptr		;point to table of file data blocks
+	xra	a			;make a zero to mark files as closed
+	inr	b
+lopnto:	mov	e,m			;get pointer to file data block in [d,e]
+	inx	h
+	mov	d,m
+	inx	h
+	stax	d			;mark file as closed (mode zero)
+	dcr	b
+	jnz	lopnto			;loop until done
+	extrn	clsall
+	call	clsall
+	xra	a
+					;dont wipe out init message on screen(new does clear screen)
+;
+; the "new" command clears the program text as well
+; as variable space
+;
+scrath:	rnz				;make sure there is a terminator
+scrtch:
+	lhld	txttab			;get pointer to start of text
+	call	toff			;turn off trace. set [a]=0.
+	extrn	proflg
+	sta	proflg			;no longer a protected file
+	extrn	autflg
+	sta	autflg			;clear auto mode
+	extrn	ptrflg
+	sta	ptrflg			;say no pointers exist
+	mov	m,a			;save at end off text
+	inx	h			;bump pointer
+	mov	m,a			;save zero
+	inx	h			;bump pointer
+	shld	vartab			;new start of variables
+runc:
+	lhld	txttab			;point at the start of text
+	dcx	h
+;
+; clearc is a subroutine which initializes the variable and
+; array space by reseting arytab [the end of simple variable space]
+; and strend [the end of array storage]. it falls into stkini
+; which resets the stack. [h,l] is preserved.
+;
+clearc:	shld	temp			;save [h,l] in temp
+	extrn	mrgflg
+	lda	mrgflg			;doing a chain merge?
+	ora	a			;test
+	jnz	levdtb			;leave default table alone
+	xra	a
+	sta	optflg			;indicate no "option" has been seen
+	sta	optval			;default to "option base 0"
+	mvi	b,26			;initialize the default valtype table
+	lxi	h,deftbl		;point at the first entry
+lopdft:	mvi	m,4			;loop 26 times storing a default valtyp
+	inx	h			;for single precision
+					;count off the letters
+	dcr	b
+	jnz	lopdft			;loop back, and setup the rest of the table
+levdtb:
+	extrn	rndcop,rndx,move
+	extrn	rndcnt
+	lxi	d,rndcop		;reset the random number generator
+	lxi	h,rndx			;seed in rndx
+	call	move
+	lxi	h,rndcnt-1		;and zero count registers
+	xra	a
+	mov	m,a
+	inx	h
+	mov	m,a
+	inx	h
+	mov	m,a
+	xra	a
+	sta	oneflg			;reset on error flag for runs
+	mov	l,a			;reset error line number
+	mov	h,a			;by setting onelin=0.
+	shld	onelin
+	shld	oldtxt			;make continuing impossible
+	lhld	memsiz
+	extrn	chnflg
+	lda	chnflg			;are we chaining?
+	ora	a			;test
+	jnz	godfre			;fretop is good, leave it alone
+	shld	fretop			;free up string space
+godfre:	xra	a			;make sure [a] is zero, cc's set
+	call	restor			;restore data
+	lhld	vartab			;get start of variable space
+	shld	arytab			;save in start of array space
+	shld	strend			;and end of variable storage
+	extrn	clsall
+	lda	mrgflg			;doing chain merge?
+	ora	a
+	cz	clsall			;if so, dont close files...
+;
+; stkini resets the stack pointer eliminating
+; gosub & for context.  string temporaries are freed
+; up, subflg is reset, continuing is disallowed,
+; and a dummy entry is put on the stack. this is so
+; fndfor will always find a non-"for" entry at the bottom
+; of the stack. [a]=0 and [d,e] is preserved.
+;
+stkini:	pop	b			;get return address here
+	lhld	topmem
+	dcx	h			;take into account fndfor stopper
+	dcx	h
+	shld	savstk			;make sure savstk ok just in case.
+	inx	h			;increment back for sphl
+	inx	h
+stkerr:	sphl				;initialize stack
+	lxi	h,tempst
+	shld	temppt			;initialize string temporaries
+	extrn	clrovc
+	call	clrovc			;back to normal overflow print mode
+	extrn	finlpt
+	call	finlpt
+	extrn	finprt
+	call	finprt			;clear ptrfil, other i/o flags
+	xra	a			;zero out a
+	mov	h,a			;zero out h
+	mov	l,a			;zero out l
+	shld	prmlen			;flag no active parameters
+	sta	nofuns			;indicate no user functions active
+	shld	prmln2			;no parameters being built
+	shld	funact			;set number of functions active to 0
+	shld	prmstk			;and no parameter blocks on the stack
+	sta	subflg			;allow subscripts
+	push	h			;put zero (non $for,$gosub)
+					;on the stack
+	push	b			;put return address back on
+gtmprt:	lhld	temp			;get saved [h,l]
+	ret	
+	page
+	subttl	dcompr, synchr - replacements for compar & synchk in rstles version
+	public	synchr
+dcompr:	mov	a,h			;replacement for "compar" rst
+	sub	d
+	rnz	
+	mov	a,l
+	sub	e
+	ret	
+synchr:	mov	a,m			;replacement for "synchk" rst
+	xthl	
+	cmp	m
+	jnz	synerr
+	inx	h
+	xthl	
+	inx	h			;look at next char
+	mov	a,m			;get it
+	cpi	':'			;is it end of statment or bigger
+	rnc	
+syncon:	jmp	chrcon			;rest of chrget
+synerr:	jmp	snerr
+	subttl	restore, stop, end
+restor:	xchg				;save [h,l] in [d,e]
+	lhld	txttab
+	jz	bgnrst			;restore data pointer to beginning of program
+	xchg				;text pointer back to [h,l]
+	call	linget			;get the following line number
+	push	h			;save text pointer
+	call	fndlin			;find the line number
+	mov	h,b			;get pointer to line in [h,l]
+	mov	l,c
+	pop	d			;text pointer back to [d,e]
+	jnc	userr			;should have found line
+bgnrst:
+	dcx	h			;initialize datptr to [txttab]-1
+resfin:	shld	datptr			;read finishes come to resfin
+	xchg				;get the text pointer back
+	ret	
+stop:	rnz				;return if not control-c and make
+					;sure "stop" statements have a terminator
+stoprg:
+	inr	a
+	jmp	constp
+					;to type the break message
+ends:	rnz				;make sure "end" statements have a terminator
+	push	psw			;preserve condition codes over call to clsall
+	cz	clsall
+	pop	psw			;restore condition codes
+constp:	shld	savtxt			;save for "continue"
+	lxi	h,tempst		;reset string temp pointer
+	shld	temppt			;save in case ^c print using
+	db	41q			;"lxi h," over next two
+stpend:	ori	377o			;set non-zero to force printing of break message
+	pop	b			;pop off newstt address
+endcon:	lhld	curlin			;save curlin
+	push	h			;save line to print
+	push	psw			;save the message flag
+					;zero means don't print "break"
+	mov	a,l
+	ana	h			;see if it was direct
+	inr	a
+	jz	diris			;if not set up for continue
+	shld	oldlin			;save old line #
+	lhld	savtxt			;get pointer to start of statement
+	shld	oldtxt			;save it
+diris:
+	extrn	cntofl
+	xra	a
+	sta	cntofl			;force output
+	call	finlpt
+	call	crdonz			;print cr if ttypos .ne. 0
+	pop	psw			;get back ^c flag
+	lxi	h,brktxt		;"break"
+	jnz	errfin			;call strout and fall into ready
+	jmp	stprdy			;pop off line number & fall into ready
+	page
+	subttl	ctrlpt, ddt, cont, null, tron, troff
+	public	ctrlpt,ctropt
+ctropt:	mvi	a,conto			;print an ^o.
+ctrlpt:	push	psw			;save current char
+	sui	3			;control-c?
+	jnz	ntctct			;no
+	extrn	prtflg
+	sta	prtflg			;display ^c only(not on lpt)
+	sta	cntofl			;reset ^o flag
+ntctct:
+	mvi	a,'^'			;print up-arrow.
+	call	outdo			;send it
+	pop	psw			;get back control char.
+	adi	100o			;make printable
+	call	outdo			;send it
+	jmp	crdo			;and then send crlf.
+cont:	lhld	oldtxt			;a stored text pointer of
+					;zero is setup by stkini
+					;and indicates there is nothing
+					;to continue
+	mov	a,h			;"stop","end",typing crlf
+	ora	l			;to "input" and ^c setup oldtxt
+reserr:	lxi	d,0+errcn		;"can't continue"
+	jz	error
+	xchg				;save [h,l]
+	lhld	oldlin
+	shld	curlin			;set up old line # as current line #
+	xchg				;restore [h,l] 
+	ret	
+	extrn	nulcnt
+	public	null
+null:	call	getbyt
+	rnz				;make sure there is a terminator
+	inr	a			;code at crdo expects at least 1
+	sta	nulcnt			;change number of nulls
+	ret	
+ton:	db	76q			;"mvi a," non-zero quantity
+toff:	xra	a			;make [a]=0 for no trace
+	sta	trcflg			;update the trace flag
+	ret	
+	page
+	subttl	swap, erase
+	extrn	swptmp
+	public	swap
+swap:	call	ptrget			;[d,e]=pointer at value #1
+	push	d			;save the pointer at value #1
+	push	h			;save the text pointer
+	lxi	h,swptmp		;temporary store location
+	call	vmove			;swptmp=value #1
+	lhld	arytab			;get arytab so change can be noted
+	xthl				;get the text pointer back
+					;and save current [arytab]
+	call	getypr
+	push	psw			;save the type of value #1
+	call	synchr
+	db	44			;make sure the variables are
+					;delimited by a comma
+	call	ptrget			;[d,e]=pointer at value #2
+	pop	b			;[b]=type of value #1
+	call	getypr			;[a]=type of value #2
+	cmp	b			;make sure they are the same
+	jnz	tmerr			;if not, "type mismatch" error
+	xthl				;[h,l]=old [arytab] save the text pointer
+	xchg				;[d,e]=old [arytab]
+	push	h			;save the pointer at value #2
+	lhld	arytab			;get new [arytab]
+	call	dcompr
+	jnz	fcerr			;if its changed, error
+	pop	d			;[d,e]=pointer at value #2
+	pop	h			;[h,l]=text pointer
+	xthl				;save the text pointer on the stack
+					;[h,l]=pointer at value #1
+	push	d			;save the pointer at value #2
+	call	vmove			;transfer value #2 into value #1's old
+					;position
+	pop	h			;[h,l]=pointer at value #2
+	lxi	d,swptmp		;location of value #1
+	call	vmove			;transfer swptmp=value #1 into value #2's
+					;old position
+	pop	h			;get the text pointer back
+	ret	
+	public	erase
+erase:
+	mvi	a,1
+	sta	subflg			;that this is "erase" calling ptrget
+	call	ptrget			;go find out where to erase
+	jnz	fcerr			;ptrget did not find variable!
+	push	h			;save the text pointer
+	sta	subflg			;zero out subflg to reset "erase" flag
+	mov	h,b			;[b,c]=start of array to erase
+	mov	l,c
+	dcx	b			;back up to the front
+	dcx	b			;no value type without length=2
+	dcx	b			;back up one more
+lpbknm:	ldax	b			;get a character. only the count has high bit=0
+	dcx	b			;so loop until we skip over the count
+	ora	a			;skip all the extra characters
+	jm	lpbknm
+	dcx	b
+	dcx	b
+	dad	d			;[h,l]=the end of this array entry
+	xchg				;[d,e]=end of this array
+	lhld	strend			;[h,l]=last location to move up
+erslop:	call	dcompr			;see if the last location is going to be moved
+	ldax	d			;do the move
+	stax	b
+	inx	d			;update the pointers
+	inx	b
+	jnz	erslop			;move the rest
+	dcx	b
+	mov	h,b			;setup the new storage end pointer
+	mov	l,c
+	shld	strend
+	pop	h			;get back the text pointer
+	mov	a,m			;see if more erasures needed
+	cpi	54o			;additional variables delimited by comma
+	rnz				;all done if not
+	call	chrgtr
+	jmp	erase
+casdon:
+	public	popaht
+popaht:	pop	psw
+	pop	h			;get the text pointer
+	ret	
+	page
+;
+;test for a letter / carry on=not a letter
+;		     carry off=a letter
+;
+islet:	mov	a,m
+islet2:	cpi	'A'
+	rc				;if less than "a", return early
+	cpi	91			;91="z"+1
+	cmc	
+	ret	
+	subttl	clear
+;
+; this code is for the "clear" command with an argument
+; to change the amount of string space allocated.
+; if no formula is given the amount of string space
+; remains unchanged.
+;
+	public	clear
+clear:	jz	clearc			;if no formula just clear
+	cpi	54o			;allow no string space
+	jz	cskpcm
+	call	intid2			;get an integer into [d,e]
+	dcx	h
+	call	chrgtr			;see if its the end
+	jz	clearc
+cskpcm:	call	synchr
+	db	54o
+	jz	clearc
+	xchg	
+	lhld	topmem			;get highest address
+	xchg	
+	cpi	54o
+	jz	clears			;should finish there
+	call	frmevl			;evaluate formula
+	push	h			;save text pointer
+	call	frqint			;convert to integer in [h,l]
+	mov	a,h
+	ora	l			;memory size =0?
+	jz	fcerr##			;yes, error
+	xchg				;value to [d,e]
+	pop	h			;restore text pointer
+clears:	dcx	h			;back up
+	call	chrgtr			;get char
+	push	d			;save new high mem
+	jz	cdfstk			;use same stack size
+	call	synchr
+	db	54o
+	jz	cdfstk
+	call	intid2
+	dcx	h
+	call	chrgtr
+	jnz	snerr
+cleart:	xthl				;save text pointer
+	push	h			;save candidate for topmem
+	lxi	h,0+(2*numlev)+20	;check stack size is reasonable
+	call	dcompr
+	jnc	omerr
+	pop	h
+	call	subde			;subtract [h,l]-[d,e] into [d,e]
+	jc	omerr			;wanted more than total!
+	push	h			;save memsiz
+	lhld	vartab			;top location in use
+	lxi	b,0+20			;leave breathing room
+	dad	b
+	call	dcompr			;room?
+	jnc	omerr			;no, don't even clear
+	xchg				;new stack location [h,l]
+	shld	memsiz			;set up new stack location
+	pop	h			;get back memsiz
+	shld	topmem			;set it up, must be ok
+	pop	h			;regain the text pointer
+	jmp	clearc			;go clear
+cdfstk:	push	h			;save text pointer
+	lhld	topmem			;figure out current stack size so
+	xchg				;it is saved
+	lhld	memsiz
+	mov	a,e
+	sub	l
+	mov	e,a
+	mov	a,d
+	sbb	h
+	mov	d,a
+	pop	h
+	jmp	cleart
+subde:	mov	a,l
+	sub	e
+	mov	e,a
+	mov	a,h
+	sbb	d
+	mov	d,a
+	ret	
+	page
+	subttl	next code
+;
+; a "for" entry on the stack has the following format:
+;
+; low address
+;	token ($for in high byte)  1 bytes
+;	a pointer to the loop variable  2 bytes
+;	under ansi & length=2, two bytes giving text pointer of matching "next"
+;	a byte reflecting the sign of the increment 1 byte
+;	under length=2, a byte minus for integer and positive for floating "for"s
+;	the step 4 bytes
+;	the upper value 4 bytes
+;	the line # of the "for" statement 2 bytes
+;	a text pointer into the "for" statement 2 bytes
+; high address
+;
+; total 16-19 bytes
+;
+	public	next
+next:
+	push	psw			;save the character codes
+	db	366q			;set [a] non-zero
+	public	nexts
+nexts:	xra	a			;flag that "for" is using "next"
+	sta	nxtflg
+	pop	psw			;get back the character code
+	lxi	d,0			;for the "next"
+					;statement without any args
+					;we call fndfor with [d,e]=0
+nextc:
+	extrn	nxttxt
+	shld	nxttxt			;save starting text pointer
+	cnz	ptrget			;get a pointer to the
+					;loop variable into [d,e]
+	shld	temp			;put the text pointer
+					;in a temp location
+					;in case the loop terminates
+	call	fndfor			;try to find a for entry
+					;on the stack whose variable name
+					;matches this ones
+	jnz	nferr			;"next without for"
+	sphl				;setup stack pointer by chopping
+					;at this point
+	push	d			;put the variable ptr back on
+	mov	e,m			;pick up the correct "next" text pointer
+	inx	h
+	mov	d,m
+	inx	h
+	push	h			;save the pointer into the stack entry
+	lhld	nxttxt			;[h,l]=text pointer at the start of this "next"
+	call	dcompr
+	jnz	nferr			;if no match, "next without for"
+	pop	h
+	pop	d			;get back the variable pointer
+	push	d
+	mov	a,m			;step onto the stack
+	push	psw
+	inx	h
+	push	d			;put the pointer to the loop
+					;variable onto the stack
+	mov	a,m			;get flag whether this is an integer "for"
+	inx	h			;advance the "for" entry pointer
+	ora	a			;set the minus flag if it's an integer "for"
+	jm	intnxt			;handle integers seperately
+	call	movfm			;step value into the fac
+	xthl				;put the pointer into the
+					;for entry onto the stack
+	push	h			;put the pointer to the loop
+					;variable back onto the stack
+	lda	nxtflg			;is "for" using "next"
+	ora	a
+	jnz	nxtdo			;no, continue "next"
+	extrn	fvalsv
+	lxi	h,fvalsv		;fetch the initial value into the fac
+	call	movfm
+	xra	a			;continue the "next" with initial value
+nxtdo:	cnz	fadds
+	pop	h			;pop off the pointer to 
+					;the loop variable
+	call	movmf			;mov fac into loop variable
+	pop	h			;get the entry pointer
+	call	movrm			;get the final into the registers
+	push	h			;save the entry pointer
+	call	fcomp			;compare the numbers returning 377 if fac is
+					;less than the registers,
+					;0 if equal, otherwise 1
+	jmp	finnxt			;skip over integer code
+intnxt:	inx	h			;skip the four dummy bytes
+	inx	h
+	inx	h
+	inx	h
+	mov	c,m			;[b,c]= the step
+	inx	h
+	mov	b,m
+	inx	h
+	xthl				;save the entry pointer on the stack
+					;and set [h,l]=pointer to the loop variable
+	mov	e,m			;[d,e]=loop variable value
+	inx	h
+	mov	d,m
+	push	h			;save the pointer at the loop variable value
+	mov	l,c
+	mov	h,b			;setup to add [d,e] to [h,l]
+	lda	nxtflg			;see if "for" is using "next"
+	ora	a
+	jnz	inxtdo			;no, just continue next
+	lhld	fvalsv			;get the initial value
+	jmp	iforin			;continue first iteration check
+inxtdo:	call	iadd			;add the step to the loop variable
+	lda	valtyp			;see if there was overflow
+	cpi	4			;turned to single-precision?
+	jz	overr			;indice got too large
+iforin:	xchg				;[d,e]=new loop variable value
+	pop	h			;get the pointer at the loop variable
+	mov	m,d			;store the new value
+	dcx	h
+	mov	m,e
+	pop	h			;get back the pointer into the "for" entry
+	push	d			;save the value of the loop variable
+	mov	e,m			;[d,e]=final value
+	inx	h
+	mov	d,m
+	inx	h
+	xthl				;save the entry pointer again
+					;get the value of the loop variable into [h,l]
+	call	icomp			;do the compare
+finnxt:
+	pop	h			;pop off the "for" entry pointer which is now
+					;pointing past the final value
+	pop	b			;get the sign of the increment
+	sub	b			;subtract the increments sign from that
+					;of (current value-final value)
+	call	movrm			;get line # of "for" into [d,e]
+					;get text pointer of "for" into [b,c]
+	jz	loopdn			;if sign(final-current)+sign(step)=0
+					;then the loop is finished
+	xchg	
+	shld	curlin			;store the line #
+	mov	l,c			;setup the text pointer
+	mov	h,b
+	jmp	nxtcon
+loopdn:	sphl				;eliminate the for entry
+					;since [h,l] moved all
+					;the way down the entry
+	shld	savstk			;update saved stack
+	lhld	temp			;restore the text pointer
+	mov	a,m			;is there a comma at the end
+	cpi	44			;if so look at another
+	jnz	newstt			;variable name to "next"
+	call	chrgtr			;read first charcter
+	call	nextc			;do next, but don't allow
+					;blank variable name [d,e]=stk ptr
+					;and will never match any varptr
+					;use call to put dummy "newstt" entry on
+	page
+					;end i8086 conditonal
+	end	
+

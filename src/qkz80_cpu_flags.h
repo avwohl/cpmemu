@@ -1,0 +1,17 @@
+#ifndef I8080_CPU_FLAGS
+#define I8080_CPU_FLAGS 1
+
+  class qkz80_cpu_flags {
+  public:
+    enum {
+      CY=1,
+      UNUSED1=2,
+      P=4,
+      UNUSED2=8,
+      AC=16,
+      UNUSED3=32,
+      Z=64,
+      S=128,
+    };
+  };
+#endif

@@ -1,0 +1,386 @@
+	subttl	common file for basic interpreter
+	.sall	
+conto	set	15			;character to supress output (usually control-o)
+dbltrn	set	0			;for double precision transcendentals
+	if2	
+	.printx	/extended/
+	.printx	/lpt/
+	.printx	/cpm disk/
+	.printx	/z80/
+	.printx	/fast/
+	.printx	/5.0 features/
+	.printx	/ansi compatible/
+	endif
+clmwid	set	14			;make comma columns fourteen characters
+datpsc	set	128			;number of data bytes in disk sector
+linln	set	80			;terminal line length 
+lptlen	set	132
+buflen	set	255			;long lines
+namlen	set	40			;maximum length name -- 3 to 127
+numlev	set	0*20+19+2*5		;number of stack levels reserved
+					;by an explicit call to getstk
+strsiz	set	4
+strsiz	set	3
+numtmp	set	3			;number of string temporaries
+numtmp	set	10
+md.rnd	set	3			;the mode number for random files
+md.sqi	set	1			;the mode number for sequential input files
+					;never written into a file
+md.sqo	set	2			;the mode for sequential output files
+					;and program files
+cpmwrm	set	0			;cp/m warm boot addr
+cpment	set	cpmwrm+5		;cp/m bdos call addr
+	cseg	
+trurom	set	0
+	page
+	title	init initailization for basic 8080/z80 gates/allen/davidoff
+swtchr	set	57o			;default switch character is slash
+	extrn	cnsget
+	extrn	chrgtr
+	extrn	outdo,linprt,memsiz,crdo,txttab,omerr
+	extrn	reason
+	extrn	ready,stkini,curlin,repini
+	extrn	dcompr
+	extrn	synchr
+	extrn	errflg
+	extrn	maxfil
+	extrn	lptpos
+	extrn	qinlin,buf,snerr,fcerr,atn,atnfix,cosfix,tanfix,sinfix,cos
+	page
+	subttl	system initialization code
+;this is the system initialization code
+;it should be loaded at the end of the basic
+;interpreter
+	extrn	strout
+	public	tstack
+	public	initsa,init
+initsa:
+	extrn	nodsks
+	call	nodsks
+	lhld	txttab
+	dcx	h
+	mvi	m,0
+	extrn	lrun
+	lhld	cpmfil			;point to start of command line
+	mov	a,m			;get byte pointed to
+	ora	a			;if zero, no file seen
+	jnz	lrun			;try to run file
+	jmp	ready
+endio:	ds	2
+init:
+	lxi	h,tstack		;set up temp stack
+	sphl	
+	xra	a			;initialize protect flag
+	extrn	proflg
+	sta	proflg
+	extrn	topmem,fretop
+	shld	topmem
+	extrn	savstk
+	shld	savstk			;we restore stack when errors
+	lhld	cpmwrm+1		;get start of bios vector table
+	lxi	b,0+4			;csts
+	dad	b			;add four
+	mov	e,m			;pick up csts address
+	inx	h
+	mov	d,m
+	xchg				;get csts address
+	shld	const3##+1		;third control-c check
+	shld	consts##+1		;save
+	shld	const2##+1		;fast control-c check
+	xchg				;pointer back to [h,l]
+	inx	h			;point at ci address
+	inx	h
+	mov	e,m			;get low byte of ci address
+	inx	h
+	mov	d,m			;get high byte
+	xchg				;input address to [h,l]
+	shld	conin##+1		;save in console input call
+	xchg				;pointer back to [h,l]
+	inx	h			;skip "jmp" opcode
+	inx	h			;bump pointer
+	mov	e,m			;get output routine address
+	inx	h
+	mov	d,m
+	xchg				;into [h,l]
+	shld	conout##+1		;save into output routine
+	xchg				;pointer back to [h,l]
+	inx	h			;now point to printer output
+	inx	h			;routine address
+	mov	e,m			;pick it up
+	inx	h
+	mov	d,m
+	xchg				;get address into [d,e]
+	shld	lptout##+1		;set print routine address
+;	check cp/m version number
+	extrn	cpmvrn,cpmrea,cpmwri
+	mvi	c,12			;version test
+	call	cpment
+	sta	cpmvrn			;[a] = version number (0 = 1.x)
+	ora	a			;test version number
+	lxi	h,21*256+20+0		;1.x read / write
+	jz	cpmvr1
+	lxi	h,34*256+33+0		;2.x read / write
+cpmvr1:	shld	cpmrea			;save read/write codes
+	lxi	h,0+65534		;say initialization is executing
+	shld	curlin			;in case of error message
+	extrn	cntofl
+	xra	a
+	sta	cntofl
+	extrn	endbuf
+	sta	endbuf			;make sure overruns stop
+	extrn	chnflg,mrgflg
+	sta	chnflg			;make sure chains and merges
+	sta	mrgflg			;dont try to happen
+	sta	errflg			;don't allow edit to be called on errors
+	lxi	h,0			;get 0
+	shld	lptpos##		;zero flag and position
+	extrn	maxrec
+	lxi	h,0+128			;default max rec size
+	shld	maxrec
+	extrn	tempst,temppt
+	lxi	h,tempst
+	shld	temppt
+	extrn	prmstk,prmprv
+	lxi	h,prmstk		;initialize parameter block chain
+	shld	prmprv
+	lhld	cpment+1		;get last loc in memory
+	shld	memsiz			;use as default
+;
+;
+; the following code scans a cp/m command line for basic.
+; the format of the command is:
+;
+; basic <file name>[/m:<topmem>][/f:<files>]
+;
+;*
+	mvi	a,3			;default files
+	sta	maxfil			;by setting maxfil=3
+	lxi	h,zerob			;point at zero byte
+	shld	cpmfil			;so if re-initailize ok
+	lda	comagn			;have we already read command line
+	ora	a			;and got error?
+	jnz	errcmd			;then default
+	inr	a			;make non-zero
+	sta	comagn			;store back non-zero for next time
+tbuff	set	cpmwrm+128		;where cp/m command buffer is located
+	lxi	h,tbuff			;point to first char of command buffer
+	mov	a,m			;which contains # of chars in command
+	ora	a			;is there a command?
+	shld	cpmfil			;save pointer to this zero
+	jz	doncmd			;nothing in command buffer
+	mov	b,m			;and [b]
+	inx	h			;point to first char in buffer
+tbflp:	mov	a,m			;get char from buffer
+	dcx	h			;back up pointer
+	mov	m,a			;store char back
+	inx	h			;now advance char to one place
+	inx	h			;after previous posit.
+	dcr	b			;decrement count of chars to move
+	jnz	tbflp			;keep moving chars
+	dcx	h			;back up pointer
+endcmd:	mvi	m,0			;store terminator for chrget (0)
+	shld	cpmfil			;save pointer to new zero (old destroyed)
+	lxi	h,tbuff-1		;point to char before buffer
+	call	chrgtr			;ignore leading spaces
+	ora	a
+	jz	doncmd			;end of command
+	cpi	swtchr			;is it a slash
+	jz	fndslh			;yes
+	dcx	h			;back up pointer
+	mvi	m,34			;store double quote
+	shld	cpmfil			;save pointer to start of file name
+	inx	h			;bump pointer
+isslh:	cpi	swtchr			;option?
+	jz	fndslh			;yes
+	call	chrgtr			;skip over char in file name
+	ora	a			;set cc's
+	jnz	isslh			;keep looking for option
+	jmp	doncmd			;thats eit
+fndslh:	mvi	m,0			;store terminator over "/"
+scansw:	call	chrgtr			;get char after slash
+scans1:
+	cpi	'S'			;is it /s: ? (set max record size)
+	jz	wass			;yes
+	cpi	'M'			;memory option
+	push	psw			;save indicator
+	jz	wasm			;was memory option
+	cpi	'F'			;files option
+	jnz	snerr##			;not "m" or "f" error
+wasm:	call	chrgtr			;get next char
+	call	synchr
+	db	':'			;colon should follow
+	call	cnsget			;get value following colon
+	pop	psw			;get back m/f flag
+	jz	mem			;was memory option
+	mov	a,d			;files cant be .gt. 255
+	ora	a			;set cc's
+	jnz	fcerr##			;function call error
+	mov	a,e			;get low byte
+	cpi	16			;must be .lt. 16
+	jnc	fcerr##
+	sta	maxfil			;store in # of files
+	jmp	fok			;done
+mem:	xchg				;put value in [d,e]
+	shld	memsiz			;save into memsize
+	xchg				;get back text pointer
+fok:	dcx	h			;rescan last char
+	call	chrgtr			;by calling chrget
+	jz	doncmd			;end of command
+	call	synchr
+	db	swtchr			;slash should follow
+	jmp	scans1			;scan next switch
+wass:	call	chrgtr			;get char after "s"
+	call	synchr
+	db	':'			;make sure colon follows
+	call	cnsget			;get value following colon
+	xchg				;save it
+	shld	maxrec
+	xchg	
+	jmp	fok			;continue scanning
+zerob:	db	0			;zero byte
+cpmfil:	ds	2			;pointer to basic load file
+comagn:	db	0			;we havent scanned command yet
+errcmd:
+doncmd:
+askmem:
+usedef:	dcx	h
+	lhld	memsiz			;get size of memory
+	push	h			;also save for later
+					;set up default string space
+	pop	h
+	dcx	h			;always leave top byte unused because
+					;val(string) makes byte in memory
+					;beyond last char of string=0
+	shld	memsiz			;save in real memory size
+	dcx	h			;one lower is stktop
+	push	h			;save it on stack
+					;keep all functions
+;
+; disk initialization routine
+; setup  file info blocks
+; the number of each and information for
+; getting to pointers to each is stored. no locations are
+; initialized, this is done by nodsks, first closing all files.
+; the number of files is the file pointer table
+;
+	public	dskdat
+dskdat	set	endio			;start data after all code
+asksk:
+	lda	maxfil			;get highest file #
+	lxi	h,dskdat		;get start of memory
+	extrn	filpt1,filptr,maxfil,dblk.c
+	shld	filpt1
+	lxi	d,filptr		;point to table to set up
+	sta	maxfil			;remember how many files
+	inr	a			;always file 0 for internal use
+	lxi	b,dblk.c		;size of a file info block plus $code
+lopflb:	xchg				;[h,l] point into pointer block
+	mov	m,e			;store the pointer at this file
+	inx	h
+	mov	m,d
+	inx	h
+	xchg	
+	dad	b			;[h,l] point to next info block
+	extrn	fnzblk
+	push	h			;save [h,l]
+	lhld	maxrec			;get max record size
+	lxi	b,fnzblk		;get size of other stuff
+	dad	b
+	mov	b,h
+	mov	c,l			;result to [b,c]
+	pop	h			;restore [h,l]
+	dcr	a			;are there more?
+	jnz	lopflb
+havfns:					;text always preceded by zero
+					;store it
+	inx	h			;increment pointer
+	shld	txttab			;save bottom of memory
+	shld	savstk			;we restore stack when errors
+	pop	d			;get  current memsiz
+	mov	a,e			;calc total free/8
+	sub	l
+	mov	l,a
+	mov	a,d
+	sbb	h
+	mov	h,a
+	jc	omerr
+	mvi	b,3			;divide by 2 three times
+shflf3:	ora	a
+	mov	a,h
+	rar	
+	mov	h,a
+	mov	a,l
+	rar	
+	mov	l,a
+	dcr	b
+	jnz	shflf3
+	mov	a,h			;see how much
+	cpi	2			;if less than 512 use 1 eighth
+	jc	smlstk
+	lxi	h,0+512
+smlstk:	mov	a,e			;subtract stack size from top mem
+	sub	l
+	mov	l,a
+	mov	a,d
+	sbb	h
+	mov	h,a
+	jc	omerr
+	shld	memsiz
+	xchg	
+	shld	topmem
+	shld	fretop			;reason uses this...
+	sphl				;set up new stack
+	shld	savstk
+	lhld	txttab
+	xchg	
+	call	reason
+	mov	a,l			;subtract memsiz-txttab
+	sub	e
+	mov	l,a
+	mov	a,h
+	sbb	d
+	mov	h,a
+	dcx	h			;since two zeros exist between
+	dcx	h			;txttab and strend, adjust
+	push	h			;save number of bytes to print
+	lxi	h,heding		;get heading ("basic version...")
+	call	strout			;print it
+	pop	h			;restore number of bytes to print
+	call	linprt			;print # of bytes free
+	lxi	h,words			;type the heading
+	call	strout			;"bytes free"
+	lxi	h,strout
+	shld	repini+1
+	call	crdo			;print carriage return
+	extrn	readyr
+	lxi	h,readyr
+	extrn	jmpini
+	shld	jmpini+1
+	jmp	initsa
+auttxt:	db	13
+	db	10
+	db	10
+	dc	'OWNED BY MICROSOFT'
+	db	13
+	db	10
+	db	0
+words:	dc	' bytes free'
+	db	0
+heding:
+	db	26
+	dc	'BASIC 5.2'
+	db	13
+	db	10
+	dc	'MAGIC OPERATING SYSTEM'
+	db	13
+	db	10
+	dc	'    COPYRIGHT 1982 (C)'
+	db	13,10
+	db	32,32,32,32,32
+	db	0
+lastwr::				;last word of system code+1
+	ds	70+300*0+200*0+30*0	;space for temp stack
+tstack:
+					;make sure last word punched is ok
+	end	
+

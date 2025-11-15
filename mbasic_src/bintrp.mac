@@ -1,0 +1,6028 @@
+	subttl	common file for basic interpreter
+	.sall	
+conto	set	15			;character to supress output (usually control-o)
+dbltrn	set	0			;for double precision transcendentals
+	if2	
+	.printx	/extended/
+	.printx	/lpt/
+	.printx	/cpm disk/
+	.printx	/z80/
+	.printx	/fast/
+	.printx	/5.0 features/
+	.printx	/ansi compatible/
+	endif
+clmwid	set	14			;make comma columns fourteen characters
+datpsc	set	128			;number of data bytes in disk sector
+linln	set	80			;terminal line length 
+lptlen	set	132
+buflen	set	255			;long lines
+namlen	set	40			;maximum length name -- 3 to 127
+numlev	set	0*20+19+2*5		;number of stack levels reserved
+					;by an explicit call to getstk
+strsiz	set	4
+strsiz	set	3
+numtmp	set	3			;number of string temporaries
+numtmp	set	10
+md.rnd	set	3			;the mode number for random files
+md.sqi	set	1			;the mode number for sequential input files
+					;never written into a file
+md.sqo	set	2			;the mode for sequential output files
+					;and program files
+cpmwrm	set	0			;cp/m warm boot addr
+cpment	set	cpmwrm+5		;cp/m bdos call addr
+	cseg	
+trurom	set	0
+	page
+	title	basic mpu 8080/8085/z80/8086 (5.11)   /bill gates/paul allen
+	subttl	version 5.11 -- not many features to go
+;
+;
+;--------- ---- -- ---- ----- --- ---- -----
+;copyright 1975 by bill gates and paul allen
+;--------- ---- -- ---- ----- --- ---- -----
+;
+;originally written on the pdp-10 from
+;february 9 to  april 9 1975
+;
+;bill gates wrote a lot of stuff.
+;paul allen wrote other stuff and fast code.
+;monte davidoff wrote the math package (f4i.mac).
+;
+;*
+	.xlist	
+	.list	
+	extrn	sin,log,exp,cos,tan,atn
+	public	frmeql
+bufofs	set	0
+bufofs	set	2			;must crunch into earlier place for single quote
+kbflen	set	buflen+(buflen/4)	;make krunch buffer somewhat
+					;larger than source buffer (buf)
+	extrn	name
+	public	main,list,frmevl,nxtcon
+	public	givint
+	public	gtbytc,equltk,oldtxt
+	public	vartab,gone,docnvf
+	public	doasig
+	public	fndfor
+	public	ready,snerr,repini,intidx,intid2
+	public	nxtcon,datptr,errfin,userr,savtxt,nferr,oldtxt
+	extrn	outdo,inchri,inlin,crdo,crdonz,strcmp,fininl,ppswrt
+	extrn	bltu,bltuc,clear,clearc,gtmprt,islet,islet2,ptrget
+	extrn	qinlin,scrtch,stkini,runc,resfin,ptrgt2,stpend,dim
+	extrn	dcompr,synchr
+	public	getypr
+	public	endbuf,buf
+	public	strend,curlin,dv0err,chrgtr
+	public	errst,errdd,errbs,temp2,aryta2,dimflg,arytab,tstop
+	public	errcn
+	public	frmevl,givdbl,eval,frmprn,errls,subflg,temp3,errso
+	public	vartab,temp8
+	extrn	sign
+	extrn	open,close,prgfin,filind
+	extrn	filinp,clsall,filout,indskc
+	extrn	lrun
+	extrn	filget
+	public	atnfix,cosfix,sinfix,tanfix
+	extrn	fpwr
+	extrn	inxhrt
+	extrn	sgn,abs,sqr,fdiv,fsub,fmult,rnd;mathpk internals
+	extrn	qint,zero,move,fout,fin,fcomp,fadd,pushf,int
+	extrn	ends,next,restore,scrath,cont,fre
+	extrn	movfr,movrf,movrm,inprt,linprt,fdivt
+	extrn	movfm,movmf,floatr,fadds
+	public	fac,faclo,overr,newstt,retvar,oldlin,frmchk,brktxt,chrcon
+	public	fndlin,arytab,fini
+	extrn	inrart,neg,float
+	extrn	stroui,bserr
+	public	error,fcerr
+	public	topmem
+	public	valtyp
+	public	tempst,temppt
+	public	tmerr
+	public	memsiz,fretop
+	extrn	cat,frefac,frestr,fretmp,fretms,garba2,strcpy,getstk
+	extrn	strlit,strlt2,strlt3,strlti,strout,strprt,stroui
+	extrn	getspa,putnew,stop,omerr,reason
+	extrn	instr
+	extrn	prinus,puttmp
+	extrn	fouth,fouto,stro$,strh$
+	extrn	str$,len,asc,chr$,left$,right$,mid$,val
+	public	errlin,onelin,oneflg,trcflg,buflin,lisprt
+	extrn	strng$,space$,ton,toff
+	extrn	signs
+	public	fbuffr,minutk,plustk,linget,intxt,reddy
+	extrn	ttychr
+	public	txttab
+	extrn	init
+	extrn	tstack
+	extrn	rndx
+	extrn	umult
+	extrn	signc,pophrt
+	public	cntofl
+	extrn	finlpt
+	public	lptpos,prtflg
+	extrn	consih,vmovfa,vmovaf,isign,conia,getbcd,vsign,vdfacs
+	extrn	vmovmf,vmovfm,frcint,frcsng,frcdbl,vneg,pufout,dcxbrt,iadd
+	extrn	isub,imult,icomp,ineg,dadd,dsub,dmult,ddiv,dcomp,vint
+	extrn	findbl,ineg2
+	extrn	idiv,imod
+	extrn	vmove,valint,valsng,frcstr,chkstr,makint
+	public	prmlen,prmln2,prmflg,nofuns,parm1,temp9
+	public	dfaclo,arg,arglo,temp2,temp3,deftbl,funact
+	extrn	move1
+	public	strprn
+	public	caltty
+	extrn	scnsem
+	public	$for,$while,errwe,errwh,endfor
+	extrn	while,wend
+	extrn	calls
+	extrn	prochk
+	extrn	write
+	public	data,userr,subflg,temp9,$merge,scnlin
+	public	$commo
+	public	$delet
+	extrn	chain,common
+					;reader input
+	public	start
+start:
+	public	jmpini
+jmpini:	jmp	init			;init is the intialization routine
+					;it sets up certain
+					;locations deletes functions if
+					;desired and
+					;changes this to jmp ready
+					;warm start for isis
+					;of the routine to convert [a,b]
+					;to a floating point number in the fac
+	dw	frcint			;turn fac into an integer in [h,l]
+	dw	makint			;turn [h,l] into a value in the fac
+					;set valtyp for integer
+	page
+	subttl	rom version initalization, and constants
+	page
+	subttl	dispatch tables, reserved word tables
+;define some equivalences in case lptsw & cassw off
+cload	set	snerr
+csave	set	snerr
+; these macro calls define the reswrd values
+; and the table dispatch for statements and functions
+; statements:
+stmdsp:					;marks start of statement list
+q	set	128
+	dw	ends
+q	set	q+1
+$end	set	q
+	dw	for
+q	set	q+1
+$for	set	q
+	dw	next
+q	set	q+1
+$next	set	q
+	dw	datas
+q	set	q+1
+$data	set	q
+	dw	input
+q	set	q+1
+$input	set	q
+	dw	dim
+q	set	q+1
+$dim	set	q
+	dw	read
+q	set	q+1
+$read	set	q
+	dw	let
+q	set	q+1
+$let	set	q
+	dw	goto
+q	set	q+1
+$goto	set	q
+	dw	run
+q	set	q+1
+$run	set	q
+	dw	ifs
+q	set	q+1
+$if	set	q
+	dw	restore
+q	set	q+1
+$resto	set	q
+	dw	gosub
+q	set	q+1
+$gosub	set	q
+	dw	return
+q	set	q+1
+$retur	set	q
+	dw	rem
+q	set	q+1
+$rem	set	q
+	dw	stop
+q	set	q+1
+$stop	set	q
+	dw	print
+q	set	q+1
+$print	set	q
+	dw	clear
+q	set	q+1
+$clear	set	q
+	dw	list
+q	set	q+1
+$list	set	q
+	dw	scrath
+q	set	q+1
+$new	set	q
+; 8k and above statements
+	dw	ongoto
+q	set	q+1
+$on	set	q
+	extrn	null
+	dw	null
+q	set	q+1
+$null	set	q
+	dw	fnwait
+q	set	q+1
+$wait	set	q
+	dw	def
+q	set	q+1
+$def	set	q
+	dw	poke
+q	set	q+1
+$poke	set	q
+	dw	cont
+q	set	q+1
+$cont	set	q
+	dw	csave
+q	set	q+1
+$csave	set	q
+	dw	cload
+q	set	q+1
+$cload	set	q
+	dw	fnout
+q	set	q+1
+$out	set	q
+	dw	lprint
+q	set	q+1
+$lprin	set	q
+	dw	llist
+q	set	q+1
+$llist	set	q
+; len2 and above statements
+	public	iogor
+iogor:					;dont allow console if code deleted
+	ds	2
+q	set	q+1			;pad the hole
+	dw	width
+q	set	q+1
+$width	set	q
+	dw	elses
+q	set	q+1
+$else	set	q
+	dw	ton
+q	set	q+1
+$tron	set	q
+	dw	toff
+q	set	q+1
+$troff	set	q
+	extrn	swap
+	dw	swap
+q	set	q+1
+$swap	set	q
+	dw	erase
+q	set	q+1
+$erase	set	q
+	extrn	erase
+	extrn	edit
+	dw	edit
+q	set	q+1
+$edit	set	q
+	dw	errors
+q	set	q+1
+$error	set	q
+	dw	resume
+q	set	q+1
+$resum	set	q
+	dw	delete
+q	set	q+1
+$delet	set	q
+	dw	auto
+q	set	q+1
+$auto	set	q
+	dw	reseq
+q	set	q+1
+$renum	set	q
+; extended and above
+	dw	defstr
+q	set	q+1
+$defst	set	q
+	dw	defint
+q	set	q+1
+$defin	set	q
+	dw	defrea
+q	set	q+1
+$defsn	set	q
+	dw	defdbl
+q	set	q+1
+$defdb	set	q
+	dw	line
+q	set	q+1
+$line	set	q
+;***********
+; padding initially set to 10
+q	set	q+2
+	ds	4
+	dw	while
+q	set	q+1
+$while	set	q
+	dw	wend
+q	set	q+1
+$wend	set	q
+	dw	calls
+q	set	q+1
+$call	set	q
+	dw	write
+q	set	q+1
+$write	set	q
+	dw	datas
+q	set	q+1
+$commo	set	q
+	dw	chain
+q	set	q+1
+$chain	set	q
+	dw	option
+q	set	q+1
+$optio	set	q
+	dw	random
+q	set	q+1
+$rando	set	q
+; disk and above
+	ds	2
+q	set	q+1
+	extrn	system
+	dw	system
+q	set	q+1
+$syste	set	q
+q	set	q+1
+	ds	2
+	extrn	field,get,put,load,merge
+	dw	open
+q	set	q+1
+$open	set	q
+	dw	field
+q	set	q+1
+$field	set	q
+	dw	get
+q	set	q+1
+$get	set	q
+	dw	put
+q	set	q+1
+$put	set	q
+	dw	close
+q	set	q+1
+$close	set	q
+	dw	load
+q	set	q+1
+$load	set	q
+	dw	merge
+q	set	q+1
+$merge	set	q
+	extrn	files
+	dw	files
+q	set	q+1
+$files	set	q
+	extrn	name
+	dw	name
+q	set	q+1
+$name	set	q
+	extrn	kill,lset,rset,save
+	dw	kill
+q	set	q+1
+$kill	set	q
+	dw	lset
+q	set	q+1
+$lset	set	q
+	dw	rset
+q	set	q+1
+$rset	set	q
+	dw	save
+q	set	q+1
+$save	set	q
+	extrn	reset
+	dw	reset
+q	set	q+1
+$reset	set	q
+; ncr version ones.
+numcmd	set	q-$end+1
+; tokens
+;**********
+;padding initially set to 2 between last disk statement and tokens
+;padding set to 1 - feb 4, 1977
+q	set	q+1
+;q must be set so tokens start at right place
+q	set	q+1
+$to	set	q
+$to	set	q
+q	set	q+1
+$then	set	q
+thentk	set	q
+q	set	q+1
+$tab	set	q
+tabtk	set	q
+q	set	q+1
+$step	set	q
+steptk	set	q
+q	set	q+1
+$usr	set	q
+usrtk	set	q
+; 8k functions
+q	set	q+1
+$fn	set	q
+fntk	set	q
+q	set	q+1
+$spc	set	q
+spctk	set	q
+q	set	q+1
+$not	set	q
+nottk	set	q
+; len2 tokens
+q	set	q+1
+$erl	set	q
+erltk	set	q
+q	set	q+1
+$err	set	q
+erctk	set	q
+; extended tokens
+q	set	q+1
+$strin	set	q
+q	set	q+1
+$using	set	q
+usintk	set	q
+q	set	q+1
+$instr	set	q
+insrtk	set	q
+q	set	q+1
+$dummy	set	q
+sngqtk	set	q
+q	set	q+1
+$varpt	set	q
+;ncr version tokens
+;spcdsk tokens
+q	set	q+1
+$inkey	set	q
+	public	$inkey
+q	set	q-1			;make sure doesnt interfere with reswrds below
+;*********
+;padding initially set to 18
+q	set	q+18
+; operators
+q	set	q+1
+$dummy	set	q
+greatk	set	q
+q	set	q+1
+$dummy	set	q
+equltk	set	q
+q	set	q+1
+$dummy	set	q
+lesstk	set	q
+q	set	q+1
+$dummy	set	q
+plustk	set	q
+q	set	q+1
+$dummy	set	q
+minutk	set	q
+q	set	q+1
+$dummy	set	q
+multk	set	q
+q	set	q+1
+$dummy	set	q
+divtk	set	q
+; 8k operators
+q	set	q+1
+$dummy	set	q
+exptk	set	q
+q	set	q+1
+$and	set	q
+q	set	q+1
+$or	set	q
+; extended operators
+q	set	q+1
+$xor	set	q
+q	set	q+1
+$eqv	set	q
+q	set	q+1
+$imp	set	q
+q	set	q+1
+$mod	set	q
+q	set	q+1
+$dummy	set	q
+idivtk	set	q
+lstopk	set	q+1-plustk
+; functions
+q	set	128
+fundsp:
+	dw	left$
+q	set	q+1
+$left$	set	q
+onefun	set	q
+	dw	right$
+q	set	q+1
+$right	set	q
+	dw	mid$
+q	set	q+1
+$mid$	set	q
+midtk	set	q
+	dw	sgn
+q	set	q+1
+$sgn	set	q
+	dw	vint
+q	set	q+1
+$int	set	q
+	dw	abs
+q	set	q+1
+$abs	set	q
+sqrfix:
+	dw	sqr
+q	set	q+1
+$sqr	set	q
+sqrtk	set	q
+	dw	rnd
+q	set	q+1
+$rnd	set	q
+sinfix:
+	dw	sin
+q	set	q+1
+$sin	set	q
+; 8k functions
+	dw	log
+q	set	q+1
+$log	set	q
+	dw	exp
+q	set	q+1
+$exp	set	q
+cosfix:
+	dw	cos
+q	set	q+1
+$cos	set	q
+tanfix:
+	dw	tan
+q	set	q+1
+$tan	set	q
+atnfix:
+	dw	atn
+q	set	q+1
+$atn	set	q
+atntk	set	q
+	dw	fre
+q	set	q+1
+$fre	set	q
+	dw	fninp
+q	set	q+1
+$inp	set	q
+	dw	pos
+q	set	q+1
+$pos	set	q
+	dw	len
+q	set	q+1
+$len	set	q
+	dw	str$
+q	set	q+1
+$str$	set	q
+	dw	val
+q	set	q+1
+$val	set	q
+	dw	asc
+q	set	q+1
+$asc	set	q
+	dw	chr$
+q	set	q+1
+$chr$	set	q
+	dw	peek
+q	set	q+1
+$peek	set	q
+	dw	space$
+q	set	q+1
+$space	set	q
+	dw	stro$
+q	set	q+1
+$oct$	set	q
+	dw	strh$
+q	set	q+1
+$hex$	set	q
+	dw	lpos
+q	set	q+1
+$lpos	set	q
+lasnum	set	q
+; extended functions
+	dw	frcint
+q	set	q+1
+$cint	set	q
+	dw	frcsng
+q	set	q+1
+$csng	set	q
+	dw	frcdbl
+q	set	q+1
+$cdbl	set	q
+	extrn	fixer
+	dw	fixer
+q	set	q+1
+$dummy	set	q
+$fix	set	q
+;ncr version functions
+; disk functions
+;**********
+;padding initially set to 10
+q	set	q+10
+	ds	20
+	ds	2			;pad in the hole
+q	set	q+1
+	extrn	cvi,cvs,cvd
+	dw	cvi
+q	set	q+1
+$cvi	set	q
+	dw	cvs
+q	set	q+1
+$cvs	set	q
+	dw	cvd
+q	set	q+1
+$cvd	set	q
+	ds	2			;pad in the hole
+q	set	q+1
+	extrn	eof,loc
+	dw	eof
+q	set	q+1
+$eof	set	q
+	dw	loc
+q	set	q+1
+$loc	set	q
+	extrn	lof
+	dw	lof
+q	set	q+1
+$lof	set	q
+	extrn	mki$,mks$,mkd$
+	dw	mki$
+q	set	q+1
+$mki$	set	q
+	dw	mks$
+q	set	q+1
+$mks$	set	q
+	dw	mkd$
+q	set	q+1
+$mkd$	set	q
+					;end disk functions
+; spcdsk functions
+; the following tables are the alphabetic dispatch table
+; followed by the reserved word table itself
+alptab:
+	dw	atab
+	dw	btab
+	dw	ctab
+	dw	dtab
+	dw	etab
+	dw	ftab
+	dw	gtab
+	dw	htab
+	dw	itab
+	dw	jtab
+	dw	ktab
+	dw	ltab
+	dw	mtab
+	dw	ntab
+	dw	otab
+	dw	ptab
+	dw	qtab
+	dw	rtab
+	dw	stab
+	dw	ttab
+	dw	utab
+	dw	vtab
+	dw	wtab
+	dw	xtab
+	dw	ytab
+	dw	ztab
+; the following macro is for functions. it doesnt turn the token bit 7 on.
+reslst:
+atab:
+	db	'N'
+	db	'D' or 128
+	db	$and
+	db	'B'
+	db	'S' or 128
+	db	$abs-128
+	db	'T'
+	db	'N' or 128
+	db	$atn-128
+	db	'S'
+	db	'C' or 128
+	db	$asc-128
+	db	'UT'
+	db	'O' or 128
+	db	$auto
+	db	0
+btab:
+	db	0
+ctab:
+	db	'LOS'
+	db	'E' or 128
+	db	$close
+	db	'ON'
+	db	'T' or 128
+	db	$cont
+	db	'LEA'
+	db	'R' or 128
+	db	$clear
+	db	'IN'
+	db	'T' or 128
+	db	$cint-128
+	db	'SN'
+	db	'G' or 128
+	db	$csng-128
+	db	'DB'
+	db	'L' or 128
+	db	$cdbl-128
+	db	'V'
+	db	'I' or 128
+	db	$cvi-128
+	db	'V'
+	db	'S' or 128
+	db	$cvs-128
+	db	'V'
+	db	'D' or 128
+	db	$cvd-128
+	db	'O'
+	db	'S' or 128
+	db	$cos-128
+	db	'HR'
+	db	'$' or 128
+	db	$chr$-128
+	db	'AL'
+	db	'L' or 128
+	db	$call
+	db	'OMMO'
+	db	'N' or 128
+	db	$commo
+	db	'HAI'
+	db	'N' or 128
+	db	$chain
+	db	0
+dtab:
+	db	'AT'
+	db	'A' or 128
+	db	$data
+	db	'I'
+	db	'M' or 128
+	db	$dim
+	db	'EFST'
+	db	'R' or 128
+	db	$defst
+	db	'EFIN'
+	db	'T' or 128
+	db	$defin
+	db	'EFSN'
+	db	'G' or 128
+	db	$defsn
+	db	'EFDB'
+	db	'L' or 128
+	db	$defdb
+	db	'E'
+	db	'F' or 128
+	db	$def
+	db	'ELET'
+	db	'E' or 128
+	db	$delet
+	db	0
+etab:
+	db	'N'
+	db	'D' or 128
+	db	$end
+	db	'LS'
+	db	'E' or 128
+	db	$else
+	db	'RAS'
+	db	'E' or 128
+	db	$erase
+	db	'DI'
+	db	'T' or 128
+	db	$edit
+	db	'RRO'
+	db	'R' or 128
+	db	$error
+	db	'R'
+	db	'L' or 128
+	db	$erl
+	db	'R'
+	db	'R' or 128
+	db	$err
+	db	'X'
+	db	'P' or 128
+	db	$exp-128
+	db	'O'
+	db	'F' or 128
+	db	$eof-128
+	db	'Q'
+	db	'V' or 128
+	db	$eqv
+	db	0
+ftab:
+	db	'O'
+	db	'R' or 128
+	db	$for
+	db	'IEL'
+	db	'D' or 128
+	db	$field
+	db	'ILE'
+	db	'S' or 128
+	db	$files
+	db	''
+	db	'N' or 128
+	db	$fn
+	db	'R'
+	db	'E' or 128
+	db	$fre-128
+	db	'I'
+	db	'X' or 128
+	db	$fix-128
+	db	0
+gtab:
+	db	'OT'
+	db	'O' or 128
+	db	$goto
+	db	'O'
+	db	' '
+	db	'T'
+	db	'O'+128
+	db	$goto
+	db	'OSU'
+	db	'B' or 128
+	db	$gosub
+	db	'E'
+	db	'T' or 128
+	db	$get
+	db	0
+htab:
+	db	'EX'
+	db	'$' or 128
+	db	$hex$-128
+	db	0
+itab:
+	db	'NPU'
+	db	'T' or 128
+	db	$input
+	db	''
+	db	'F' or 128
+	db	$if
+	db	'NST'
+	db	'R' or 128
+	db	$instr
+	db	'N'
+	db	'T' or 128
+	db	$int-128
+	db	'N'
+	db	'P' or 128
+	db	$inp-128
+	db	'M'
+	db	'P' or 128
+	db	$imp
+	db	'NKEY'
+	db	'$' or 128
+	db	$inkey
+	db	0
+jtab:
+	db	0
+ktab:
+	db	'IL'
+	db	'L' or 128
+	db	$kill
+	db	0
+ltab:
+	db	'E'
+	db	'T' or 128
+	db	$let
+	db	'IN'
+	db	'E' or 128
+	db	$line
+	db	'OA'
+	db	'D' or 128
+	db	$load
+	db	'SE'
+	db	'T' or 128
+	db	$lset
+	db	'PRIN'
+	db	'T' or 128
+	db	$lprin
+	db	'LIS'
+	db	'T' or 128
+	db	$llist
+	db	'PO'
+	db	'S' or 128
+	db	$lpos-128
+	db	'IS'
+	db	'T' or 128
+	db	$list
+	db	'O'
+	db	'G' or 128
+	db	$log-128
+	db	'O'
+	db	'C' or 128
+	db	$loc-128
+	db	'E'
+	db	'N' or 128
+	db	$len-128
+	db	'EFT'
+	db	'$' or 128
+	db	$left$-128
+	db	'O'
+	db	'F' or 128
+	db	$lof-128
+	db	0
+mtab:
+	db	'ERG'
+	db	'E' or 128
+	db	$merge
+	db	'O'
+	db	'D' or 128
+	db	$mod
+	db	'KI'
+	db	'$' or 128
+	db	$mki$-128
+	db	'KS'
+	db	'$' or 128
+	db	$mks$-128
+	db	'KD'
+	db	'$' or 128
+	db	$mkd$-128
+	db	'ID'
+	db	'$' or 128
+	db	$mid$-128
+	db	0
+ntab:
+	db	'EX'
+	db	'T' or 128
+	db	$next
+	db	'UL'
+	db	'L' or 128
+	db	$null
+	db	'AM'
+	db	'E' or 128
+	db	$name
+	db	'E'
+	db	'W' or 128
+	db	$new
+	db	'O'
+	db	'T' or 128
+	db	$not
+	db	0
+otab:
+	db	'U'
+	db	'T' or 128
+	db	$out
+	db	''
+	db	'N' or 128
+	db	$on
+	db	'PE'
+	db	'N' or 128
+	db	$open
+	db	''
+	db	'R' or 128
+	db	$or
+	db	'CT'
+	db	'$' or 128
+	db	$oct$-128
+	db	'PTIO'
+	db	'N' or 128
+	db	$optio
+	db	0
+ptab:
+	db	'U'
+	db	'T' or 128
+	db	$put
+	db	'OK'
+	db	'E' or 128
+	db	$poke
+	db	'RIN'
+	db	'T' or 128
+	db	$print
+	db	'O'
+	db	'S' or 128
+	db	$pos-128
+	db	'EE'
+	db	'K' or 128
+	db	$peek-128
+	db	0
+qtab:
+	db	0
+rtab:
+	db	'EA'
+	db	'D' or 128
+	db	$read
+	db	'U'
+	db	'N' or 128
+	db	$run
+	db	'ESTOR'
+	db	'E' or 128
+	db	$resto
+	db	'ETUR'
+	db	'N' or 128
+	db	$retur
+	db	'E'
+	db	'M' or 128
+	db	$rem
+	db	'ESUM'
+	db	'E' or 128
+	db	$resum
+	db	'SE'
+	db	'T' or 128
+	db	$rset
+	db	'IGHT'
+	db	'$' or 128
+	db	$right-128
+	db	'N'
+	db	'D' or 128
+	db	$rnd-128
+	db	'ENU'
+	db	'M' or 128
+	db	$renum
+	db	'ESE'
+	db	'T' or 128
+	db	$reset
+	db	'ANDOMIZ'
+	db	'E' or 128
+	db	$rando
+	db	0
+stab:
+	db	'TO'
+	db	'P' or 128
+	db	$stop
+	db	'WA'
+	db	'P' or 128
+	db	$swap
+	db	'AV'
+	db	'E' or 128
+	db	$save
+	db	'P'
+	db	'C'
+	db	'('+128
+	db	spctk
+	db	'TE'
+	db	'P' or 128
+	db	$step
+	db	'G'
+	db	'N' or 128
+	db	$sgn-128
+	db	'Q'
+	db	'R' or 128
+	db	$sqr-128
+	db	'I'
+	db	'N' or 128
+	db	$sin-128
+	db	'TR'
+	db	'$' or 128
+	db	$str$-128
+	db	'TRING'
+	db	'$' or 128
+	db	$strin
+	db	'PACE'
+	db	'$' or 128
+	db	$space-128
+	db	'YSTE'
+	db	'M' or 128
+	db	$syste
+	db	0
+ttab:
+	db	'RO'
+	db	'N' or 128
+	db	$tron
+	db	'ROF'
+	db	'F' or 128
+	db	$troff
+	db	'A'
+	db	'B'
+	db	'('+128
+	db	tabtk
+	db	''
+	db	'O' or 128
+	db	$to
+	db	'HE'
+	db	'N' or 128
+	db	$then
+	db	'A'
+	db	'N' or 128
+	db	$tan-128
+	db	0
+utab:
+	db	'SIN'
+	db	'G' or 128
+	db	$using
+	db	'S'
+	db	'R' or 128
+	db	$usr
+	db	0
+vtab:
+	db	'A'
+	db	'L' or 128
+	db	$val-128
+	db	'ARPT'
+	db	'R' or 128
+	db	$varpt
+	db	0
+wtab:
+	db	'IDT'
+	db	'H' or 128
+	db	$width
+	db	'AI'
+	db	'T' or 128
+	db	$wait
+	db	'HIL'
+	db	'E' or 128
+	db	$while
+	db	'EN'
+	db	'D' or 128
+	db	$wend
+	db	'RIT'
+	db	'E' or 128
+	db	$write
+	db	0
+xtab:
+	db	'O'
+	db	'R' or 128
+	db	$xor
+	db	0
+ytab:
+	db	0
+ztab:
+	db	0
+spctab:
+	db	'+'+128
+	db	plustk
+	db	'-'+128
+	db	minutk
+	db	'*'+128
+	db	multk
+	db	'/'+128
+	db	divtk
+	db	'^'+128
+	db	exptk
+	db	'\'+128
+	db	idivtk
+	db	''''+128
+	db	sngqtk
+	db	62+128
+	db	greatk
+	db	'='+128
+	db	equltk
+	db	60+128
+	db	lesstk
+	db	0
+optab:	db	121			;operator table contains
+					;precedence followed by
+					;the routine address
+	db	121
+	db	124
+	db	124
+	db	127
+	db	80
+	db	70
+	db	60			;precedence of "xor"
+	db	50			;precedence of "eqv"
+	db	40			;precedence of "imp"
+	db	122			;precedence of "mod"
+	db	123			;precedence of "idiv"
+;
+; used by assignment code to force the right hand value
+; to correspond to the value type of the variable being
+; assigned to.
+;
+frctbl:	dw	frcdbl
+	ds	2
+	dw	frcint
+	dw	chkstr
+	dw	frcsng
+;
+; these tables are used after the decision has been made
+; to apply an operator and all the necessary conversion has
+; been done to match the two argument types (applop)
+;
+dbldsp:	dw	dadd			;double precision routines
+	dw	dsub
+	dw	dmult
+	dw	ddiv
+	dw	dcomp
+opcnt	set	(($-dbldsp)/2)-1
+sngdsp:	dw	fadd			;single precision routines
+	dw	fsub
+	dw	fmult
+	dw	fdiv
+	dw	fcomp
+intdsp:	dw	iadd			;integer routines
+	dw	isub
+	dw	imult
+	dw	intdiv
+	dw	icomp
+	page
+	subttl	error message table
+q	set	-2
+errtab:
+	db	0
+q	set	0
+q	set	q+1
+	db	'NEXT WITHOUT FOR',0
+errnf	set	q
+q	set	q+1
+	db	'SYNTAX ERROR',0
+errsn	set	q
+q	set	q+1
+	db	'RETURN WITHOUT GOSUB',0
+errrg	set	q
+q	set	q+1
+	db	'OUT OF DATA',0
+errod	set	q
+q	set	q+1
+	db	'ILLEGAL FUNCTION CALL',0
+errfc	set	q
+	public	ovrmsg
+ovrmsg:
+q	set	q+1
+	db	'OVERFLOW',0
+errov	set	q
+q	set	q+1
+	db	'OUT OF MEMORY',0
+	public	errom
+errom	set	q
+q	set	q+1
+	db	'UNDEFINED LINE NUMBER',0
+errus	set	q
+q	set	q+1
+	db	'SUBSCRIPT OUT OF RANGE',0
+errbs	set	q
+q	set	q+1
+	db	'DUPLICATE DEFINITION',0
+errdd	set	q
+	public	divmsg
+divmsg:
+q	set	q+1
+	db	'DIVISION BY ZERO',0
+errdv0	set	q
+q	set	q+1
+	db	'ILLEGAL DIRECT',0
+errid	set	q
+q	set	q+1
+	db	'TYPE MISMATCH',0
+errtm	set	q
+q	set	q+1
+	db	'OUT OF STRING SPACE',0
+errso	set	q
+q	set	q+1
+	db	'STRING TOO LONG',0
+errls	set	q
+q	set	q+1
+	db	'STRING FORMULA TOO COMPLEX',0
+errst	set	q
+q	set	q+1
+	db	'CAN''T CONTINUE',0
+errcn	set	q
+q	set	q+1
+	db	'UNDEFINED USER FUNCTION',0
+erruf	set	q
+q	set	q+1
+	db	'NO RESUME',0
+errnr	set	q
+q	set	q+1
+	db	'RESUME WITHOUT ERROR',0
+errre	set	q
+q	set	q+1
+	db	'UNPRINTABLE ERROR',0
+errue	set	q
+q	set	q+1
+	db	'MISSING OPERAND',0
+errmo	set	q
+	public	errlbo
+q	set	q+1
+	db	'LINE BUFFER OVERFLOW',0
+errlbo	set	q
+q	set	q+1
+	db	'?',0
+q	set	q+1
+	db	'?',0
+q	set	q+1
+	db	'FOR WITHOUT NEXT',0
+errfn	set	q
+q	set	q+1
+	db	'?',0
+q	set	q+1
+	db	'?',0
+q	set	q+1
+	db	'WHILE WITHOUT WEND',0
+errwh	set	q
+q	set	q+1
+	db	'WEND WITHOUT WHILE',0
+errwe	set	q
+q	set	q+1
+	db	'GRAPHICS STATEMENT NOT IMPLEMENTED',0
+errgs	set	q
+nondsk	set	q			;last non disk error.
+q	set	49			;disk errors start at 50.
+dskerr	set	q			;first disk error
+q	set	q+1
+	db	'FIELD OVERFLOW',0
+	public	errfov
+errfov	set	q
+q	set	q+1
+	db	'INTERNAL ERROR',0
+	public	errier
+errier	set	q
+q	set	q+1
+	db	'BAD FILE NUMBER',0
+	public	errbfn
+errbfn	set	q
+q	set	q+1
+	db	'FILE NOT FOUND',0
+	public	errfnf
+errfnf	set	q
+q	set	q+1
+	db	'BAD FILE MODE',0
+errbfm	set	q
+q	set	q+1
+	db	'FILE ALREADY OPEN',0
+errfao	set	q
+q	set	q+1
+	db	'?',0			;pad in hole
+dskloc	set	$+6
+q	set	q+1
+	db	'DISK I/O ERROR',0
+errioe	set	q
+q	set	q+1
+	db	'FILE ALREADY EXISTS',0
+errfae	set	q
+q	set	q+1
+	db	'?',0
+q	set	q+1
+	db	'?',0			;pad in hole
+q	set	q+1
+	db	'DISK FULL',0
+errdfl	set	q
+q	set	q+1
+	db	'INPUT PAST END',0
+errrpe	set	q
+q	set	q+1
+	db	'BAD RECORD NUMBER',0
+errbrn	set	q
+q	set	q+1
+	db	'BAD FILE NAME',0
+errnmf	set	q
+q	set	q+1
+	db	'?',0
+errmmm	set	q
+q	set	q+1
+	db	'DIRECT STATEMENT IN FILE',0
+	public	errfdr
+errfdr	set	q
+q	set	q+1
+	db	'TOO MANY FILES',0
+errtmf	set	q
+lsterr	set	q+1			;last error used for range checks in len2
+	page
+	subttl	constants for rom basic i/o, rndx, fdiv, usrgo
+	page
+	subttl	low segment -- ram -- ie this stuff is not constant
+;
+; this is the "volatile" storage area and none of it
+; can be kept in rom. any constants in this area cannot
+; be kept in a rom, but must be loaded in by the 
+; program instructions in rom.
+;
+usrtab:
+	dw	fcerr
+	dw	fcerr
+	dw	fcerr
+	dw	fcerr
+	dw	fcerr
+	dw	fcerr
+	dw	fcerr
+	dw	fcerr
+	dw	fcerr
+	dw	fcerr			;set up dispatches
+	public	nulcnt
+nulcnt:	db	1			;store here the number of nulls
+					;to print after crlf
+	public	charc
+charc:	db	0			;iscntc stores eaten char here when not a ^c
+	public	errflg
+errflg:	db	0			;used to save the error number so edit can be
+					;called on "syntax error"
+	public	lptlst
+lptlst:	db	0			;last line printer operation. zero means linefeed
+					;non-zero means print command (okia only)
+lptpos:	db	1			;position of lpt print head
+prtflg:	db	0			;whether output goes to lpt
+	public	nlppos,lptsiz
+lncmps	set	(((lptlen/clmwid)-1)*clmwid);last comma field posit
+nlppos:	db	lncmps			;last col # beyond which no more comma fields
+lptsiz:	db	lptlen			;default line printer width
+	public	linlen
+linlen:	db	linln			;line length
+ncmpos	set	(((linln/clmwid)-1)*clmwid);position beyond which there are
+					;no more comma fields	
+clmlst:	db	ncmpos			;position of last comma column
+					;non-zero means send output to lpt
+	public	rubsw
+rubsw:	db	0			;rubout switch =1 inside
+					;the processing of a rubout (inlin)
+cntofl:	db	0			;supress output flag
+					;non-zero means supress
+					;reset by "input",ready and errors
+					;complemented by input of ^o
+	public	ptrfil
+ptrfil:	dw	0			;pointer to data block of current file
+					;used by disk and ncr cassette code
+topmem:
+	dw	tstack+100		;top location to use for the stack
+					;initially set up by init
+					;according to memory size
+					;to allow for 50 bytes of string space.
+					;changed by a clear command with
+					;an argument.
+curlin:	dw	0+65534			;current line #
+					;set to 65534 in pure version during init execution
+					;set to 65535 when direct statements execute
+txttab:	dw	tstack+1		;pointer to beginning of text
+					;doesn't change after being
+					;setup by init.
+	public	overri
+overri:	dw	ovrmsg			;address of message to print (overflow)
+					;data segment again
+;
+;	end of initialized part of ram
+;
+;
+; disk data storage area
+;
+	public	lstfre,maxtrk,dskmod,filpt1,filptr,maxfil
+lstfre:	ds	2			;free place in directory
+maxtrk:	ds	1			;allocate inside this track
+dskmod:	ds	1			;mode of file just looked up
+					;zero if file was just created
+filpt1:	ds	2			;[filptr] always refetched from here
+filptr:	ds	32			;pointers to data blocks for each file
+maxfil:	ds	1			;highest file number allowed
+	public	namcnt,nambuf,namtmp
+namcnt:	ds	1			;the number of character beyond #2 in a var name
+nambuf:	ds	namlen-2		;storage for chars beyond #2. used in ptrget
+namtmp:	ds	2			;temp storage during name save at indlop
+	public	dirtmp,filna2,filnam
+dirtmp	set	cpmwrm+128		;use cpm default buffer in low memory
+filna2:	ds	16			;used by name code
+filnam:	ds	33			;because cpm must have buffer for directory reads
+;	cp/m 1.4 and 2.x support
+	public	cpmvrn,cpmrea,cpmwri
+cpmvrn:	ds	1			;cp/m version number (#0 is 2.x)
+cpmrea:	ds	1			;cp/m read call
+cpmwri:	ds	1			;cp/m write call
+	db	':'			;a colon for restarting input
+kbuf:	ds	kbflen			;this is the krunch buffer
+	public	bufmin
+bufmin:	db	44			;a comma (preload or rom)
+					;used by input statement since the
+					;data pointer always starts on a
+					;comma or terminator
+buf:	ds	buflen+1		;type in stored here
+					;direct statements execute out of
+					;here. remember "input" smashes buf.
+					;must be at a lower address
+					;than dsctmp or assignment of string
+					;values in direct statements won't copy
+					;into string space -- which it must
+	ds	2			;allow for single quote in big line
+endbuf:	ds	1			;place to stop big lines
+	public	ttypos
+ttypos:	ds	1			;store terminal position here
+dimflg:	ds	1			;in getting a pointer to a variable
+					;it is important to remember whether it
+					;is being done for "dim" or not
+					;dimflg and valtyp must be
+					;consecutive locations
+valtyp:	ds	1			;the type indicator
+					;in the 8k 0=numeric 1=string
+oprtyp:					;used to store operator number
+					;in the extended momentarily before
+					;operator application (applop)
+dores:	ds	1			;whether can or can't crunch res'd words
+					;turned on in the 8k when "data"
+					;being scanned by crunch so unquoted
+					;strings won't be crunched.
+donum:	ds	1			;flag for crunch =0 means
+					;numbers allowed, (floating,int, dbl)
+					;1 means numbers allowed, krunch by calling linget
+					;-1 (377) means numbers disallowed 
+					;(scanning variable name)
+contxt:	ds	2			;saved text pointer used by chrget
+					;to save the text pointer after constant
+					;has been scanned.
+consav:	ds	1			;the saved token for a constant
+					;after chrget has been called
+contyp:	ds	1			;saved constant valtype
+conlo:	ds	4			;saved constant value
+	ds	4			;extra four bytes for double precision
+memsiz:	ds	2			;highest location in memory
+temppt:	ds	2			;pointer at first free temp descriptor
+					;initialized to point to tempst
+tempst:	ds	strsiz*numtmp		;storage for numtmp temp descriptors
+	public	dsctmp,dscptr
+dsctmp:	ds	strsiz			;string functions build answer descriptor here
+					;must be after tempst and before parm1
+dscptr	set	$-2			;where string address is store in dsctmp
+fretop:	ds	2			;top of string free space
+temp3:	ds	2			;used to store the address of the end of
+					;string arrays in garbage collection
+					;and used momentarily by frmevl
+					;used in extended by fout and
+					;user defined functions
+					;array variable handling temporary
+temp8:	ds	2			;7/3/79 now used by garbage collection
+					;not temp3 due to conflict
+endfor:	ds	2			;saved text pointer at end of "for" statement
+datlin:	ds	2			;data line # -- remember for errors
+subflg:	ds	1			;flag whether subscripted variable allowed
+					;"for" and user-defined function
+					;pointer fetching turn
+					;this on before calling ptrget
+					;so arrays won't be detected.
+					;stkini and ptrget clear it.
+	public	usflg
+usflg:
+flginp:	ds	1			;flags whether we are doing "input"
+					;or a read
+	public	temp
+temp:	ds	2			;temporary for statement code
+					;newstt saves [h,l] here for input and ^c
+					;"let" saves variable
+					;pointers here for "for"
+					;"next" saves its text pointer here
+					;clearc saves [h,l] here
+	public	ptrflg
+ptrflg:	ds	1			;=0 if no line numbers converted
+					;to pointers, non zero if pointers exist.
+	public	autflg
+autflg:	ds	1			;flag to inicate auto command in
+					;progress =0 if not, non-zero if so.
+autlin:	ds	2			;current line being inserted by auto
+autinc:	ds	2			;the auto increment
+savtxt:	ds	2			;place where newstt saves text pointer
+					;for "resume" statement
+	public	savstk,errlin
+savstk:	ds	2			;newstt saves stack here before
+					;so that error revery can
+					;can restore the stack when an
+					;error occurs
+errlin:	ds	2			;line number where last error occured.
+	public	dot
+dot:	ds	2			;keeps current line for edit & list
+errtxt:	ds	2			;text pointer for use by "resume"
+	public	onelin
+onelin:	ds	2			;the line to goto when an error 
+					;occurs
+oneflg:	ds	1			;oneflg=1 if were are executing
+					;an error trap routine, otherwise 0
+temp2:	ds	2			;formula evaluator temp
+					;must be preserved by operators
+					;used in extended by fout and
+					;user-defined functions
+					;array variable handler temporary
+oldlin:	ds	2			;old line number (setup by ^c,"stop"
+					;or "end" in a program)
+oldtxt:	ds	2			;old text pointer
+					;points at statement to be executed next
+vartab:	ds	2			;pointer to start of simple
+					;variable space
+					;updated whenever the size of the
+					;program changes, set to [txttab]
+					;by scratch ("new").
+arytab:	ds	2			;pointer to beginning of array
+					;table
+					;incremented by 6 whenever
+					;a new simple variable is found, and
+					;set to [vartab] by clearc.
+strend:	ds	2			;end of storage in use
+					;increased whenever a new array
+					;or simple variable is encountered
+					;set to [vartab] by clearc.
+datptr:	ds	2			;pointer to data. initialized to point
+					;at the zero in front of [txttab]
+					;by "restore" which is called by clearc
+					;updated by execution of a "read"
+deftbl:	ds	26			;this gives the default valtyp for each
+					;letter of the alphabet
+					;it is set up by "clear" and changed by
+					;"defstr" "defint" "defsng" "defdbl" and used
+					;by ptrget when ! # % or $ don't follow
+					;a varaible name
+;
+; ram storage for user defined function parameter information
+;
+prmsiz	set	100			;number of bytes for definition block
+prmstk:	dw	0			;previous definition block on stack
+					;block (for garbage collection)
+prmlen:	ds	2			;the number of bytes in the active table
+parm1:	ds	prmsiz			;the active parameter definition table
+	public	prmprv,prmstk		;allow init to initialize this constant
+prmprv:	dw	prmstk			;the pointer at the previous parameter
+					;block (for garbage collection)
+prmln2:	ds	2			;size of parameter block being built
+parm2:	ds	prmsiz			;place to keep parameters being made
+prmflg:	ds	1			;used by ptrget to flag if parm1 has been searched
+aryta2:	ds	2			;stopping point for simple search
+					;(either [arytab] or parm1+[prmlen])
+nofuns:	ds	1			;zero if no functions active. saves time in simple search
+temp9:	ds	2			;garbage collection temp to chain through parameter blocks
+funact:	ds	2			;count of active functions
+	public	inppas,nxttxt,nxtflg,fvalsv,nxtlin,optval,optflg
+inppas:	ds	1			;flag telling whether input is scanning first or
+					;second time. zero if first.
+nxttxt:	ds	2			;used to save text pointer at start of next
+nxtflg:	ds	1			;zero if "for" is using next code
+					;to check for empty loop
+fvalsv:	ds	4			;use to store the start value of the loop variable
+					;since ansi says start and end are evaluated
+					;before assignment takes place
+nxtlin:	ds	2			;the line number during scan for "next"
+optval:	ds	1			;zero for option base 0 one for option base 1
+optflg:	ds	1			;non-zero if "option base" has been scanned
+	public	patch
+patch:	ds	30			;thirty bytes of patch space
+	public	tempa
+tempa:	ds	2			;misc temp used by call and list
+	public	savfre
+savfre:	ds	2			;fretop saved here by chain
+	public	maxrec
+maxrec:	ds	2			;maximum record size
+	public	proflg
+proflg:	ds	1			;non-zero if we have loaded a protected file w/o passwrd
+	public	chnflg,chnlin,mdlflg,mrgflg,cmeptr,cmsptr
+mrgflg:	ds	1			;non-zero if chain w/ merge in progress
+mdlflg:	ds	1			;non-zero i chain w/ merge and delete in progress
+cmeptr:	ds	2			;pointer tto end line to delete
+cmsptr:	ds	2			;pointer to start line to delete
+chnflg:	ds	1			;non-zero if chain in progress
+chnlin:	ds	2			;destination line in new program
+	public	swptmp
+swptmp:	ds	4			;value of first "swap" variable stored here
+	ds	4			;enough room for double precision
+trcflg:	ds	1			;zero means no trace in progress
+; this is the ram termporary area for the math package routines
+;
+;the floating accumulator
+	ds	1			;[temporary least significant byte]
+dfaclo:	ds	4			;[four lowest orders for double precision]
+faclo:	ds	2
+	ds	1
+					;[middle order of mantissa]
+					;[high order of mantissa]
+fac:	ds	2			;[exponent]
+					;[temporary complement of sign in msb]
+	public	fansii
+	public	flgovc,ovcstr
+flgovc:	ds	1			;overflow print flag,=0,1 print 
+					;further =1 change to 2
+ovcstr:	ds	1			;place to store overflow flag after fin
+fansii:	ds	1			;flag to force fixed output (see ansi)
+	ds	1			;[temporary least significant byte]
+arglo:	ds	7			;[location of second argument for double
+arg:	ds	1			; precision]
+					;for intel formats must have space for
+					;11 bits of exponent
+fbuffr:	ds	13			;buffer for fout
+	ds	43-13			;the last 3 locations are temp for rom fmult
+	public	fmltt1,fmltt2
+fmltt1	set	fbuffr+40
+fmltt2	set	fbuffr+41
+	page
+	subttl	text constants for print out
+;
+; needed for messages in all versions
+;
+intxt:	dc	' in '
+	db	0
+reddy:
+	db	10
+	dc	'READY'
+	db	13
+	db	10
+	db	0
+brktxt:	dc	'break'
+	db	0
+	page
+	subttl	general storage management routines - fndfor, bltu, getstk
+;
+; find a "for" entry on the stack with the variable pointer
+; passed in [d,e].
+;
+fndfor:	lxi	h,4+0			;ignoring everyones "newstt"
+					;and the return address of this
+	dad	sp			;subroutine, set [h,l]=sp
+looper:
+	mov	a,m			;see what type of thing is on the stack
+	inx	h
+whlsiz	set	6
+	cpi	$while
+	jnz	stksrc
+	lxi	b,0+whlsiz
+	dad	b
+	jmp	looper
+stksrc:
+	cpi	$for			;is this stack entry a "for"?
+	rnz				;no so ok
+	mov	c,m
+	inx	h			;do equivalent of pushm / xthl
+	mov	b,m
+	inx	h
+	push	h			;put h  on
+	mov	l,c			;push b / xthl is slower
+	mov	h,b
+	mov	a,d			;for the "next" statment without an argument
+	ora	e			;we match on anything
+	xchg				;make sure we return [d,e]
+	jz	popgof			;pointing to the variable
+	xchg	
+	call	dcompr
+forsiz	set	13
+forsiz	set	14
+forsiz	set	forsiz+2
+	public	forszc
+forszc	set	0+forsiz
+popgof:	lxi	b,forszc		;to wipe out a "for" entry
+	pop	h
+	rz				;if variable in this entry matches
+					;return with [h,l] pointing the bottom
+					;of the entry
+	dad	b
+	jmp	looper			;now pointing to the start of the next
+					;entry. see if its a "for" entry
+					;and if the variable matches
+	page
+	subttl	error handling
+; this routine is called to reset the stack if basic is
+; externally stopped and then restarted.
+	public	readyr
+readyr:	lxi	b,stprdy		;address go to, also pop off garbage stack entry.
+	jmp	ereset			;reset stack, goto ready.
+prgend:	lhld	curlin			;get current line #
+	mov	a,h			;see if direct
+	ana	l			;and together
+	inr	a			;set cc's
+	jz	endcnj			;if direct done, allow for debugging purposes
+	lda	oneflg			;see if in on error
+	ora	a			;set cc
+	mvi	e,errnr			;"no resume" error
+	jnz	error			;yes, forgot resume
+	extrn	endcon
+endcnj:	jmp	endcon			;no, let it end
+derdfl:	mvi	e,errdfl
+	public	derdfl
+	db	1			;"disk full"
+derioe:	mvi	e,errioe
+	public	derioe
+	db	1			;"disk i/o error"
+derbfm:	mvi	e,errbfm
+	public	derbfm
+	db	1			;"bad file mode"
+derfnf:	mvi	e,errfnf
+	public	derfnf
+	db	1			;"file not found"
+derbfn:	mvi	e,errbfn
+	public	derbfn
+	db	1			;"bad file number"
+derier:	mvi	e,errier
+	public	derier
+	db	1			;"internal error"
+derrpe:	mvi	e,errrpe
+	public	derrpe
+	db	1			;"read past end"
+derfao:	mvi	e,errfao
+	public	derfao
+	db	1			;"file already open"
+dernmf:	mvi	e,errnmf
+	public	dernmf
+	db	1			;"bad file name"
+derbrn:	mvi	e,errbrn
+	public	derbrn
+	db	1			;"bad record number"
+derfov:	mvi	e,errfov
+	public	derfov
+	db	1			;"field overflow"
+dertmf:	mvi	e,errtmf
+	public	dertmf
+	db	1			;"too many files"
+derfae:	mvi	e,errfae
+	public	derfae
+	db	1			;"file already exists"
+	org	$-1
+	jmp	error
+datsne:	lhld	datlin			;get data line
+	shld	curlin			;make it current line
+snerr:	mvi	e,errsn			;"syntax error"
+	db	1q			;"lxi b," over the next 2
+dv0err:	mvi	e,errdv0		;division by zero
+	db	1q			;"lxi b," over the next 2
+nferr:	mvi	e,errnf			;"next without for" error
+	public	dderr
+	db	1q			;"lxi b," over the next two bytes
+dderr:	mvi	e,errdd			;"redimensioned variable"
+	db	1q			;"lxi b," over the next 2 bytes
+uferr:	mvi	e,erruf			;"undefined function" error
+	db	1q			;"lxi b," over the next two
+reerr:	mvi	e,errre			;"resume without error"
+	db	1q			;"lxi b," over the next two
+overr:	mvi	e,errov			;set overflow error code
+	db	1q			;"lxi b," over next two
+moerr:	mvi	e,errmo			;type mismatch error
+	db	1q			;"lxi	b," over the next two
+tmerr:	mvi	e,errtm			;type mismatch error
+error:
+	lhld	curlin			;get current line number
+	shld	errlin			;save it for erl variable
+	xra	a			;clear chain flag in case of error
+	sta	mrgflg			;also merge flag
+	sta	chnflg			;so it doesnt try to chain
+	mov	a,h			;only set up dot if it isnt direct
+	ana	l
+	inr	a
+	jz	erresm
+	shld	dot			;save it for edit or list
+erresm:	lxi	b,errmor		;get return address in [b,c]
+	public	ereset
+	extrn	stkerr
+ereset:	lhld	savstk			;get a good stack back
+	jmp	stkerr			;jump into stkini
+errmor:	pop	b			;pop off fndfor stopper
+	mov	a,e			;[a]=error number
+	mov	c,e			;also save it for later restore
+	sta	errflg			;save it so we know whether to call "edit"
+	lhld	savtxt			;get saved text pointer
+	shld	errtxt			;save for resume.
+	xchg				;save savtxt ptr
+	lhld	errlin			;get error line #
+	mov	a,h			;test if direct line
+	ana	l			;set cc's
+	inr	a			;sets zero if direct line (65535)
+	jz	ntmdcn			;if direct, dont modify oldtxt & oldlin
+	shld	oldlin			;set oldlin=errlin.
+	xchg				;get back savtxt
+	shld	oldtxt			;save in oldtxt.
+ntmdcn:	lhld	onelin			;see if we are trapping errors.
+	mov	a,h			;by checking for line zero.
+	ora	l			;is it?
+	xchg				;put line to go to in [d,e]
+	lxi	h,oneflg		;point to error flag
+	jz	notrap			;sorry, no trapping...
+	ana	m			;a is non-zero, setzero if oneflg zero
+	jnz	notrap			;if flag already set, force error
+	dcr	m			;if already in error routine, force error
+	xchg				;get line pointer in [h,l]
+	jmp	gone4			;go directly to newstt code
+notrap:	xra	a			;a must be zero for contro
+	mov	m,a			;reset oneflg
+	mov	e,c			;get back error code
+	sta	cntofl			;force output
+	call	crdonz			;crlf
+	lxi	h,errtab		;get start of error table
+	mov	a,e			;get error code
+	cpi	lsterr			;is it past last error?
+	jnc	uperr			;yes, too big to print
+	cpi	dskerr+1		;disk error?
+	jnc	ntder2			;yes
+	cpi	nondsk+1		;is it between last normal & first disk?
+	jc	ntderr			;yes, ok to print it
+uperr:	mvi	a,errue+dskerr-nondsk	;print "unprintable error"
+ntder2:	sui	dskerr-nondsk		;fix offset into table of messages
+	mov	e,a			;save back error code
+ntderr:
+					;on "syntax error"s
+lepskp:	call	rem			;skip an error message
+	inx	h			;skip over this error message
+	dcr	e			;decrement error count
+	jnz	lepskp			;skip some more
+	push	h			;save text pointer
+	lhld	errlin			;get error line number
+	xthl				;get back error text pointer
+errfin:
+	mov	a,m			;get 1st char of error
+	cpi	'?'			;padded error?
+	jnz	errfn1			;no,print
+	pop	h			;get line # off stack
+	lxi	h,errtab
+	jmp	uperr			;make unprintable error
+errfn1:
+	call	strout			;print message
+	pop	h			;restore line number
+	lxi	d,0+65534		;is init executing?
+	call	dcompr
+	cz	crdo			;do crlf
+	extrn	systme
+	jz	systme			;system error exit
+					;exit to os
+					;if so, restart it
+	mov	a,h			;see if in direct mode
+	ana	l
+	inr	a			;zero says direct mode
+	cnz	inprt			;print line number in [h,l]
+; now fall into main interpreter loop
+	page
+	subttl	stprdy, ready, main, chead
+;
+; for "list" command stopping
+; and for returning from a failed "cver"
+; and to correct a direct gosub which does input
+;
+	public	stprdy
+	db	76q			;skip the next byte with "mvi a,0"
+stprdy:	pop	b
+ready:
+	call	finlpt			;print any left overs
+	xra	a
+	sta	cntofl			;force output
+	call	prgfin			;finish output of a file
+	call	crdonz			;if not already at left, send crlf
+	lxi	h,reddy			;"ok" crlf crlf
+repini:
+					;by the init code. this is here so after
+					;errors during init, init is restarted
+	call	cpmwrm			;errors in cp/m initialization, return to cp/m
+	lda	errflg			;see if it was a "syntax error"
+	sui	errsn
+	extrn	erredt
+	cz	erredt			;"edit" the bad line
+main:	lxi	h,0+65535
+	shld	curlin			;setup curlin for direct mode
+	lda	autflg			;in an auto command?
+	ora	a			;set cc's
+	jz	ntauto			;no, reuglar mode
+	lhld	autlin			;get current auto line
+	push	h			;save away for later use
+	call	linprt			;print the line #
+	pop	d			;get it back
+	push	d			;save back again
+	call	fndlin			;see if it exists
+	mvi	a,'*'			;char to print if line already exists
+	jc	auteln			;doesnt exist
+	mvi	a,' '			;print space
+auteln:	call	outdo			;print char
+	call	inlin			;read a line
+	pop	d			;get line # off stack
+	jnc	autgod			;if no control-c, proceed
+	xra	a			;clear autflg
+	sta	autflg			;by setting it to zero
+	jmp	ready			;print ready message
+autres:	xra	a
+	sta	autflg			;clear auto flag
+	jmp	autstr			;and enter line
+autgod:	lhld	autinc			;get increment
+	dad	d			;add increment to this line
+	jc	autres			;check for pathetic case
+	push	d			;save line number #
+	lxi	d,0+65529		;check for line # too big
+	call	dcompr
+	pop	d			;get back line #
+	jnc	autres			;if too big, quit
+	shld	autlin			;save in next line
+autstr:
+					;set non-zero condition codes (see edit)
+	lda	buf			;get char from buffer
+	ora	a			;is it null line?
+	jz	main			;yes, leave line alone
+	extrn	editrt
+	jmp	editrt			;jump into edit code
+ntauto:
+	call	inlin			;get a line from tty
+	jc	main			;ignore ^c s
+	call	chrgtr			;get the first
+	inr	a			;see if 0 saving the carry flag
+	dcr	a
+	jz	main			;if so, a blank line was input
+	push	psw			;save status indicator for 1st character
+	call	linget			;read in a line #
+	call	baksp			;back up the pointer
+	mov	a,m			;get the char
+	cpi	' '			;character a space?
+	cz	inxhrt			;then eat past it
+					;one space always printed after line #
+	public	edent
+edent:	push	d			;save line #
+	call	crunch			;crunch the line down
+	pop	d			;restore line #
+	pop	psw			;was there a line #?
+	shld	savtxt			;for resuming a direct stmt
+					;restore text pointer
+	extrn	dirdo
+	jnc	dirdo			;make sure we're not reading a file
+	push	d
+	push	b			;save line # and character count
+	call	prochk			;dont allow any funny business with existing pgm
+	call	chrgtr			;remember if this line is
+	ora	a			;set the zero flag on zero
+					;lines that start with ":" should not be
+					;ignored
+	push	psw			;blank so we don't insert it
+	xchg				;save this line # in dot
+	shld	dot
+	xchg	
+	call	fndlin			;get a pointer to the line
+	jc	lexist			;line exists, delete it
+	pop	psw			;get flag says whether line blank
+	push	psw			;save back
+	jz	userr			;trying to delete non-existant line, error
+	ora	a			;clear flag that says line exists
+lexist:	push	b			;save the pointer
+	push	psw			;save registers
+	push	h			;save [h,l]
+	call	deptr			;get rid of ptrs in pgm
+	pop	h			;get back pointer to next line
+	pop	psw			;get back psw
+	pop	b			;restore pointer to this line
+	push	b			;save back again
+	cc	del			;delete the line
+nodel:	pop	d			;pop pointer at place to insert
+	pop	psw			;see if this line had
+					;anything on it
+	push	d			;save place to start fixing links
+	jz	fini			;if not don't insert
+	pop	d			;get rid of start of link fix
+	lda	chnflg			;only changet fretop if not chaining
+	ora	a
+	jnz	levfre			;leave fretop alone
+	lhld	memsiz			;delete all strings
+	shld	fretop			;so reason doesnt use them
+levfre:
+	lhld	vartab			;current end
+	xthl				;[h,l]=character count. vartab
+					;onto the stack
+	pop	b			;[b,c]=old vartab
+	push	h			;save count of chars to move
+	dad	b
+	push	h			;save new vartab
+	call	bltu
+	pop	h			;pop off vartab
+	shld	vartab			;update vartab
+	xchg	
+	mov	m,h			;fool chead with non-zero link
+	pop	b			;restore count of chars to move
+	pop	d			;get line # off stack
+	push	h			;save start of place to fix links
+	inx	h			;so it doesn't think
+					;this link is the
+					;end of the program
+	inx	h
+	mov	m,e
+	inx	h			;put down line #
+	mov	m,d
+	inx	h
+	lxi	d,kbuf			;move line frm kbuf to program area
+	dcx	b			;fix up count of chars to move
+	dcx	b			;(dont include line # & link)
+	dcx	b			;
+	dcx	b
+mloopr:	ldax	d			;now transfering line
+					;in from buf
+	mov	m,a
+	inx	h
+	inx	d
+	dcx	b			;decrement char count by 1
+	mov	a,c			;test for count exhausted
+	ora	b			;by seeing if [b,c]=0
+	jnz	mloopr
+fini:
+	pop	d			;get start of link fixing area
+	call	chead			;fix links
+	lxi	h,dirtmp		;don't allow zero to be closed
+	mvi	m,0			;not sequential output
+	shld	filptr
+	lhld	ptrfil			;get file pointer, could be zero
+	shld	temp2			;save it
+	call	runc			;do clear & set up stack 
+	lhld	filpt1			;reset [filptr]
+	shld	filptr
+	lhld	temp2			;reset [ptrfil]
+	shld	ptrfil
+	jmp	main			;go to main code
+	public	linker
+linker:
+	lhld	txttab
+	xchg	
+;
+; chead goes through program storage and fixes
+; up all the links. the end of each
+; line is found by searching for the zero at the end.
+; the double zero link is used to detect the end of the program
+;
+chead:	mov	h,d			;[h,l]=[d,e]
+	mov	l,e
+	mov	a,m			;see if end of chain
+	inx	h			;bump pointer
+	ora	m			;2nd byte
+	rz	
+	inx	h			;fix h to start of text
+	inx	h
+czloop:	inx	h			;bump pointer
+	mov	a,m			;get byte
+czloo2:	ora	a			;set cc's
+	jz	czlin			;end of line, done.
+	cpi	dblcon+1		;embedded constant?
+	jnc	czloop			;no, get next
+	cpi	11			;is it linefeed or below?
+	jc	czloop			;then skip past
+	call	chrgt2			;get constant
+	call	chrgtr			;get over it
+	jmp	czloo2			;go back for more
+czlin:	inx	h			;make [h,l] point after text
+	xchg				;switch temp
+	mov	m,e			;do first byte of fixup
+	inx	h			;advance pointer
+	mov	m,d			;2nd byte of fixup
+	jmp	chead			;keep chaining til done
+	page
+	subttl	scnlin, fndlin - scan line range and find line # in program
+;
+; scnlin scans a line range of
+; the form  #-# or # or #- or -# or blank
+; and then finds the first line in the range
+;
+scnlin:	lxi	d,0			;assume start list at zero
+	push	d			;save initial assumption
+	jz	alllst			;if finished, list it all
+	pop	d			;we are going to grab a #
+	call	linspc			;get a line #. if none, returns zero
+	push	d			;save first
+	jz	snglin			;if only # then done.
+	call	synchr
+	db	minutk			;must be a dash.
+alllst:	lxi	d,0+65530		;assume max end of range
+	cnz	linspc			;get the end of range
+	jnz	snerr			;must be terminator
+snglin:	xchg				;[h,l] = final
+	pop	d			;get initial in [d,e]
+fndln1:	xthl				;put max on stack, return addr to [h,l]
+	push	h			;save return address back
+;
+; fndlin searches the program text for the line
+; whose line # is passed in [d,e]. [d,e] is preserved.
+; there are three possible returns:
+;
+;	1) zero flag set. carry not set.  line not found.
+;	   no line in program greater than one sought.
+;	   [b,c] points to two zero bytes at end of program.
+;	   [h,l]=[b,c]
+;
+;	2) zero, carry set. 
+;	   [b,c] points to the link field in the line
+;	   which is the line searched for.
+;	   [h,l] points to the link field in the next line.
+;
+;	3) non-zero, carry not set.
+;	   line not found, [b,c]  points to line in program
+;	   greater than one searched for.
+;	   [h,l] points to the link field in the next line.
+;
+fndlin:
+	lhld	txttab			;get pointer to start of text
+loop:
+	mov	b,h			;if exiting because of end of program,
+					;set [b,c] to point to double zeroes.
+	mov	c,l
+	mov	a,m			;get word pointer to
+	inx	h			;bump pointer
+	ora	m			;get 2nd byte
+	dcx	h			;go back
+	rz				;if zero then done
+	inx	h			;skip past and get the line #
+	inx	h
+	mov	a,m			;into [h,l] for comparison with
+	inx	h			;the line # being searched for
+	mov	h,m			;which is in [d,e]
+	mov	l,a
+	call	dcompr			;see if it matches or if we've gone too far
+	mov	h,b			;make [h,l] point to the start of the
+	mov	l,c			;line beyond this one, by picking
+	mov	a,m			;up the link that [b,c] points at
+	inx	h
+	mov	h,m
+	mov	l,a
+	cmc				;turn carry on
+	rz				;equal return
+	cmc				;make carry zero
+	rnc				;no match return (greater)
+	jmp	loop			;keep looping
+	page
+	subttl	pre fast crunch - compactification
+	page
+	page
+	subttl	fast crunch - compactification
+;
+; all "reserved" words are translated into single
+; one or two (if two, first is always 377 octal)
+; bytes with the msb on. this saves space and time
+; by allowing for table dispatch during execution.
+; therefore all statements appear together in the
+; reserved word list in the same
+; order they appear in in stmdsp.
+;
+; numeric constants are also converted to their internal
+; binary representation to improve execution speed
+; line numbers are also preceeded by a special token
+; so that line numbers can be converted to pointers at execution
+; time.
+crunch:	xra	a			;say expecting floating numbers
+	sta	donum			;set flag acordingly
+	sta	dores			;allow crunching
+	lxi	b,0+kbflen-3		;get length of krunch buffer
+					;minus three because of zeros at end
+	lxi	d,kbuf			;setup destination pointer
+kloop:	mov	a,m			;get character from buf
+					;setup b with a quote if it is a string
+	cpi	34			;quote sign? 
+	jz	strng			;yes, go to special string handling
+	cpi	' '			;space?
+	jz	stuffh			;just stuff away
+	ora	a			;end of line?
+	jz	crdone			;yes, done crunching
+	lda	dores			;in data statement and no crunch?
+	ora	a
+	mov	a,m			;get the character again
+	jnz	stuffh			;if no crunching just store
+					;the character
+	cpi	'?'			;a qmark?
+	mvi	a,$print
+	push	d			;save store pointer
+	push	b			;save char count
+	jz	notfn2			;then use a "print" token
+					;***5.11 dont allow following line #***
+	lxi	d,spctab		;assume we'll search special char table
+	call	makupl			;translate this char to upper case
+	call	islet2			;letter?
+	jc	tstnum			;not a letter, test for number
+	push	h			;save text pointer
+	lxi	b,notgos		;place to return if not funny go
+	push	b
+	cpi	'G'			;first check for "go "
+	rnz	
+	inx	h
+	call	makupl
+	cpi	'O'
+	rnz	
+	inx	h
+	call	makupl
+	cpi	' '
+	rnz	
+	inx	h
+gskpsp:	call	makupl			;now skip any number of spaces
+	inx	h
+	cpi	' '
+	jz	gskpsp
+	cpi	'S'
+	jz	ckgosu			;looks like "go sub" not "go to"
+	cpi	'T'
+	rnz	
+	call	makupl
+	cpi	'O'
+	mvi	a,$goto			;reswrd to use if matched
+	jmp	gputrs			;merge with "go sub"
+ckgosu:	call	makupl
+	cpi	'U'
+	rnz	
+	inx	h
+	call	makupl
+	cpi	'B'
+	mvi	a,$gosub
+gputrs:	rnz	
+	pop	b			;pop off the return address since matched
+	pop	b			;pop off the old text pointer
+	jmp	notfn2			;store the reserved word
+notgos:	pop	h
+	call	makupl			;get back the character
+	push	h			;resave the text pointer
+	lxi	h,alptab		;get pointer to alpha dispatch table
+	sui	'A'			;subtract alpha offset
+	add	a			;multiply by two
+	mov	c,a			;save offset in [c] for dad.
+	mvi	b,0			;make high part of offset zero
+	dad	b			;add to table address
+	mov	e,m			;set up pointer in [d,e]
+	inx	h
+	mov	d,m			;get high part of address
+	pop	h			;get back source pointer
+	inx	h			;point to char after first alpha
+tryaga:	push	h			;save txtptr to start of search area
+loppsi:
+	call	makupl			;translate this char to upper case
+	mov	c,a			;save char in [c]
+	ldax	d			;get byte from reserved word list
+	ani	127			;get rid of high bit
+	jz	notres			;if=0 then end of this chars reslt
+	inx	h			;bump source pointer
+	cmp	c			;compare to char from source line
+	jnz	lopskp			;if no match, search for next reswrd
+	ldax	d			;get reswrd byte again
+	inx	d			;bump reslst pointer
+	ora	a			;set cc's
+	jp	loppsi			;see if rest ofchars match
+	mov	a,c			;get last char of reswrd
+	cpi	'('			;if tab( or spc(, space need not follow
+	jz	isresw			;is a resword
+	ldax	d			;look after char
+	cpi	$fn			;function?
+	jz	isresw			;then no space need afterward
+	cpi	$usr			;or usr definition?
+	jz	isresw
+	call	makupl			;get next char in line (mc 6/22/80)
+	cpi	'.'			;is it a dot
+	jz	isvars			;yes
+	call	tstanm			;is it a letter immediately following reswrd
+isvars:	mvi	a,0			;set donum to -1
+	jnc	notres			;if alpha, cant be reserved word
+isresw:
+	pop	psw			;get rid of saved [h,l]
+	ldax	d			;get reswrd value
+	ora	a			;set cc's
+	jm	notfnt			;if minus, wasnt function token
+	pop	b			;get char count off stack
+	pop	d			;get deposit pointer off stack
+	ori	200o			;make high order bit one
+	push	psw			;save fn char
+	mvi	a,377o			;get byte which preceeds fns
+	call	krnsav			;save in krunch buffer
+	xra	a			;make a zero
+	sta	donum			;to reset donum (floatings allowed)
+	pop	psw			;get function token
+	call	krnsav			;store it
+	jmp	kloop			;keep krunching
+lopskp:	pop	h			;restore undefiled text pointer
+lopsk2:	ldax	d			;get a byte from reswrd list
+	inx	d			;bump reslst pointer
+	ora	a			;set cc's
+	jp	lopsk2			;not end of reswrd, keep skipping
+	inx	d			;point after token
+	jmp	tryaga			;try another reswrd
+notfnt:	dcx	h			;fix text pointer
+notfn2:	push	psw			;save char to be save d in krunch buffer
+	lxi	b,notrs2		;where to go if not line number reswrd
+	push	b			;save label address on stack
+	cpi	$resto			;restore can have following line number
+	rz	
+	cpi	$auto			;auto command
+	rz				;scan line range &crunch
+	cpi	$renum			;renumber?
+	rz	
+	cpi	$delet			;delete?
+	rz				;if so, crunch following line #
+	cpi	$edit			;edit?
+	rz	
+	cpi	$resum			;resume?
+	rz				;crunch following line number
+	cpi	$erl			;error line
+	rz				;crunch following line number
+					;so that if "erl=...then"
+					;will resequence properly
+					;this can make statements like 
+					;"print erl,1e20" do strange things
+	cpi	$else
+	rz				;if else, crunch following line #
+	cpi	$run			;run?
+	rz				;crunch following line #
+	cpi	$list			;list?
+	rz	
+	cpi	$llist			;lpt list?
+	rz				;crunch following line #'s
+	cpi	$goto			;if goto, crunch line #
+	rz	
+	cpi	$then			;crunch line #'s after 'then'
+	rz	
+	cpi	$gosub			;if gosub, crunch line #'s
+	rz	
+	pop	psw			;get rid of notrs2 return address
+	xra	a			;get a zero (expect usuall numbers)
+	db	302q			;"jnz" over next two bytes
+notrs2:	mvi	a,1			;say line #'s allowed.
+notrs6:	sta	donum			;save in flag
+	pop	psw			;restore character to save in krunch buffer
+	pop	b			;get back the character count
+	pop	d			;get stuff pointer back
+	cpi	$else			;have to put a hidden
+					;colon in front of "else"s
+	push	psw			;save current char ($else)
+	cz	krnsvc			;save ":" in crunch buffer
+	pop	psw			;get back token
+cksngq:	cpi	sngqtk			;single quoatation mark?
+	jnz	ntsngt
+	push	psw			;save sngqtk
+	call	krnsvc			;save ":" in crunch buffer
+	mvi	a,$rem			;store ":$rem" in front for execution
+	call	krnsav			;save it
+	pop	psw			;get sngqtk back
+	push	psw			;save back as terminator for strng
+	jmp	strng2			;stuff the rest of the line without crunching
+tstnum:	mov	a,m			;get char
+	cpi	'.'			;test for start of floating #
+	jz	numtry			;try inputting it as constant
+	cpi	'9'+1			;is it a digit?
+	jnc	srcspc			;no, try other things
+	cpi	'0'			;try lower end
+	jc	srcspc			;no try other possibilities
+numtry:	lda	donum			;test for numbers allowed
+	ora	a			;set cc's
+	mov	a,m			;get char if going to stuffh
+	pop	b			;restore char count
+	pop	d			;restore dep. pointer
+	jm	stuffh			;no, just stuff it (!)
+	jz	fltget			;if donum=0 then floating #'s allowed
+	cpi	'.'			;is it dot?
+	jz	stuffh			;yes, stuff it for heavens sake! (edit .)
+	mvi	a,lincon		;get line # token
+	call	krnsav			;save it
+	push	d			;save deposit pointer
+	call	linget			;get the line #.
+	call	baksp			;back up pointer to after last digit
+savint:	xthl				;exchange current [h,l] with saved [d,e]
+	xchg				;get saved [d,e] in [d,e]
+savi:	mov	a,l			;get low byte of value returned by linget
+	call	krnsav			;save the low byte of line #
+	mov	a,h			;get high byte
+popstf:	pop	h			;restore [h,l]
+	call	krnsav			;save it too
+	jmp	kloop			;eat some more
+fltget:	push	d			;save deposit pointer
+	push	b			;save char count
+	mov	a,m			;fin assumes char in [a]
+	call	fin			;read the #
+	call	baksp			;back up pointer to after last digit
+	pop	b			;restore char count
+	pop	d			;restore deposit pointer
+	push	h			;save text pointer
+	lda	valtyp			;get value type
+	cpi	2			;integer?
+	jnz	ntintg			;no
+	lhld	faclo			;get it
+	mov	a,h			;get high part
+	ora	a			;is it zero?
+	mvi	a,2			;restore int valtyp
+	jnz	ntintg			;then isnt single byte int
+	mov	a,l			;get low byte
+	mov	h,l			;get low byte in high byte to store
+	mvi	l,in2con		;get constant for 1 byte ints
+	cpi	10			;is it too big for a single byte constant?
+	jnc	savi			;too big, use single byte int
+	adi	onecon			;make single byte constant
+	jmp	popstf			;pop h & stuff away char
+ntintg:	push	psw			;save for later
+	rrc				;divide by two
+	adi	intcon-1		;add offset to get token
+	call	krnsav			;save the token
+	lxi	h,faclo			;get start pointer
+	call	getypr			;set cc's on valtype
+	jc	ntdbl			;if not double, start moving at faclo
+	lxi	h,dfaclo		;double, start moving at dfaclo
+ntdbl:	pop	psw			;restore count of bytes to move
+movcon:	push	psw			;save byte move count
+	mov	a,m			;get a byte
+	call	krnsav			;save it in krunch buffer
+	pop	psw			;get back count
+	inx	h			;bump pointer into fac
+	dcr	a			;move it down
+	jnz	movcon			;keep moving it
+	pop	h			;get back saved text pointer
+	jmp	kloop			;keep looping
+srcspc:	lxi	d,spctab-1		;get pointer to special character table
+srcsp2:	inx	d			;move pointer ahead
+	ldax	d			;get byte from table
+	ani	177o			;mask off high bit
+	jz	notrs5			;if end of table, stuff away, dont change donum
+	inx	d			;bump pointer
+	cmp	m			;is this special char same as current text char?
+	ldax	d			;get next reswrd
+	jnz	srcsp2			;if no match, keep looking
+	jmp	notrs1			;found, save away and set donum=1.
+ntsngt:
+	cpi	'&'			;octal constant?
+	jnz	stuffh			;just stuff it away
+	push	h			;save text pointer
+	call	chrgtr			;get next char
+	pop	h			;restore text pointer
+	call	makups			;make char upper case
+	cpi	'H'			;hex constant?
+	mvi	a,octcon		;assume octal constant
+	jnz	wuzoct			;yes, it was
+	mvi	a,hexcon		;no, was hex
+wuzoct:	call	krnsav			;save it
+	push	d			;save current deposit pointer
+	push	b			;save count
+	call	octcns			;get the value
+	pop	b			;restore [b,c]
+	jmp	savint			;save the integer in the krunch buffer
+stuffh:	inx	h			;entry to bump [h,l]
+	push	psw			;save char as krnsav clobbers
+	call	krnsav			;save char in krunch buffer
+	pop	psw			;restore char
+	sui	':'			;see if it is a colon
+	jz	colis			;if so allow crunching again
+	cpi	$data-':'
+	jnz	nodatt			;see if it is a data token
+	mvi	a,1			;set line number allowed flag
+					;kludge as has to be non-zero.
+colis:	sta	dores			;setup flag
+	sta	donum			;set number allowed flag
+nodatt:	sui	$rem-':'
+	jnz	kloop			;keep looping
+	push	psw			;save terminator on stack
+str1:	mov	a,m			;get a char
+	ora	a			;set condition codes
+	xthl				;get saved terminator off stack, save [h,l]
+	mov	a,h			;get terminator into [a] without affecting psw
+	pop	h			;restore [h,l]
+	jz	crdone			;if end of line then done
+	cmp	m			;compare char with this terminator
+	jz	stuffh			;if yes, done with string
+strng:
+	push	psw			;save terminator
+	mov	a,m			;get back line char
+strng2:	inx	h			;increment text pointer
+	call	krnsav			;save char in krunch buffer
+	jmp	str1			;keep looping
+crdone:
+					;add 5 to line count & for in [b,c]
+	lxi	h,0+kbflen+2		;get offset
+	mov	a,l			;get count to subtract from
+	sub	c			;subtract
+	mov	c,a
+	mov	a,h
+	sbb	b
+	mov	b,a
+	lxi	h,kbuf-1		;get pointer to char before kbuf
+					;as "gone" does a chrget
+	xra	a			;get a zero
+	stax	d			;need three 0's on the end
+	inx	d			;one for end-of-line
+	stax	d			;and 2 for a zero link
+	inx	d			;since if this is a direct statement
+	stax	d			;its end must look like the end of a program
+	ret				;end of crunching
+krnsvc:	mvi	a,':'			;get colon
+krnsav:
+					;in krunch buffer
+	stax	d			;save byte in krunch buffer
+	inx	d			;bump pointer
+	dcx	b			;decrement count of bytes left in buffer
+	mov	a,c			;test if it went to zero
+	ora	b			;by seeing if double byte zero.
+	rnz				;all done if still space left
+	public	lboerr
+lboerr:	mvi	e,errlbo		;get error code
+	jmp	error			;jump to error routine
+notres:	pop	h			;get back pointer to original char
+	dcx	h			;now point to first alpha char
+	dcr	a			;set a to minus one
+	sta	donum			;flag were in variable name
+	pop	b			;get back char count
+	pop	d			;get back deposit pointer
+	call	makupl			;get char from line, make upper case
+krnvar:	call	krnsav			;save char
+	inx	h			;incrment source pointer
+	call	makupl			;make upper case (?)
+	call	islet2			;is it a letter?
+	jnc	krnvar			;yes, eat
+	cpi	'9'+1			;digit?
+	jnc	jkloop			;no, too large
+	cpi	'0'
+	jnc	krnvar			;yes, eat
+	cpi	'.'			;is it dot
+	jz	krnvar			;yes, dots ok in var names
+jkloop:	jmp	kloop			;done looking at variable name
+notrs5:	mov	a,m			;get char from line
+	cpi	32			;space or higher ?
+	jnc	notrs1			;yes = save it
+	cpi	9			;tab ?
+	jz	notrs1			;yes = that's ok
+	cpi	10			;also allow...
+	jz	notrs1			;...line feeds
+	mvi	a,32			;force rest to spaces
+notrs1:	push	psw			;save this char
+	lda	donum			;get number ok flag
+	inr	a			;see if in a variable name.
+	jz	jntrs6			;if so & special char seen, reset donum
+	dcr	a			;otherwise leave donum unchanged.
+jntrs6:	jmp	notrs6
+; routine to back up pointer after # eaten
+baksp:	dcx	h			;point to previous char
+	mov	a,m			;get the char
+	cpi	' '			;a space?
+	jz	baksp			;yes, keep backing up
+	cpi	9			;tab?
+	jz	baksp			;yes, back up
+	cpi	10			;lf?
+	jz	baksp
+	inx	h			;point to char after last non-space
+	ret				;all done.
+	page
+	page
+	subttl	the non-extended "list" command
+	page
+	subttl	"for" statement
+;
+; a "for" entry on the stack has the following format:
+;
+; low address
+;	token ($for in high byte)  1 byte
+;	a pointer to the loop variable  2 bytes
+;	a byte reflecting the sign of the increment 1 byte
+;	the step 4 bytes
+;	the upper value 4 bytes
+;	the line # of the "for" statement 2 bytes
+;	a text pointer into the "for" statement 2 bytes
+; high address
+;
+; total 16 bytes
+;
+for:	mvi	a,100
+	sta	subflg			;dont recognize subscripted variables
+	call	ptrget			;get pointer to loop variable
+	call	synchr
+	db	equltk			;skip over assignment "="
+	push	d			;save the variable pointer
+	xchg				;save the loop variable in temp
+	shld	temp			;for use later on
+	xchg	
+	lda	valtyp			;remember the loop variable type
+	push	psw
+	call	frmevl			;get the start value
+	pop	psw			;reget the loop type
+	push	h			;save the text pointer
+	call	docnvf			;force conversion to loop type
+	lxi	h,fvalsv		;place to save the value
+	call	movmf			;store for use in "next"
+	pop	h			;get back the text pointer
+	pop	d			;get back the variable pointer
+					;the correct intial value
+					;and store a pointer
+					;to the variable in [temp]
+	pop	b			;get rid of the newstt return
+	push	h			;save the text pointer
+	call	data			;set [h,l]=end of statement
+	shld	endfor			;save for comparison
+	lxi	h,0+2			;set up pointer into stack
+	dad	sp
+lpform:	call	looper			;must have variable pointer in [d,e]
+	pop	d			;[d,e]=text pointer
+	jnz	notol			;if no matching entry, don't
+					;eliminate anything
+	dad	b			;in the case of "for"
+					;we eliminate the matching entry
+					;as well as everything after it
+	push	d			;save the text pointer
+	dcx	h			;see if end text pointer of matching entry
+	mov	d,m			;matches the for we are handling
+	dcx	h			;pick up the end of the "for" text pointer
+	mov	e,m			;for the entry on the stack
+	inx	h			;without changing [h,l]
+	inx	h
+	push	h			;save the stack pointer for the comparison
+	lhld	endfor			;get ending text pointer for this "for"
+	call	dcompr			;see if they match
+	pop	h			;get back the stack pointer
+	jnz	lpform			;keep searching if no match
+	pop	d			;get back the text pointer
+	sphl				;do the elimination
+	shld	savstk			;update saved stack
+					;since a matching entry was found
+notol:	xchg				;[h,l]=text pointer
+	mvi	c,8			;make sure 16 bytes are available
+					;off of the stack
+	call	getstk
+	push	h			;really save the text pointer
+	lhld	endfor			;pick up pointer at end of "for"
+					;just beyond the terminator
+	xthl				;put [h,l] pointer to terminator on the stack
+					;and restore [h,l] as text pointer at
+					;variable name
+	push	h			;push the text pointer onto the stack
+	lhld	curlin			;[h,l] get the current line #
+	xthl				;now the current line # is on the stack and
+					;[h,l] is the text pointer
+	call	synchr
+	db	$to			;"to" is necessary
+	call	getypr			;see what type this value has
+	jz	tmerr			;give strings a "type mismatch"
+	jnc	tmerr			;as well as double-precision
+	push	psw			;save the integer/floating flag
+	call	frmevl			;evaluate the target value formula
+	pop	psw			;pop off the flag
+	push	h			;save the text pointer
+	jp	sngfor			;positive means single precision "for"-loop
+	call	frcint			;coerce the final value
+	xthl				;save it on the stack and reget the
+					;text pointer
+	lxi	d,0+1			;default the step to be 1
+	mov	a,m			;see what character is next
+	cpi	steptk			;is there a "step" clause?
+	cz	getint			;if so, read the step into [d,e]
+	push	d			;put the step onto the stack
+	push	h			;save the text pointer
+	xchg				;step into [h,l]
+	call	isign			;the sign of the step into [a]
+	jmp	stpsgn			;finish up the entry
+					;by putting the sign of the step
+					;and the dummy entries on the stack
+sngfor:	call	frcsng
+	call	movrf			;get the stuff
+	pop	h			;regain text pointer
+	push	b			;opposite of pushr
+	push	d			;save the sign of the increment
+	lxi	b,0+201o*256
+	mov	d,c
+	mov	e,d			;get 1.0 in the registers
+	mov	a,m			;get terminating character
+	cpi	steptk			;do we have "step" ?
+	mvi	a,1			;setup default sign
+	jnz	oneon			;push some constants on if not
+	call	frmchk			;don't need to check the type
+	push	h
+	call	frcsng
+	call	movrf			;set up the registers
+	call	sign			;get the sign of the increment
+stpsgn:	pop	h			;pop off the text pointer
+oneon:	push	b			;put value on backwards
+	push	d			;opposite of pushr
+	mov	c,a			;[c]=sign of step
+	call	getypr			;must put on integer/single-precision flag
+					;minus is set for integer case
+	mov	b,a			;high byte = integer/single precision flag
+	push	b			;save flag and sign of step both
+	dcx	h			;make sure the "for" ended properly
+	call	chrgtr
+	jnz	snerr
+	call	nxtscn			;scan until the matching "next" is found
+	call	chrgtr			;fetch first character of "next"
+	push	h			;make the next txtptr part of the entry
+	push	h
+	lhld	nxtlin			;get the line number of next
+	shld	curlin			;make it the current line
+	lhld	temp			;get the pointer to the variable back
+	xthl				;put the pointer to the variable
+					;onto the stack and restore the text pointer
+	mvi	b,$for			;finish up "for"
+	push	b
+	inx	sp
+	push	psw			;save the character
+	push	psw			;make a stack entry to substitute for "newstt"
+	extrn	nexts
+	jmp	nexts			;go execute "next" with nxtflg zero
+nxtcon:	mvi	b,$for			;put a 'for' token onto the stack
+	push	b
+	inx	sp			;the "token" only takes one byte of
+					;stack space
+;	jmp	newstt		;all done
+	page
+	subttl	new statement fetcher
+;
+; back here for new statement. character pointed to by [h,l]
+; ":" or end-of-line. the address of this location is
+; left on the stack when a statement is executed so
+; it can merely do a return when it is done.
+;
+newstt:
+	extrn	cntccn,iscntc
+	push	h
+	public	const2,csts
+csts	set	0
+const2:	call	csts			;get console status
+	pop	h			;restore all registers
+	ora	a			;set cc's - 0 false - no char typed
+	cnz	cntccn			;see if its control-c
+					;if so, check for contrl-c
+	shld	savtxt			;used by continue and input and clear and print using
+	xchg				;save text pointer
+	lxi	h,0			;save stack pointer
+	dad	sp			;copy to [h,l]
+	shld	savstk			;save it
+					;to remember how to restart this
+					;statement
+	xchg				;get current text pointer back in [h,l]
+					;to save bytes & speed
+	mov	a,m			;get current character
+					;which terminated the last statement
+	cpi	':'			;is it a colon?
+	jz	gone
+	ora	a
+	jnz	snerr			;must be a zero
+	inx	h
+gone4:	mov	a,m			;check pointer to see if
+					;it is zero, if so we are at the
+					;end of the program
+	inx	h
+	ora	m			;or in high part
+	jz	prgend			;fix syntax error in unended error routine
+	inx	h
+	mov	e,m
+	inx	h
+	mov	d,m			;get line # in [d,e]
+	xchg				;[h,l]=line #
+	shld	curlin			;setup curlin with the current line #
+	lda	trcflg			;see if trace is on
+	ora	a			;non-zero means yes
+	jz	nottrc			;skip this printing
+	push	d			;save the text pointer
+	mvi	a,'['			;format the line number
+	call	outdo			;output it
+	call	linprt			;print the line # in [h,l]
+	mvi	a,']'			;some more formating
+	call	outdo
+	pop	d			;[d,e]=text pointer
+nottrc:
+	xchg				;restore the text pointer
+gone:	call	chrgtr			;get the statement type
+	lxi	d,newstt		;push on a return address of newstt
+	push	d			;statement
+gone3:	rz				;if a terminator try again
+					;"if" comes here
+gone2:	sui	$end			;"on ... goto" and "on ... gosub" come here
+	jc	let			;must be a let
+	cpi	numcmd
+					;a statement reserved word
+	jnc	ismid$			;see if lhs mid$ case
+	rlc				;multiply by 2
+	mov	c,a
+	mvi	b,0
+	xchg	
+	lxi	h,stmdsp		;statement dispatch table
+	dad	b			;add on offset 
+	mov	c,m			;push the address to go to onto
+	inx	h			;the stack
+	mov	b,m			;pushm saves bytes but not speed
+	push	b
+	xchg				;restore the text pointer
+; newstt falls into chrget. this fetches the first char after
+; the statement token and the chrget's "ret" dispatches to statement
+	page
+	subttl	chrget - the next character scan routine
+chrgtr:	inx	h			;duplication of chrget rst for speed
+	public	chrgt2
+chrgt2:	mov	a,m			;see chrget rst for explanation
+	cpi	':'
+	rnc	
+;
+; chrcon is the continuation of the chrget rst
+;
+; in extended, check for inline constant and if one
+; move it into the fac & set valtyp appropriately
+octcon	set	11			;embeded octal constant
+hexcon	set	12			;embeded constant
+ptrcon	set	13			;a line reference constant
+lincon	set	14			;a line number unconverted to pointer
+in2con	set	15			;single byte (two byte with token) integer
+concn2	set	16			;token returned second type constant is scanned.
+onecon	set	17			;first of 10 (0-9) integer special tokens
+intcon	set	28			;regular 16 bit two's complement int
+sngcon	set	29			;single prec (4 byte) constant
+concon	set	30			;token returned by chrget after constant scanned
+dblcon	set	31			;double prec (8 byte) constant
+chrcon:	cpi	' '			;must skip spaces
+	jz	chrgtr			;get another character
+	jnc	notlft			;not special try other possib.
+	ora	a			;null at eol?
+	rz				;yes, all done
+	cpi	octcon			;is it inline constant
+	jc	notcon			;no, should be tab or lf
+	cpi	concon			;are we trying to re-scan a constant?
+	jnz	ntrscc			;no.
+	lda	consav			;get the saved constant token
+	ora	a			;set non-zero, non carry cc's
+	ret				;all done
+ntrscc:	cpi	concn2			;going to scan past embedded constant?
+	jnz	ntrsc2			;no, try other cases
+conscn:	lhld	contxt			;get saved text pointer
+	jmp	chrgt2			;and scan thing after constant
+ntrsc2:	push	psw			;save token to return
+	inx	h			;point to number
+	sta	consav			;save current token
+	sui	intcon			;is it less than integer constant?
+	jnc	maktkn			;no, not line number constant
+	sui	365o			;<onecon-intcon>&^o377
+					;less than embedded 1 byter
+	jnc	onei			;was one byter
+	cpi	in2con-onecon		;is it two byter?
+	jnz	frcinc			;nope, normal int
+	mov	a,m			;get embeded int
+	inx	h			;point after constant
+onei:	shld	contxt			;save text pointer
+	mvi	h,0			;get upper byte of zero
+onei2:	mov	l,a			;get value
+	shld	conlo			;save constant value
+	mvi	a,2			;get valtype
+	sta	contyp			;set it up in save place
+	lxi	h,numcon		;point to number re-scanner
+	pop	psw			;get back token
+	ora	a			;make sure number flag re-set
+	ret				;return to caller
+frcinc:	mov	a,m			;get low byte of constant
+	inx	h			;point past it
+	inx	h			;to next thing
+	shld	contxt			;save pointer past
+	dcx	h			;back to high byte
+	mov	h,m			;get high byte
+	jmp	onei2			;finish scanning
+maktkn:	inr	a			;calculate valtype
+	rlc				;*2 to get valtype 0=2, 1=4, 3=8
+	sta	contyp			;contype now setup
+	push	d			;save some rgs
+	push	b
+	lxi	d,conlo			;place to store saved constant
+	xchg				;get text pointer in [d,e]
+	mov	b,a			;setup counter in [b]
+	call	move1			;move data in
+	xchg				;get text pointer back
+	pop	b			;restore [b,c]
+	pop	d
+finin1:	shld	contxt			;save the good text pointer
+	pop	psw			;restore token
+	lxi	h,numcon		;get pointer to fake text
+	ora	a			;clear carry so others dont think its a number
+					;and set non-zero so not terminator
+	ret				;all done
+notcon:
+	cpi	9			;line feed or tab?
+	jnc	chrgtr			;yes, eat.
+notlft:	cpi	'0'			;all characters greater than
+					;"9" have returned, so see if numeric
+	cmc				;make numerics have carry on
+	inr	a			;set zero if [a]=0
+	dcr	a
+	ret	
+numcon:	db	concon			;these fake tokens force chrget
+	db	concn2			;to effectively re-scan the embeded constant
+; this routine moves the saved constant into the fac
+confac:
+	lda	consav			;get constant token
+	cpi	lincon+1		;line# constant? (erl=#)
+	jnc	ntline			;no
+	cpi	ptrcon			;line pointer constant?
+	jc	ntline			;no
+	lhld	conlo			;get value
+	jnz	fltlin			;must be line number, not pointer
+	inx	h			;point to line #
+	inx	h
+	inx	h
+	mov	e,m			;get line # in [d,e]
+	inx	h
+	mov	d,m			;get high part
+	xchg				;value to [h,l]
+fltlin:	call	ineg2			;float it
+	jmp	conscn			;restore text ptr
+ntline:
+	lda	contyp			;get saved constant valtyp
+	sta	valtyp			;save in real valtyp
+	cpi	8			;double precision
+	jz	confdb			;yes
+	lhld	conlo			;get low two bytes of fac
+	shld	faclo			;save them
+	lhld	conlo+2			;get next two bytes
+	shld	faclo+2			;save them
+	jmp	conscn			;scan furthur
+confdb:	lxi	h,conlo			;get pointer to saved constant area
+	call	vmovfm			;move into fac
+	jmp	conscn			;restore text ptr & scan following character
+	page
+	subttl	defstr, defint, defsng, defdbl, intidx
+defstr:	mvi	e,3			;default some letters to string
+	db	1q			;"lxi b," over the next 2 bytes
+defint:	mvi	e,2			;default some letters to integer
+	db	1q			;"lxi b," over the next 2 bytes
+defrea:	mvi	e,4			;default some letters to single precision
+	db	1q			;"lxi b," over the next 2 bytes
+defdbl:	mvi	e,8			;default some letters to double precision
+defcon:	call	islet			;make sure the argument is a letter
+	lxi	b,snerr			;prepare "syntax error" return
+	push	b
+	rc				;return if theres no letter
+	sui	'A'			;make an offset into deftbl
+	mov	c,a			;save the initial offset
+	mov	b,a			;assume it will be the final offset
+	call	chrgtr			;get the possible dash
+	cpi	minutk			;a range argument?
+	jnz	notrng			;if not, just one letter
+	call	chrgtr			;get the final position
+	call	islet			;check for a letter
+	rc				;give a syntax error if improper
+	sui	'A'			;make it an offset
+	mov	b,a			;put the final in [b]
+	call	chrgtr			;get the terminator
+notrng:	mov	a,b			;get the final character
+	sub	c			;subtract the start
+	rc				;if it's less thats nonsense
+	inr	a			;setup the count right
+	xthl				;save the text pointer and get rid
+					;of the "syntax error" return
+	lxi	h,deftbl		;point to the table of defaults
+	mvi	b,0			;setup a two-byte starting offset
+	dad	b			;make [h,l] point to the first entry
+					;to be modified
+lpdchg:	mov	m,e			;modify the default table
+	inx	h
+	dcr	a			;count dount the number of changes to make
+	jnz	lpdchg
+	pop	h			;get back the text pointer
+	mov	a,m			;get last character
+	cpi	44			;is it a comma?
+	rnz				;if not statement should have ended
+	call	chrgtr			;otherwise set up to scan new range
+	jmp	defcon
+;
+; intidx reads a formula from the current position and
+; turns it into a positive integer
+; leaving the result in [d,e].  negative arguments
+; are not allowed. [h,l] points to the terminating
+; character of the formula on return.
+;
+intidx:	call	chrgtr
+intid2:	call	getin2			;read a formula and get the
+					;result as an integer in [d,e]
+					;also set the condition codes based on
+					;the high order of the result
+	rp				;don't allow negative numbers
+fcerr:	mvi	e,errfc			;too big. function call error
+	jmp	error
+	page
+	subttl	linspc, linget
+;
+; linspc is the same as linget except in allows the
+; current line (.) specifier
+;
+	public	linspc
+linspc:	mov	a,m			;get char from memory
+	cpi	'.'			;is it current line specifier
+	xchg				;save text pointer
+	lhld	dot			;get current line #
+	xchg				;get back text pointer
+	jz	chrgtr			;all done.
+;
+; linget reads a line # from the current text position
+;
+; line numbers range from 0 to 65529
+;
+; the answer is returned in [d,e].
+; [h,l] is updated to point to the terminating character
+; and [a] contains the terminating character with condition
+; codes set up to reflect its value.
+;
+linget:	dcx	h			;backspace ptr
+lingt2:	call	chrgtr			;fetch char (gobble line constants)
+	cpi	lincon			;embedded line constant?
+	jz	lingt3			;yes, return double byte value
+	cpi	ptrcon			;also check for pointer
+lingt3:	xchg				;save text ptr in [d,e]
+	lhld	conlo			;get embedded line #
+	xchg				;restore text ptr.
+	jz	chrgtr			;eat following char
+	dcx	h			;back up pointer
+	lxi	d,0			;zero accumulated line #
+morlin:	call	chrgtr
+	rnc				;was it a digit
+	push	h
+	push	psw
+	lxi	h,0+6552		;see if the line # is too big
+	call	dcompr
+	jc	pophsr			;yes, don't scan any more digits if so
+					;force caller to see digit and give syntax error
+					;can't just go to syntax error because of non-fast
+					;renum which can't terminate
+	mov	h,d			;save [d,e]
+	mov	l,e
+	dad	d
+	dad	h
+	dad	d
+	dad	h			;putting [d,e]*10 into [h,l]
+	pop	psw
+	sui	'0'
+	mov	e,a
+	mvi	d,0
+	dad	d			;add the new digit
+	xchg	
+	pop	h			;get back text pointer
+	jmp	morlin
+pophsr:	pop	psw			;get off terminating digit
+	pop	h			;get back old text pointer
+	ret	
+	page
+	subttl	run, goto, gosub, return, data, rem
+run:	jz	runc			;no line # argument
+	cpi	lincon			;line number constant?
+	jz	conrun			;yes
+	cpi	ptrcon			;line pointer (rather unlikely)
+	jnz	lrun
+conrun:
+					;clean up,set [h,l]=[txttab]-1 and
+					;return to newstt
+	call	clearc			;clean up -- reset the stack
+					;datptr,variables ...
+					;[h,l] is the only thing preserved
+	lxi	b,newstt
+	jmp	runc2			;put "newstt" on and fall into "goto"
+; a "gosub" entry on the stack has the following format
+;
+; low address
+;
+;	a token equal to $gosub 1 byte
+;	the line # of the the "gosub" statement 2 bytes
+;	a pointer into the text of the "gosub" 2 bytes
+;
+; high address
+;
+; total 5 bytes
+;
+gosub:	mvi	c,3			;"gosub" entries are 5 bytes long
+	call	getstk			;make sure there is room
+	call	linget			;must scan line number now
+	pop	b			;pop off return address of "newstt"
+	push	h			;really push the text pointer
+	push	h			;save text pointer
+	lhld	curlin			;get the current line #
+	xthl				;put curlin on the stack and [h,l]=text ptr
+	mvi	a,$gosub
+	push	psw			;put gosub token on the stack
+	inx	sp			;the gosub token takes only one byte
+	push	b			;save newstt on stack
+	jmp	goto2			;have now grab line # properly
+					;continue with subroutine
+runc2:	push	b			;restore return address
+					;of "newstt"
+; and search. in the 8k we start where we
+; are if we are  going to a forward location.
+;
+goto:	call	linget			;pick up the line #
+					;and put it in [d,e]
+goto2:
+	lda	consav			;get token for line # back
+	cpi	ptrcon			;was it a pointer
+	xchg				;assume so
+	rz				;if it was, go back to newstt
+					;with [h,l] as text ptr
+	xchg				;flip back if not
+	push	h			;save current text ptr on stack
+	lhld	contxt			;get pointer to right after constant
+	xthl				;save on stack, restore current text ptr
+	call	rem			;skip to the end of this line
+	inx	h			;point at the link beyond it
+	push	h			;save the pointer
+	lhld	curlin			;get the current line #
+	call	dcompr			;[d,e] contains where we are going
+					;[h,l] contains the current line #
+					;so comparing them tells us whether to
+					;start searching from where we are or
+					;to start searching from the beginning
+					;of txttab
+	pop	h			;[h,l]=current pointer
+	cc	loop			;search from this point
+	cnc	fndlin			;search from the beginning -- actually
+					;search again if above search failed
+	jnc	userr			;line not found, death
+	dcx	b			;point to zero at end of previous line
+	mvi	a,ptrcon		;pointer constant
+	sta	ptrflg			;set ptrflg
+	pop	h			;get saved pointer to right after constant
+	call	conch2			;change line # to ptr
+	mov	h,b			;[h,l]= pointer to the start of the
+					;matched line
+	mov	l,c			;now pointing at the first byte of the pointer
+					;to the start of the next line
+	ret				;go to newstt
+userr:	mvi	e,errus
+	jmp	error			;c=match, so if no match we
+					;give a "us" error
+;
+; see "gosub" for the format of the stack entry
+; "return" restores the line number and text pointer on the stack
+; after eliminating all the "for" entries in front of the "gosub"
+; entry
+;
+return:	rnz				;blow him up if there isn't a terminator
+	mvi	d,255			;make sure this variable pointer
+					;in [d,e] never gets matched
+	call	fndfor			;go past all the "for" entries
+	sphl				;update the stack
+	shld	savstk			;update saved stack
+	cpi	$gosub
+	mvi	e,errrg			;error errrg is "return without gosub"
+	jnz	error
+	pop	h			;get line # "gosub" was from
+	shld	curlin			;put it into curlin
+	lxi	h,newstt
+	xthl				;put return address of "newstt"
+					;back onto the stack. get text pointer
+					;from "gosub"
+					;skip over some characters
+					;since when "gosub" stuck the text pointer
+					;onto the stack the line # argument hadn't
+					;been read in yet.
+	db	76q			;"mvi a," around pop h.
+datah:	pop	h			;get text pointer off stack
+data:	db	1q			;"lxi b," to pick up ":" into c and skip
+	db	':'			;"data" terminates on ":"
+					;and 0. ":" only applies if
+					;quotes have matched up
+elses:					;executed "else"s are skipped
+;
+; note: rem must preserve [d,e] because of "go to" and error
+;
+rem:	db	16q			;"mvi c,"   the only terminator is zero
+	db	0			;no-operation
+					;"data" actually executes this 0
+remzer:	mvi	b,0			;inside quotes the only terminator is zero
+exchqt:	mov	a,c			;when a quote is seen the second
+	mov	c,b			;terminator is traded, so in "data"
+	mov	b,a			;colons inside quotations will have no effect
+remer:
+	dcx	h			;nop the inx h in chrget
+remer1:	call	chrgtr			;get a char
+	ora	a			;zero is always a terminator
+	rz	
+	cmp	b			;test for the other terminator
+	rz	
+	inx	h
+	cpi	34			;is it a quote?
+	jz	exchqt			;if so time to trade
+;
+; when an "if" takes a false branch it must find the appropriate "else"
+; to start execution at. "data" counts the number of "if"s
+; it sees so that the "else" code can match "else"s with
+; "if"s. the count is kept in [d]
+					;because then s have tno colon
+					;multiple ifs can be found in a single
+					;statement scan
+					;this causes a problem for 8-bit data
+					;in unquoted string data because $if might
+					;be matched. fix is to have falsif ignore changes
+					;in [d] if its a data statement
+;
+	inr	a			;function token?
+	jz	remer1			;then ignore following fn number
+	sui	$if+1			;is it an "if"
+	jnz	remer			;if not, continue on
+	cmp	b			;since "rem" can't smash
+					;[d,e] we have to be careful
+					;so only if b doesn't equal
+					;zero we increment d. (the "if" count)
+	adc	d			;carry on if [b] not zero
+	mov	d,a			;update [d]
+	jmp	remer
+	page
+	subttl	"let"
+	public	letcon
+; letcon is let entry point with valtyp-3 in [a]
+; because getypr has been called
+letcon:	pop	psw			;get valtype off stack
+	adi	3			;make valtype correct
+	jmp	letcn2			;continue
+let:	call	ptrget			;get the pointer to the variable
+					;named in text and put
+					;it into [d,e]
+	call	synchr
+	db	equltk			;check for "="
+	xchg				;must set up temp for "for"
+	shld	temp			;up here so when user-functions
+	xchg				;call redinp, temp doesn't get changed
+redinp:	push	d
+	lda	valtyp
+	push	psw
+	call	frmevl			;get the value of the formula
+	pop	psw			;get the valtyp of the
+					;variable into [a]
+					;into fac
+letcn2:	xthl				;[h,l]=pointer to variable
+					;text pointer to on top of stack
+inpcom:	mov	b,a			;save valtyp
+	lda	valtyp			;get present valtype
+	cmp	b			;compare the two
+	mov	a,b			;get back current
+	jz	letcn5			;valtype already set up, go!
+	call	docnvf			;force valtpes to be [a]'s
+letcn4:	lda	valtyp			;get valtype
+letcn5:	lxi	d,faclo			;assume this is where to start moveing
+	cpi	5			;is it?
+	jc	letcn6			;yes
+	lxi	d,dfaclo		;no, use d.p. fac
+letcn6:	push	h			;save the pointer at the value position
+	cpi	3			;string?
+	jnz	copnum			;numeric, so force it and copy
+	lhld	faclo			;get pointer to the descriptor of the result
+	push	h			;save the pointer at the descriptor
+	inx	h
+	mov	e,m
+	inx	h
+	mov	d,m
+	lhld	txttab			;if the data is in buf, or in disk
+					;random buffer, copy.
+	call	dcompr			;since buf changes all the time
+	jnc	inbufc			;go copy, if data really is in buf
+	lhld	strend			;see if it points into string space
+	call	dcompr			;if not don't copy
+	pop	d			;get back the pointer at the descriptor
+	jnc	dntcpy			;don't copy literals
+	lxi	h,dsctmp		;now, see if its a variable
+	call	dcompr			;by seeing if the descriptor
+					;is in the temporary storage area (below dsctmp)
+	jnc	dntcpy			;don't copy if its not a variable
+	db	76q			;skip the next byte with a "mvi a,"
+inbufc:	pop	d			;get the pointer to the descriptor
+					;in [d,e]
+	call	fretms			;free up a temorary pointing into buf
+	xchg				;strcpy copies [h,l]
+	call	strcpy			;copy variables in string space or
+					;strings with data in buf
+dntcpy:	call	fretms			;free up the temporary without
+					;freeing up any string space
+	xthl				;[h,l]=place to store the descriptor
+					;leave a nonsense entry on the stack,
+					;since the "pop	d" doesn't ever
+					;matter in this case
+copnum:	call	vmove			;copy a descriptor or a value
+	pop	d			;for "for" pop off a pointer
+					;at the loop variable into [d,e]
+	pop	h			;get the text pointer back
+	ret	
+	page
+	subttl	on..goto, on error goto code
+ongoto:
+	cpi	$error			;"on...error"?
+	jnz	ntoerr			;no.
+	call	chrgtr			;get next thing
+	call	synchr
+	db	$goto			;must have ...goto
+	call	linget			;get following line #
+	mov	a,d			;is line number zero?
+	ora	e			;see
+	jz	restrp			;if on error goto 0, reset trap
+	call	fndln1			;see if line exists (save [h,l] on stack)
+	mov	d,b			;get pointer to line in [d,e]
+	mov	e,c			;(link field of line)
+	pop	h			;restore [h,l]
+	jnc	userr			;error if line not found
+restrp:	xchg				;get line pointer in [h,l]
+	shld	onelin			;save pointer to line or zero if 0.
+	xchg				;back to normal
+	rc				;you wouldn't believe it if i told you
+	lda	oneflg			;are we in an "on...error" routine?
+	ora	a			;set condition codes
+	mov	a,e			;want an even stack ptr. for 8086
+	rz				;if not, have already disabled trapping.
+	lda	errflg			;get error code
+	mov	e,a			;into e.
+	jmp	erresm			;force the error to happen
+ntoerr:
+	call	getbyt			;get value into [e]
+	mov	a,m			;get the terminator back
+	mov	b,a			;save this character for later
+	cpi	$gosub			;an "on ... gosub" perhaps?
+	jz	isgosu			;yes, some feature use
+	call	synchr
+	db	$goto			;otherwise must be "goto"
+	dcx	h			;back up character pointer
+isgosu:	mov	c,e			;get count into  [c]
+loopon:	dcr	c			;see if enough skips
+	mov	a,b			;put dispatch character in place
+	jz	gone2			;if done, go off
+	call	lingt2			;skip over a line #
+	cpi	44			;a comma
+	rnz				;if a comma doesn't delimit the end of
+					;the current line # we must be the end of the line
+	jmp	loopon			;continue gobbling line #s
+	page
+	subttl	resume, error statement code
+resume:	lxi	d,oneflg		;point to flag
+	ldax	d			;get flag
+	ora	a			;trap routine.
+	jz	reerr			;give resume without error error	
+	inr	a			;make a=0
+	sta	errflg			;clear error flag so ^c doesn't give error
+	stax	d			;reset flag
+	mov	a,m			;get current char back
+	cpi	$next			;resume next?
+	jz	resnxt			;yup.
+	call	linget			;get following line #
+	rnz				;should terminate
+	mov	a,d			;is line number zero?
+	ora	e			;test
+	jnz	goto2			;do a goto that line.
+	inr	a			;set non zero condition codes
+	jmp	restxt			;go to it
+resnxt:	call	chrgtr			;must terminate
+	rnz				;blow him up
+restxt:	lhld	errtxt			;get pointer into line.
+	xchg				;save errtxt in [d,e]
+	lhld	errlin			;get line #
+	shld	curlin			;save in current line #
+	xchg	
+	rnz				;go to newstt if just "resume"
+	mov	a,m			;get ":" or line header
+	ora	a			;set cc
+	jnz	notbgl			;#0 means must be ":"
+	inx	h			;skip header
+	inx	h
+	inx	h
+	inx	h
+notbgl:	inx	h			;point to start of this statement
+	jmp	data			;get next stmt
+; this is the error <code> statement which forces
+; an error of type <code> to occur
+; <code> must be .ge. 0 and .le. 255
+errors:	call	getbyt			;get the param
+	rnz				;should have terminated
+	ora	a			;error code 0?
+	jz	fcerr			;yes, error in itself
+goerr:	jmp	error			;force an error
+	page
+	subttl	auto command
+; the auto [begginning line[,[increment]]]
+; command is used to automatically generate line numbers
+; for lines to be inserted. beginning line is
+; used to specify the inital line (10 is assumed if ommited)
+; and the increment is used to specify the increment used
+; to generate the next line #. if only a comma is used after the
+; beggining line, the old increment is used.
+auto:	lxi	d,0+10			;assume initial line # of 10
+	push	d			;save it
+	jz	sngaut			;if end of command use 10,10
+	call	linspc			;get line #, allow use of . for current line
+	xchg				;get txt ptr in [d,e]
+	xthl				;put init on stack, get 10 in [h,l]
+	jz	sngau1			;if terminator, use inc of 10
+	xchg				;get text ptr back in [h,l]
+	call	synchr
+	db	54o			;comma must follow
+	xchg				;save text ptr in [d,e]
+	lhld	autinc			;get previous inc
+	xchg				;get back text ptr; get in in[d,e]
+	jz	sngaut			;use previous inc if terminator
+	call	linget			;get inc
+	jnz	snerr			;should have finished.
+sngaut:	xchg				;get inc in [h,l]
+sngau1:	mov	a,h			;see if zero
+	ora	l
+	jz	fcerr			;zero inc gives fcerr
+	shld	autinc			;save increment
+	sta	autflg			;set flag to use auto in main code.
+	pop	h			;get initial line #
+	shld	autlin			;save in intial line
+	pop	b			;get rid of newstt addr
+	jmp	main			;jump into main code (for rest see after main:)
+	page
+	subttl	if ... then code
+ifs:	call	frmevl			;evaluate a formula
+	mov	a,m			;get terminating character of formula
+	cpi	44
+	cz	chrgtr			;if so skip it
+	cpi	$goto			;allow "goto" as well
+	jz	okgoto
+	call	synchr
+	db	thentk			;must have a then
+	dcx	h
+okgoto:
+	push	h			;save the text pointer
+	call	vsign
+	pop	h			;get back the text pointer
+	jz	falsif			;handle possible "else"
+docond:	call	chrgtr			;pick up the first line # character
+	rz				;return for "then :" or "else :"
+	cpi	lincon			;line number constant?
+	jz	goto			;do a "goto"
+	cpi	ptrcon			;pointer constant
+	jnz	gone2			;execute statement, not goto
+	lhld	conlo			;get text pointer
+	ret				;fetch new statment
+;
+; "else" handler. here on false "if" condition
+;
+falsif:	mvi	d,1			;number of "else"s that must
+					;be seen. "data" increments this
+					;count every time an "if" is seen
+skpmrf:	call	data			;skip a statement
+					;":" is stuck in front of "else"s
+					;so that "data" will stop before "else" clauses
+	ora	a			;end of line?
+	rz				;if so, no "else" clause
+	call	chrgtr			;see if we hit an "else"
+	cpi	$else
+	jnz	skpmrf			;no, still in the "then" clause
+	dcr	d			;decrement the number of "else"s that
+					;must be seen
+	jnz	skpmrf			;skip more if haven't seen
+					;enough
+	jmp	docond			;found the right "else" -- go execute
+	page
+	subttl	print code
+lprint:	mvi	a,1			;say non zero
+	sta	prtflg			;save away
+	jmp	newchr
+print:
+	mvi	c,md.sqo		;setup output file
+	call	filget
+newchr:	dcx	h
+	call	chrgtr			;get another character
+	cz	crdo			;print crlf if end without punctuation
+printc:	jz	finprt			;finish by resetting flags
+					;finish by resetting flags
+					;in which case a terminator does not
+					;mean we should type a crlf
+					;but just return
+	cpi	usintk			;is it "print using" ?
+	jz	prinus			;if so, use a special handler
+	cpi	tabtk
+	jz	taber			;the tab function?
+	cpi	spctk
+	jz	taber			;the spc function?
+	push	h			;save the text pointer
+	cpi	44
+	jz	comprt			;is it a comma?
+	cpi	59			;is it a ";"
+	jz	notabr
+	pop	b			;get rid of old text pointer
+	call	frmevl			;evaluate the formula
+	push	h			;save text pointer
+	call	getypr			;see if we have a string
+	jz	strdon			;if so, print specialy
+	call	fout			;make a number into a string
+	call	strlit			;make it  a string
+	mvi	m,' '			;put a space at the end
+	lhld	faclo			;and increase size by 1
+	inr	m			;size byte is first in descriptor
+strdon:					;use folding for strings and #s
+	lhld	ptrfil			;disk output?
+	mov	a,h			;if so, don't ever force a crlf
+	ora	l
+	jnz	linch2			;to be sent out
+	lhld	faclo			;get the pointer
+	lda	prtflg
+	ora	a
+	jz	istty			;lpt or tty?
+	lda	lptsiz			;get width of printer
+	mov	b,a			;save in [b]
+	inr	a			;is it infinite?
+	jz	linch2			;then just print
+	lda	lptpos
+	ora	a			;don't do a crlf if string longer than line
+	jz	linch2			;length if position is 0
+	add	m
+	cmc				;set nc if overflow on check
+	jnc	linchk			;start on a new line
+	cmp	b			;check for overlap
+	jmp	linchk
+istty:
+	lda	linlen
+	mov	b,a
+	inr	a			;no overflow line width?
+	jz	linch2			;yes
+	lda	ttypos			;see where we are
+					;see where we are
+	ora	a			;don't do crlf
+	jz	linch2			;if already at 0 even if string is longer that line length
+	add	m			;add this length
+	cmc				;set nc if overflow on check
+	jnc	linchk			;(possible since strings can be big..)
+	dcr	a			;actually equal to line length is ok
+	cmp	b
+	public	linpt3
+linpt3	set	$-1
+linchk:	cnc	crdo			;if so crlf
+linch2:	call	strprt			;print the number
+	pop	h
+	jmp	newchr			;print some more
+comprt:
+	lhld	ptrfil			;outputing into a file?
+	mov	a,h			;if so, [ptrfil] .ne. 0
+	ora	l			;and special print position should
+	extrn	nmlo.c
+	lxi	b,nmlo.c		;be fetched from file data
+	dad	b			;[h,l] point at position
+	mov	a,m			;if file is active
+	jnz	morcom
+	lda	prtflg			;output to the line printer?
+	ora	a			;non-zero means yes
+	jz	isctty			;no, do teletype comma
+	lda	nlppos			;are we using infinite width?
+	mov	b,a			;also put in [b]
+	inr	a			;test
+	lda	lptpos			;get line printer position
+	jz	morcom			;always do modulus if width=255
+	cmp	b			;check if no more comma fields
+	jmp	chkcom			;use teletype check
+isctty:
+	lda	clmlst
+	mov	b,a
+	lda	ttypos			;get teletype position
+ncmpos	set	(((linln/clmwid)-1)*clmwid);position beyond which there are
+	cpi	255			;infinite width?
+	jz	morcom			;do modulus
+	cmp	b
+	public	linpt4
+linpt4	set	$-1			;fixed up by "terminal width" question
+chkcom:	cnc	crdo			;type crlf
+	jnc	notabr			;and quit if beyond the last comma field
+morcom:	sui	clmwid			;get [a] modulus clmwid
+	jnc	morcom
+	cma				;we want to  fill
+					;the print position out
+					;to an even clmwid, so
+					;we print clmwid-[a] mod clmwid spaces
+	jmp	aspa2			;go print [a]+1 spaces
+taber:
+	push	psw			;remember if [a]=spctk or tabtk
+	call	chrgtr
+	call	getin2			;evaluate the argument
+	pop	psw			;see if its spc or tab
+	push	psw
+	cpi	spctk			;if space leave alone
+	jz	spcndc
+	dcx	d			;offset by 1
+spcndc:	mov	a,d
+	ora	a			;make sure its not negative
+	jp	tbnong
+	lxi	d,0
+tbnong:	push	h			;save the text pointer
+	lhld	ptrfil			;see if going to disk file
+	mov	a,h
+	ora	l
+	jnz	lnomod			;dont mod
+	lda	prtflg			;going to printer?
+	ora	a			;set flags
+	lda	lptsiz			;get size
+	jnz	lptmdf			;was lpt, mod by its size
+	lda	linlen			;get the line length
+lptmdf:	mov	l,a
+	inr	a			;test for width of 255 (no folding)
+	jz	lnomod			;if so, dont mod
+	mvi	h,0			;mod out by line length
+	call	imod
+	xchg				;set [e] = position to go to 
+lnomod:	pop	h			;get back the text pointer
+	call	synchr
+	db	')'
+	dcx	h
+	pop	psw			;get back spctk or tabtk
+	sui	spctk			;was it spctk?
+	push	h			;save the text pointer
+	jz	dosizt			;value in [a]
+	lhld	ptrfil			;outputing into a file?
+	mov	a,h			;if so, [ptrfil] .ne. 0
+	ora	l			;and special print position should
+	lxi	b,nmlo.c		;be fetched from file data
+	dad	b			;[h,l] point at position
+	mov	a,m			;if file is active
+	jnz	dosizt			;do tab calculation now
+	lda	prtflg			;line printer or tty?
+	ora	a			;non-zero means lpt
+	jz	ttyist
+	lda	lptpos			;get line printer position
+	jmp	dosizt
+ttyist:
+	lda	ttypos			;get teletype print position
+					;see where we are
+dosizt:	cma				;print [e]-[a] spaces
+	add	e
+	jc	aspa2			;print if past current
+	inr	a
+	jz	notabr			;do nothing if at current
+	call	crdo			;go to a new line
+	mov	a,e			;get the position to go to
+	dcr	a
+	jm	notabr
+					;spaces
+aspa2:	inr	a
+aspac:	mov	b,a			;[b]=number of spaces to print
+	mvi	a,' '			;[a]=space
+repout:	call	outdo			;print [a]
+					;decrement the count
+	dcr	b
+	jnz	repout
+notabr:	pop	h			;pick up text pointer
+	call	chrgtr			;and the next character
+	jmp	printc			;and since we just printed
+					;spaces, don't call crdo
+					;if it's the end of the line
+	public	finprt
+finprt:
+	xra	a
+	sta	prtflg
+	push	h			;save the text pointer
+	mov	h,a			;[h,l]=0
+	mov	l,a
+	shld	ptrfil			;zero out ptrfil
+	pop	h			;get back the text pointer
+	ret	
+	page
+	subttl	line input, input and read code
+line:
+	call	synchr
+	db	$input
+	cpi	'#'			;see if there is a file number
+	extrn	dline
+	jz	dline			;do disk input line
+	call	scnsem			;scan semicolon for no-cr
+	call	qtinp			;print quoted string if one
+	call	ptrget			;read string to store into
+	call	chkstr			;make sure its a string
+	push	d			;save pointer at variable
+	push	h			;save text pointer
+	extrn	sinlin
+	call	sinlin			;read a line of input
+	pop	d			;get text pointer
+	pop	b			;get pointer at variable
+	jc	stpend			;if control-c, stop
+reline:	push	b			;save back variable pointer
+	push	d			;save text pointer
+	mvi	b,0			;setup zero as only terminator
+	call	strlt3			;literalize the input
+	pop	h			;restore [h,l]=text pointer
+	mvi	a,3			;set three for string
+	jmp	letcn2			;do the assignment
+tryagn:
+	dc	'?REDO FROM START'
+	db	13
+	db	10
+	db	0
+;
+; here when passing over string literal in subscript of variable in input list
+; on the first pass of input checking for type match and number
+;
+scnstr:	inx	h			;look at the next character
+	mov	a,m			;fetch it
+	ora	a			;end of line?
+	jz	snerr			;ending in string in subscript is bad syntax
+	cpi	34			;only other terminator is quote
+	jnz	scnstr			;continue until quote or 0 is found
+	jmp	scncon			;continue matching parens since string ended
+inpbak:	pop	h			;get rid of pass1 data pointer
+	pop	h			;get rid of pass2 data pointer
+	jmp	rdoin2			;get rid of pass2 varlst pointer and retry
+;
+; here when the data that was typed in or in "data" statements
+; is improperly formatted. for "input" we start again.
+; for "read" we give a syntax error at the data line
+;
+trmnok:	lda	flginp			;was it read or input?
+	ora	a			;zero=input
+	jnz	datsne			;give error at data line
+rdoin2:	pop	b			;get rid of the pointer into the variable list
+rdoinp:
+	lxi	h,tryagn
+	call	strout			;print "?redo from start"
+					;to newstt pointing at the start of
+					;start all over
+	lhld	savtxt			;get saved text pointer
+	ret				;go back to newstt
+					;of the "input" statement
+filsti:	call	filinp
+	push	h			;put the text pointer on the stack
+	lxi	h,bufmin		;point at a comma
+	jmp	inpcn3
+input:
+	cpi	'#'
+	jz	filsti
+	call	scnsem			;scan semicolon for no-cr
+	lxi	b,notqti		;where to go
+	push	b			;when done with quoted string
+qtinp:	cpi	34			;is it a quote?
+	mvi	a,0			;be talkative
+	sta	cntofl			;force output
+	mvi	a,255			;make non-zero value
+	sta	tempa+1			;flag to do "? "
+	rnz				;just return
+	call	strlti			;make the message a string
+	mov	a,m			;get char
+	cpi	54o			;comma?
+	jnz	nticma			;no
+	xra	a			;flag not to do it
+	sta	tempa+1
+	call	chrgtr			;fetch next char
+	jmp	inpcma			;continue
+nticma:
+	call	synchr
+	db	59			;must end with semi-colon
+inpcma:
+	push	h			;remember where it ended
+	call	strprt			;print it out
+	pop	h			;get back saved text ptr
+	ret				;all done
+notqti:
+	push	h
+getagn:
+	lda	tempa+1			;do "? "
+	ora	a
+	jz	supprs			;then suppress "?"
+	mvi	a,'?'			;type "?" and input a line of text
+	call	outdo
+	mvi	a,' '
+	call	outdo
+	extrn	sinlin
+supprs:	call	sinlin
+	pop	b			;take off since maybe leaving
+	jc	stpend			;if empty leave
+	push	b			;put back  since didn't leave
+;
+; this is the first pass dictated by ansi requirment than no values be assigned 
+; before checking type and number. the variable list is scanned without evaluating
+; subscripts and the input is scanned to get its type. no assignment
+; is done
+;
+	mvi	m,44			;put a comma in front of buf
+	xchg				;save data pointer in [d,e]
+	pop	h			;get the varlst pointer into [h,l]
+	push	h			;resave the varlst pointer
+	push	d			;save a copy of the data pointer for pass2
+	push	d			;save the data pointer for pass1
+	dcx	h			;read the first variable name
+varlop:	mvi	a,128			;don't allow subscripts -- return pointing to "("
+	sta	subflg
+	call	chrgtr			;advance text pointer
+	call	ptrget			;scan name and return pointer in [d,e]
+	mov	a,m			;see if it ended on "("
+	dcx	h			;rescan the terminator
+	cpi	'('			;array or not?
+	jnz	endscn			;if not, variable name is done
+	inx	h			;now scan the subscript expression
+	mvi	b,0			;initialize the paren count
+scnopn:	inr	b			;up the count for every "("
+scncon:	call	chrgtr			;get the next character
+	jz	snerr			;shouldn't end statement in expression
+	cpi	34			;is there a quoted string constant
+	jz	scnstr			;go scan the endtire constant (may contain parens)
+	cpi	'('			;another level of nesting?
+	jz	scnopn			;increment coutn and keep scanning
+	cpi	')'			;one less level of parens?
+	jnz	scncon			;no, keep scanning
+					;decrement paren count. out of subscript?
+	dcr	b
+	jnz	scncon			;if not at zero level, keep scanning
+endscn:	call	chrgtr			;get terminating character
+	jz	okvlst			;last variable in input list
+	cpi	44			;otherwise it must be a comma
+	jnz	snerr			;badly formed input -- syntax error
+okvlst:	xthl				;save the varlst pointer 
+					;get the data pointer into [h,l]
+	mov	a,m			;data should always have a leading comma
+	cpi	44			;is it properly formed?
+	jnz	inpbak			;no, ask for complete reinput
+	mvi	a,1			;set ovcstr=1
+	sta	ovcstr
+	call	scnval			;go into pass2 code and scan a value
+	lda	ovcstr			;see if it was too big
+	dcr	a
+	jnz	inpbak
+	push	h			;save the returned data pointer
+	call	getypr			;release string
+	cz	frefac
+	pop	h
+	dcx	h			;skip over spaces left after value scan
+	call	chrgtr
+;
+; note check for overflow of input value here
+;
+	xthl				;save the data pointer
+					;[h,l]=data list pointer
+	mov	a,m			;did variable list continue?
+	cpi	44			;must have had a comma
+	jz	varlop			;go check another
+	pop	h			;get final data pointer
+	dcx	h			;skip over any trailing spaces
+	call	chrgtr
+	ora	a			;is it a true end?
+	pop	h			;get the start of data pointer for pass2
+	jnz	rdoin2			;if data ended badly ask for reinput
+inpcn3:
+	mvi	m,44			;setup comma at bufmin
+	jmp	inpcon
+read:
+	push	h			;save the text pointer
+	lhld	datptr			;get last data location
+	db	366q			;"ori" to set [a] non-zero
+inpcon:	xra	a			;set flag that this is an input
+	sta	flginp			;store the flag
+;
+; in the processing of data and read statements:
+; one pointer points to the data (ie the numbers being fetched)
+; and another points to the list of variables
+;
+; the pointer into the data always starts pointing to a
+; terminator -- a , : or end-of-line
+;
+	xthl				;[h,l]=variable list pointer
+					;data pointer goes on the stack
+	jmp	lopdat
+lopdt2:	call	synchr
+	db	44			;make sure there is a ","
+lopdat:	call	ptrget			;read the variable list
+					;and get the pointer to a variable into [d,e]
+	xthl				;put the variable list pointer onto the
+					;stack and take the
+					;data list pointer off
+;
+; note at this point we have a variable which wants data
+; and so we must get data or complain
+;
+	push	d			;save the pointer to the variable we
+					;are about to set up with a value
+	mov	a,m			;since the data list pointer always points
+					;at a terminator lets read the
+					;terminator into [a] and see what
+					;it is
+	cpi	44
+	jz	datbk			;a comma so a value must follow
+	lda	flginp			;see what type of statement this was
+	ora	a
+					;search for another data statement
+	jnz	datlop
+					;the data now starts at the beginning
+					;of the buffer
+					;and qinlin leaves [h,l]=buf
+datbk:
+	db	366q			;set a non-zero
+scnval:	xra	a			;set zero flag in [a]
+	sta	inppas			;store so early return check works
+	xchg				;save the data pointer
+	lhld	ptrfil			;see if a file read
+	mov	a,h
+	ora	l
+	xchg	
+	jnz	filind			;if so, special handling
+	call	getypr			;is it a string?
+	push	psw			;save the type information
+	jnz	numins			;if numeric, use fin to get it
+					;only the varaible type is
+					;checked so an unquoted string
+					;can be all digits
+	call	chrgtr
+	mov	d,a			;assume quoted string
+	mov	b,a			;setup terminators
+	cpi	34			;quote ?
+	jz	nowget			;terminators ok
+	lda	flginp			;input shouldn't terminate on ":"
+	ora	a			;see if read or input
+	mov	d,a			;set d to zero for input
+	jz	ncolst
+	mvi	d,':'			;unquoted string terminators
+ncolst:	mvi	b,44			;are colon and comma
+					;note: ansi uses [b]=44 as a flag to 
+					;trigger trailing space suppression
+	dcx	h			;backup since start character must be included
+					;in the quoted string case we don't want to
+					;include the starting or ending quote
+nowget:	call	strlt2			;make a string descriptor for the value
+					;and copy if necessary
+doasig:	pop	psw			;pop off the type information
+	adi	3			;make valtype correct
+	mov	c,a			;save value type in [c]
+	lda	inppas			;see if scanning values for pass1
+	ora	a			;zero for pass1
+	rz				;go back to pass1
+	mov	a,c			;recover valtyp
+	xchg				;[d,e]=text pointer
+	lxi	h,strdn2		;return loc
+	xthl				;[h,l]=place to store variable value
+	push	d			;text pointer goes on
+	jmp	inpcom			;do assignment
+numins:	call	chrgtr
+	pop	psw			;get back valtype of source
+	push	psw			;save back
+	lxi	b,doasig		;assignment is complicated
+					;even for numerics so use the "let" code
+	push	b			;save on stack
+	jc	fin			;if not double, call usual # inputter
+	jmp	findbl			;else call special routine which expects doubles
+strdn2:
+	dcx	h
+	call	chrgtr
+	jz	trmok
+	cpi	44
+	jnz	trmnok			;ended properly?
+trmok:
+	xthl	
+	dcx	h			;look at terminator
+	call	chrgtr			;and set up condition codes
+	jnz	lopdt2			;not ending, check for comma
+					;and get another variable
+					;to fill with data
+	pop	d			;pop off the pointer into data
+	lda	flginp			;fetch the statement type flag
+	ora	a
+					;input statement
+	xchg	
+	jnz	resfin			;update datptr
+	push	d			;save the text pointer
+finprg:	pop	h			;get back the text pointer
+	jmp	finprt
+;
+; the search for data statments is made by using the execution code
+; for data to skip over statements. the start word of each statement
+; is compared with $data. each new line number
+; is stored in datlin so that if an error occurs while reading
+; data the error message will give the line number of the 
+; ill-formatted data
+;
+datlop:	call	data
+datfnd:	ora	a
+	jnz	nowlin
+	inx	h
+	mov	a,m
+	inx	h
+	ora	m
+	mvi	e,errod			;no data is error errod
+	jz	error			;if so complain
+	inx	h			;skip past line #
+	mov	e,m			;get data line #
+	inx	h
+	mov	d,m
+	xchg	
+	shld	datlin
+	xchg				;restore text pointer
+nowlin:	call	chrgtr			;get the statement type
+	cpi	$data			;is is "data"?
+	jnz	datlop			;not data so look some more
+	jmp	datbk			;continue reading
+	page
+	subttl	formula evaluation code
+;
+; the formula evaluator starts with
+; [h,l] pointing to the first character of the formula.
+; at the end [h,l] points to the terminator.
+; the result is left in the fac.
+; on return [a] does not reflect the terminating character
+;
+; the formula evaluator uses the operator table (optab)
+; to determine precedence and dispatch addresses for
+; each operator.
+; a temporary result on the stack has the following format
+;
+; the address of 'retaop' -- the place to return on completion
+; of operator application
+;
+; the floating point temporary result
+;
+; the address of the operator rountine
+;
+; the precedence of the operator
+;
+; total 10 bytes
+;
+frmeql:	call	synchr
+	db	equltk			;check for equal sign
+	jmp	frmevl			;evaluate formula and return
+frmprn:	call	synchr
+	db	'('			;get paren before formula
+frmevl:	dcx	h			;back up character pointer
+frmchk:	mvi	d,0			;initial dummy precedence is 0
+lpoper:	push	d			;save precedence
+	mvi	c,1			;extra space needed for return address
+	call	getstk			;make sure there is room for recursive calls
+	call	eval			;evaluate something
+					;reset overflow printing back to normal
+	xra	a			;(set to 1 at fundsp to suppress
+	sta	flgovc			;multiple overflow messages)
+tstop:	shld	temp2			;save text pointer
+retaop:	lhld	temp2			;restore text ptr
+	pop	b			;pop off the precedence of oldop
+notstv:	mov	a,m			;get next character
+	shld	temp3			;save updated character pointer
+	cpi	greatk			;is it an operator?
+	rc				;no, all done (this can result in operator
+					;application or actual return)
+	cpi	lesstk+1		;some kind of relational?
+	jc	dorels			;yes, do it
+	sui	plustk			;subtraxdct offset for first arithmetic
+	mov	e,a			;must multiply by 3 since
+					;optab entries are 3 long
+	jnz	ntplus			;not addition op
+	lda	valtyp			;see if left part is string
+	cpi	3			;see if its a string
+	mov	a,e			;refetch op-value
+	jz	cat			;must be cat
+ntplus:
+	cpi	lstopk			;higher than the last op?
+	rnc				;yes, must be terminator
+	lxi	h,optab			;create index into optab
+	mvi	d,0			;make high byte of offset=0
+	dad	d			;add in calculated offset
+	mov	a,b			;[a] gets old precedence
+	mov	d,m			;remember new precedence
+	cmp	d			;old-new
+	rnc				;must apply old op
+					;if has greater or = precedence
+					;new operator
+	push	b			;save the old precedence
+	lxi	b,retaop		;put on the address of the
+	push	b			;place to return to after operator application
+	mov	a,d			;see if the operator is exponentiation
+	cpi	127			;which has precedence 127
+	jz	expstk			;if so, "frcsng" and make a special stack entry
+	cpi	81			;see if the operator is "and" or "or"
+	jc	andord			;and if so "frcint" and
+					;make a special stack entry
+	ani	254			;make 123 and 122 both map to 122
+	cpi	122			;make a special check for "mod" and "idiv"
+	jz	andord			;if so, coerce arguments to integer
+; this code pushes the current value in the fac
+; onto the stack, except in the case of strings in which it calls
+; type mismatch error. [d] and [e] are preserved.
+;
+numrel:	lxi	h,faclo			;save the value of the fac
+pusval:	lda	valtyp			;find out what type of value we are saving
+	sui	3			;setup the condition codes
+					;set zero for strings
+	jz	tmerr
+	ora	a			;set parity -- carry unaffected since off
+	mov	c,m
+	inx	h
+	mov	b,m
+	push	b			;push faclo+0,1 on the stack
+	jm	vpushd			;all done if the data was an integer
+	inx	h
+	mov	c,m
+	inx	h
+	mov	b,m
+	push	b			;push fac-1,0 on the stack
+	jpo	vpushd			;all done if we had a sng
+	inx	h
+	lxi	h,dfaclo		;we have a double precison number
+	mov	c,m			;push its 4 lo bytes on the stack
+	inx	h
+	mov	b,m
+	inx	h
+	push	b
+	mov	c,m
+	inx	h
+	mov	b,m
+	push	b			;user-defined functions require that the
+					;[h,l] returned points at the last value
+					;byte and not beyond it
+vpushd:
+	adi	3			;fix [a] to be the valtyp of the number
+					;just pushed on the stack
+	mov	c,e			;[c]=operator number
+	mov	b,a			;[b]=type of value on the stack
+	push	b			;save these things for applop
+	lxi	b,applop		;general operator application
+					;routine -- does type conversions
+fintmp:	push	b			;save place to go
+	lhld	temp3			;reget the text pointer
+	jmp	lpoper			;push on the precedence and read more formula
+dorels:	mvi	d,0			;assume no relation ops
+					;also setup the high order of the index into optab
+loprel:	sui	greatk			;is this one relation?
+	jc	finrel			;relations all through
+nmrel	set	lesstk-greatk+1
+	cpi	nmrel			;is it really relational?
+	jnc	finrel			;no just big
+	cpi	1			;set up bits by mapping
+	ral				;0 to 1 1 to 2 and 2 to 4
+	xra	d			;bring in the old bits
+	cmp	d			;make sure result is bigger
+	mov	d,a			;save the mask
+	jc	snerr			;don't allow two of the same
+	shld	temp3			;save character pointer
+	call	chrgtr			;get the next candidate
+	jmp	loprel
+;
+; for exponentiation we want to force the current value in the fac
+; to be single precision. when application time comes we force
+; the right hand operand to single precision as well
+;
+	extrn	fpwrq
+expstk:	call	frcsng			;coerce left hand operand
+	call	pushf			;put it on the stack
+	lxi	b,fpwrq			;place to coerce right hand
+					;operand and do exponentiation
+	mvi	d,127			;restore the precedence
+	jmp	fintmp			;finish entry and evaluate more formula
+;
+; for "and" and "or" and "\" and "mod" we want to force the current value
+; in the fac to be an integer, and at application time force the right
+; hand operand to be an integer
+;
+andord:	push	d			;save the precedence
+	call	frcint
+	pop	d			;[d]=precedence
+	push	h			;push the left hand operand
+	lxi	b,dandor		;"and" and "or" doer
+	jmp	fintmp			;push on this address,precedence
+					;and continue evaluation
+;
+; here to build an entry for a relational operator
+; strings are treated specially. numeric compares are different
+; from most operator entries only in the fact that at the
+; bottom instead of having retaop, docmp and the relational
+; bits are stored. strings have strcmp,the pointer at the string descriptor,
+; docmp and the relational bits.
+;
+finrel:	mov	a,b			;[a]=old precedence
+	cpi	100			;relationals have precedence 100
+	rnc				;apply earlier operator if it has
+					;higher precedence
+	push	b			;save the old precedence
+	push	d			;save [d]=relational bits
+	lxi	d,0+256*100+opcnt	;[d]=precedence=100
+					;[e]=dispatch offset for
+					;compares in applop=4
+					;in case this is a numeric compare
+	lxi	h,docmp			;routine to take compare routine result
+					;and relational bits and return the answer
+	push	h			;does a jmp to retaop when done
+	call	getypr			;see if we have a numeric compare
+	jnz	numrel			;yes, build an applop entry
+	lhld	faclo			;get the pointer at the string descriptor
+	push	h			;save it for strcmp
+	lxi	b,strcmp		;string compare routine
+	jmp	fintmp			;push the address, reget the text pointer
+					;save the precedence and scan
+					;more of the formula
+;
+; applop is returned to when it is time to apply an arithmetic
+; or numeric comparison operation.
+; the stack has a double byte entry with the operator
+; number and the valtyp of the value on the stack.
+; applop decides what value level the operation
+; will occur at, and converts the arguments. applop
+; uses different calling conventions for each value type.
+; integers: left in [d,e] right in [h,l]
+; singles:  left in [b,c,d,e] right in the fac
+; doubles:  left in fac   right in arg
+;
+applop:	pop	b			;[b]=stack operand value type
+					;[c]=operator offset
+	mov	a,c			;save in memory since the stack will be busy
+	sta	oprtyp			;a ram location
+	lda	valtyp			;get valtyp of fac
+	cmp	b			;are valtypes the same?
+	jnz	valnsm			;no
+	cpi	2			;integer?
+	jz	intdpc			;yes, dispatch!!
+	cpi	4			;single?
+	jz	sngdpc			;yes, dispatch!!
+	jnc	dbldpc			;must be double, dispatch!!
+valnsm:	mov	d,a			;save in [d]
+	mov	a,b			;check for double
+	cpi	8			;precision entry on the stack
+	jz	stkdbl			;force fac to double
+	mov	a,d			;get valtype of fac
+	cpi	8			;and if so, convert the stack operand
+	jz	facdbl			;to double precision
+	mov	a,b			;see if the stack entry is single
+	cpi	4			;precision and if so, convert
+	jz	stksng			;the fac to single precision
+	mov	a,d			;see if the fac is single precision
+	cpi	3			;and if so convert the stack to single
+	jz	tmerr			;blow up on right hand string operand
+	jnc	facsng			;precision
+					;note: the stack must be integer at this point
+intdpc:	lxi	h,intdsp		;integer integer case
+	mvi	b,0			;special dispatch for speed
+	dad	b			;[h,l] points to the address to go to 
+	dad	b
+	mov	c,m			;[b,c]=routine address
+	inx	h
+	mov	b,m
+	pop	d			;[d,e]=left hand operand
+	lhld	faclo			;[h,l]=right hand operand
+	push	b			;dispatch
+	ret	
+;
+; the stack operand is double precision, so
+; the fac must be forced to double precision, moved into arg
+; and the stack value poped into the fac
+;
+stkdbl:	call	frcdbl			;make the fac double precision
+dbldpc:	call	vmovaf			;move the fac into arg
+	pop	h			;pop off the stack operand into the fac
+	shld	dfaclo+2
+	pop	h
+	shld	dfaclo			;store low bytes away
+sngdbl:	pop	b
+	pop	d
+					;pop off a four byte value
+	call	movfr			;into the fac
+setdbl:	call	frcdbl			;make sure the left operand is
+					;double precision
+	lxi	h,dbldsp		;dispatch to a double precision routine
+dodsp:	lda	oprtyp			;recall which operand it was
+	rlc				;create a dispatch offset, since
+					;table addresses are two bytes
+	add	l			;add low byte of address
+	mov	l,a			;save back
+	adc	h			;add high byte
+	sub	l			;subtract low
+	mov	h,a			;result back
+	mov	a,m			;get the address
+	inx	h
+	mov	h,m
+	mov	l,a
+	pchl				;and perform the operation, returning
+					;to retaop, except for compares which
+					;return to docmp
+;
+; the fac is double precision and the stack is either
+; integer or single precision and must be converted
+; 
+facdbl:	push	b			;save the stack value type
+	call	vmovaf			;move the fac into arg
+	pop	psw			;pop the stack value type into [a]
+	sta	valtyp			;put it in valtyp for the force
+					;routine
+	cpi	4			;see if its single, so we know
+					;how to pop the value off
+	jz	sngdbl			;it's single precision
+					;so do a popr / call movfr
+	pop	h			;pop off the integer value
+	shld	faclo			;save it for conversion
+	jmp	setdbl			;set it up
+;
+; this is the case where the stack is single precision
+; and the fac is either single precision or integer
+;
+stksng:	call	frcsng			;convert the fac if necessary
+sngdpc:	pop	b
+	pop	d
+					;put the left hand operand in the registers
+sngdo:	lxi	h,sngdsp		;setup the dispatch address
+					;for the single precision operator routines
+	jmp	dodsp			;dispatch
+;
+; this is the case where the fac is single precision and the stack
+; is an integer. 
+;
+facsng:	pop	h			;pop off the integer on the stack
+	call	pushf			;save the fac on the stack
+	call	consih			;convert [h,l] to a single precision
+					;number in the fac
+	call	movrf			;put the left hand operand in the registers
+	pop	h			;restore the fac
+	shld	fac-1			;from the stack
+	pop	h
+	shld	faclo
+	jmp	sngdo			;perform the operation
+;
+; here to do integer division. since we want 1/3 to be
+; .333333 and not zero we have to force both arguments
+; to be single-precision floating point numbers
+; and use fdiv
+;
+intdiv:	push	h			;save the right hand argument
+	xchg				;[h,l]=left hand argument
+	call	consih			;convert [h,l] to a single-precision
+					;number in the fac
+	pop	h			;get back the right hand argument
+	call	pushf			;push the converted left hand argument
+					;onto the stack
+	call	consih			;convert the right hand argument to a
+					;single precision number in the fac
+	jmp	fdivt			;do the division after poping into the
+					;registers the left hand argument
+	page
+	subttl	eval - evaluate variable, constant, function call
+eval:
+	call	chrgtr
+	jz	moerr			;test for missing operand - if none give error
+	jc	fin			;if numeric, interpret constant
+	call	islet2			;variable name?
+	jnc	isvar			;an alphabetic character means yes
+	cpi	dblcon+1		;is it an embeded constant
+	jc	confac			;rescan the token & restore old text ptr
+	inr	a			;is it a function call (preceded by 377)
+	jz	isfun			;yes, do it
+	dcr	a			;fix a back
+	cpi	plustk			;ignore "+"
+	jz	eval
+	cpi	minutk			;negation?
+	jz	domin
+	cpi	34			;string constant?
+	jz	strlti			;if so build a descriptor in a temporary
+					;descriptor location and put a pointer to the
+					;descriptor in faclo.
+	cpi	nottk			;check for "not" operator
+	jz	noter
+	cpi	'&'			;octal constant?
+	jz	octcns
+	cpi	erctk
+	jnz	nterc			;no, try other possibilities
+	call	chrgtr			;grab following char
+					;is it a disk error call?
+	lda	errflg			;get the error code.
+					;"cpi over next byte
+ntderc:	push	h			;save text pointer
+	call	sngflt			;return the value
+	pop	h			;restore text pointer
+	ret				;all done.
+nterc:	cpi	erltk			;error line number variable.
+	jnz	nterl			;no, try more things.
+	call	chrgtr			;get following character
+	push	h			;save text pointer
+	lhld	errlin			;get the offending line #
+	call	ineg2			;float 2 byte unsinged int
+	pop	h			;restore text pointer
+	ret				;return
+nterl:
+	cpi	$varpt			;varptr call?
+	jnz	ntvarp			;no
+	call	chrgtr			;eat char after
+	call	synchr
+	db	'('			;eat left paren
+	extrn	getptr
+	cpi	'#'			;want pointer to file?
+	jnz	nvrfil			;no, must be variable
+	call	gtbytc			;read file #
+	push	h			;save text ptr
+	call	getptr			;get ptr to file
+	pop	h			;restore text ptr
+	jmp	varret
+nvrfil:
+	call	ptrget			;get address of variable
+	public	varret
+varret:	call	synchr
+	db	')'			;eat right paren
+	push	h			;save text pointer
+	xchg				;get value to return in [h,l]
+	mov	a,h			;make sure not undefined var
+	ora	l			;set cc's. zero if undef
+	jz	fcerr			;all over if undef (dont want
+					;user poking into zero if he's
+					;too lazy to check
+	call	makint			;make it an int
+	pop	h			;restore text pointer
+	ret	
+ntvarp:
+	cpi	usrtk			;user assembly language routine??
+	jz	usrfn			;go handle it
+	cpi	insrtk			;is it the instr function??
+	jz	instr			;dispatch
+	extrn	inkey
+	cpi	$inkey			;inkey$ function?
+	jz	inkey			;go do it
+	cpi	$strin			;string function?
+	jz	strng$			;yes, go do it
+	extrn	fixinp
+	cpi	$input			;fixed length input?
+	jz	fixinp			;yes
+	cpi	fntk			;user-defined function?
+	jz	fndoer
+					;numbered characters allowed
+					;so there is no need to check
+					;the upper bound
+; only possibility left is a formula in parentheses
+parchk:	call	frmprn			;recursively evaluate the formula
+	call	synchr
+	db	')'
+	ret	
+domin:
+	mvi	d,125			;a precedence below ^
+					;but above all else
+	call	lpoper			;so ^ greater than unary minus
+	lhld	temp2			;get text pointer
+	push	h
+	call	vneg
+labbck:					;functions that don't return
+					;string values come back here
+	pop	h
+	ret	
+isvar:	call	ptrget			;get a pointer to the
+					;variable in [d,e]
+retvar:	push	h			;save the text pointer
+	xchg				;put the pointer to the variable value
+					;into [h,l]. in the case of a string
+					;this is a pointer to a descriptor and not
+					;an actual value
+	shld	faclo			;in case it's string store the pointer
+					;to the descriptor in faclo.
+	call	getypr			;for strings we just leave
+	cnz	vmovfm			;a pointer in the fac
+					;the fac using [h,l] as the pointer.
+	pop	h			;restore the text pointer
+	ret	
+	public	makupl,makups
+makupl:	mov	a,m			;get char from memory
+makups:	cpi	'A'+40o			;is it lower case range
+	rc				;less
+	cpi	'Z'+41o			;greater
+	rnc				;test
+	ani	137o			;make upper case
+	ret				;done
+	public	cnsget
+cnsget:
+	cpi	'&'			;octal perhaps?
+	jnz	linget
+	public	octcns
+octcns:	lxi	d,0			;initialize to zero and ignore overflow
+	call	chrgtr			;get first char
+	call	makups			;make upper if nesc.
+	cpi	'O'			;octal?
+	jz	lopoct			;if so, do it
+	cpi	'H'			;hex?
+	jnz	lopoc2			;then do it
+	mvi	b,5			;init digit count
+lophex:	inx	h			;bump pointer
+	mov	a,m			;get char
+	call	makups			;make upper case
+	call	islet2			;fetch char, see if alpha
+	xchg				;save [h,l]
+	jnc	alptst			;yes, make sure legal hec
+	cpi	'9'+1			;is it bigger than largest digit?
+	jnc	octfin			;yes, be forgiving & return
+	sui	'0'			;convert digit, make binary
+	jc	octfin			;be forgiving if not hex digit
+	jmp	nxthex			;add in offset
+alptst:	cpi	'F'+1			;is it legal hex?
+	jnc	hexfin			;yes, terminate
+	sui	'A'-10			;make binary value
+nxthex:	dad	h			;shift right four bits
+	dad	h
+	dad	h
+	dad	h
+	ora	l			;or on new digit
+	mov	l,a			;save back
+	dcr	b			;too many digits?
+	jz	overr			;yup.
+	xchg				;get text pointer back in [h,l]
+	jmp	lophex			;keep eating
+lopoc2:	dcx	h			;reget last character
+lopoct:	call	chrgtr			;read a digit
+	xchg				;result into [h,l]
+	jnc	octfin			;out of digits means done
+	cpi	'8'			;is this an octal digit
+	jnc	snerr			;no, too bad you will lose
+	lxi	b,overr			;where to go on overflow error
+	push	b			;save addr on stack
+	dad	h			;multiply by eight
+	rc				;overflow error
+	dad	h
+	rc				;overflow error
+	dad	h
+	rc				;overflow error
+	pop	b			;get rid of overr addr
+	mvi	b,0			;setup to add [b,c]
+	sui	'0'
+	mov	c,a
+	dad	b			;add in the digit
+	xchg				;put text pointer back in [h,l]
+	jmp	lopoct			;scan more digits
+hexfin:
+octfin:
+hocfin:
+	call	makint			;save as an integer
+	xchg				;[h,l]-text pointer
+	ret	
+isfun:
+	inx	h			;bump source text pointer
+	mov	a,m			;get the actual token for fn
+	sui	onefun			;make into offset
+	extrn	rndmon
+	cpi	$rnd-onefun		;is it rnd?
+	jnz	ntmrnd			;if not no need to check monadic
+	push	h			;save text pointer
+	call	chrgtr			;see if next char is "("
+	cpi	'('
+	pop	h			;get back the old text pointer
+	jnz	rndmon			;handle monadic case
+	mvi	a,$rnd-onefun
+ntmrnd:
+	mvi	b,0
+	rlc				;multiply by 2
+	mov	c,a
+	push	b			;save the function # on the stack
+	call	chrgtr
+	mov	a,c			;look at function #
+numgfn	set	2*midtk-2*onefun+1
+	cpi	numgfn			;is it past lasnum?
+	jnc	oknorm			;no, must be a normal function
+;
+; most functions take a single argument.
+; the return address of these functions is a small routine
+; that checks to make sure valtyp is 0 (numeric) and pops off
+; the text pointer. so normal functions that return string results (i.e. chr$)
+; must pop off the return address of labbck, and pop off the
+; text pointer and then return to frmevl.
+;
+; the so called "funny" functions can take more than one argument.
+; the first of which must be string and the second of which
+; must be a number between 0 and 256. the text pointer is
+; passed to these functions so additional arguments
+; can be read. the text pointer is passed in [d,e].
+; the close parenthesis must be checked and return is directly
+; to frmevl with [h,l] setup as the text pointer pointing beyond the ")".
+; the pointer to the descriptor of the string argument
+; is stored on the stack underneath the value of the integer
+; argument (2 bytes)
+;
+; first argument always string -- second integer
+	call	frmprn			;eat open paren and first arg
+	call	synchr
+	db	44			;two args so comma must delimit
+	call	chkstr			;make sure the first one was string
+	xchg				;[d,e]=txtptr
+	lhld	faclo			;get ptr at string descriptor
+	xthl				;get function #
+					;save the string ptr
+	push	h			;put the function # on
+	xchg				;[h,l]=txtptr
+	call	getbyt			;[e]=value of formula
+	xchg				;text pointer into [d,e]
+					;[h,l]=int value of second argument
+	xthl				;save int value of second arg
+					;[h,l]=function number
+	jmp	fingo			;dispatch to function
+oknorm:
+	call	parchk			;check out the argument
+					;and make sure its followed by ")"
+	xthl				;[h,l]=function # and save text pointer
+;
+; check if special coercion must be done for one of the transcendental
+; functions (rnd, sqr, cos, sin, tan, atn, log, and exp)
+; these functions do not look at valtyp, but rather assume the
+; argument passed in the fac is single precision, so frcsng
+; must be called before dispatching to them.
+;
+	mov	a,l			;[a]=function number
+botcon	set	(sqrtk-onefun)*2
+	cpi	botcon			;less than square root?
+	jc	notfrf			;don't force the argument
+topcon	set	(atntk-onefun)*2+1
+	cpi	topcon			;bigger than arc-tangent?
+	push	h			;save the function number
+	cc	frcsng			;if not, force fac to single-precision
+	pop	h			;restore the function number
+notfrf:
+	lxi	d,labbck		;return address
+	push	d			;make them really come back
+	mvi	a,1			;function should only print overflow once
+	sta	flgovc
+fingo:	lxi	b,fundsp		;function dispatch table
+dispat:	dad	b			;add on the offset
+	mov	c,m			;faster than pushm
+	inx	h
+	mov	h,m
+	mov	l,c
+	pchl				;go perform the function
+; the folowing routine is called from fin in f4
+; to scan leading signs for numbers. it was moved
+; to f3 to eliminate byte externals
+	public	minpls
+minpls:
+	dcr	d			;set sign of exponent flag
+	cpi	minutk			;negative exponent?
+	rz	
+	cpi	'-'
+	rz	
+	inr	d			;no, reset flag
+	cpi	'+'
+	rz	
+	cpi	plustk			;ignore "+"
+	rz	
+	dcx	h			;check if last character was a digit
+	ret				;return with non-zero set
+	page
+	subttl	more formula evaluation - logical, relational ops
+docmp:	inr	a			;setup bits
+	adc	a			;4=less 2=equal 1=greater
+	pop	b			;what did he want?
+	ana	b			;any bits match?
+	adi	255			;map 0 to 0
+	sbb	a			;and all others to 377
+	call	conia			;convert [a] to an integer signed
+	jmp	retapg			;return from operator application
+					;place so the text pointer
+					;will get set up to what it was
+					;when lpoper returned.
+noter:	mvi	d,90			;"not" has precedence 90, so
+	call	lpoper			;formula evaluation is entered with a dummy
+					;entry of 90 on the stack
+	call	frcint			;coerce the argument to integer
+	mov	a,l			;complement [h,l]
+	cma	
+	mov	l,a
+	mov	a,h
+	cma	
+	mov	h,a
+	shld	faclo			;update the fac
+	pop	b			;frmevl, after seeing the precedence
+					;of 90 thinks it is applying an operator
+					;so it has the text pointer in temp2 so
+retapg:	jmp	retaop			;return to refetch it
+getypr:	lda	valtyp			;replacement for "getype" rst
+	cpi	8
+;
+; continuation of getype rst
+;
+cgetyp:	jnc	ncase			;split off no carry case
+	sui	3			;set a correctly
+	ora	a			;now set logical's ok
+	stc				;carry must be set
+	ret				;all done
+ncase:	sui	3			;subtract correctly
+	ora	a			;set cc's properly
+	ret				;return
+;
+; dandor applies the "and" and "or" operators
+; and should be used to implement all logical operators.
+; whenever an operator is applied, its precedence is in [b].
+; this fact is used to distinguish between "and" and "or".
+; the right hand argument is coerced to integer, just as
+; the left hand one was when it was pushed on the stack.
+;
+dandor:	push	b			;save the precedence "or"=70
+	call	frcint			;coerce right hand argument to integer
+	pop	psw			;get back the precedence to distinguish
+					;"and" and "or"
+	pop	d			;pop off the left hand argument
+	cpi	122			;is the operator "mod"?
+	jz	imod			;if so, use monte's special routine
+	cpi	123			;is the operator "idiv"?
+	jz	idiv			;let monte handle it
+	lxi	b,givint		;place to return when done
+	push	b			;save on stack
+	cpi	70			;set zero for "or"
+	jnz	notor
+	mov	a,e			;setup low in [a]
+	ora	l
+	mov	l,a
+	mov	a,h
+	ora	d
+	ret				;return the integer [a,l]
+notor:
+	cpi	80			;and?
+	jnz	notand
+	mov	a,e
+	ana	l
+	mov	l,a
+	mov	a,h
+	ana	d
+	ret				;return the integer [a,l]
+notand:	cpi	60			;xor?
+	jnz	notxor			;no
+	mov	a,e
+	xra	l
+	mov	l,a
+	mov	a,h
+	xra	d
+	ret	
+notxor:	cpi	50			;eqv?
+	jnz	noteqv			;no
+	mov	a,e			;low part
+	xra	l
+	cma	
+	mov	l,a
+	mov	a,h
+	xra	d
+	cma	
+	ret	
+;for "imp" use a imp b = not(a and not(b))
+noteqv:	mov	a,l			;must be "imp"
+	cma	
+	ana	e
+	cma	
+	mov	l,a
+	mov	a,h
+	cma	
+	ana	d
+	cma	
+	ret	
+	page
+;
+; this routine subtracts [d,e] from [h,l]
+; and floats the result leaving it in fac.
+;
+givdbl:	mov	a,l			;[h,l]=[h,l]-[d,e]
+	sub	e
+	mov	l,a
+	mov	a,h
+	sbb	d
+	mov	h,a			;save high byte in [h]
+	jmp	ineg2			;float 2 byte unsigned int
+lpos:	lda	lptpos
+	jmp	sngfli
+pos:
+	lda	ttypos			;get teletype position
+					;see where we are
+sngfli:
+					;in adds version tab positions start at column 1.
+	inr	a
+	public	sngflt
+sngflt:	mov	l,a			;make [a] an unsigned integer
+	xra	a
+givint:	mov	h,a
+	jmp	makint
+	page
+	subttl	user defined (usr) assembly language function code
+usrfn:	call	scnusr			;scan the usr#
+	push	d			;save pointer
+	call	parchk			;eat left paren and formula
+	xthl				;save text pointer & get index into usrtab
+	mov	c,m			;get dispatch adress
+	inx	h			;bump pointer
+	mov	b,m			;pick up 2nd byte of address
+	lxi	h,pophrt		;get address of pop h ret
+	push	h			;push it on
+	push	b			;save address of usr routine
+	lda	valtyp			;get argument type in [a]
+	push	psw			;save valtyp
+	cpi	3			;string??
+	cz	frefac			;free it up
+	pop	psw			;get back valtyp
+	xchg				;move possible desc. pointer to [d,e]
+	lxi	h,faclo			;pointer to fac in [h,l]
+	ret				;call usr routine
+scnusr:	call	chrgtr			;get a char
+	lxi	b,0			;assume usr0
+	cpi	onecon+10		;single byte int expected
+	jnc	noargu			;no, must be defaulting to usr0
+	cpi	onecon			;is it smaller than onecon
+	jc	noargu			;yes, assume trying to default to usr0
+usercn:	call	chrgtr			;scan past next char
+	lda	conlo			;get value of 1 byter
+					;yup
+	ora	a			;make sure carry is off
+	ral				;multiply by 2
+	mov	c,a			;save offset in [c]
+noargu:	xchg				;save text pointer in [d,e]
+	lxi	h,usrtab		;get start of table
+	dad	b			;add on offset
+	xchg				;restore text pointer, address to [d,e]
+	ret				;return from scan routine
+defusr:	call	scnusr			;scan the usr name
+	push	d			;save pointer to usrtab entry
+	call	synchr
+	db	equltk			;must have equal sign
+	call	getin2			;get the address
+	xthl				;text pointer to stack, get address
+	mov	m,e			;save usr call address
+	inx	h			;bump pointer
+	mov	m,d			;save high byte of address
+	pop	h			;restore text pointer
+	ret				;return to newstt
+	page
+	subttl	simple-user-defined-function code
+;
+; in the 8k version (see later comment for extended)
+; note only single arguments are allowed to functions
+; and functions must be of the single line form:
+; def fna(x)=x^2+x-2
+; no strings can be involved with these functions
+;
+; idea: create a funny simple variable entry
+; whose first character (second word in memory)
+; has the 200 bit set.
+; the value will be:
+;
+; 	a txtptr to the formula
+;	the name of the parameter variable
+;
+; function names can be like "fna4"
+;
+def:
+	cpi	usrtk			;defining the call address of usr routine?
+	jz	defusr			;yes, do it
+	call	getfnm			;get a pointer to the function name
+	call	errdir			;def is "illegal direct"
+					;memory, restore the txtptr
+					;and go to "data" skipping the
+					;rest of the formula
+	xchg				;[d,e] = the text pointer after the function
+					;name and [h,l] = pointer at place to store
+					;value of the function variable
+	mov	m,e			;save the text pointer as the value
+	inx	h
+	mov	m,d
+	xchg				;restore the text pointer to [h,l]
+	mov	a,m			;get next char
+	cpi	'('			;does this function have args?
+	jnz	data			;no
+	call	chrgtr
+scnlis:	call	ptrget			;get pointer to dummy var(create var)
+	mov	a,m			;get terminator
+	cpi	')'			;end of arg list?
+	jz	data			;yes
+	call	synchr
+	db	44			;"," must follow then
+	jmp	scnlis
+fndoer:	call	getfnm			;get a pointer to
+	lda	valtyp			;find out what kind of function it is
+	ora	a			;push this [a] on with a psw with carry off
+					;so that when values are being popped off
+					;and restored to parameters we will know
+					;when to stop
+					;when a valtyp is popped off with
+					;carry off
+	push	psw			;save so that the final result will
+					;be coerced to the function type
+	shld	temp2			;save the text pointer that points past
+					;the function name in the call
+	xchg				;[h,l]=a pointer to the value of function
+	mov	a,m			;[h,l]=value of the function
+	inx	h			;which is a text pointer at the formal
+	mov	h,m			;parameter list in the definition
+	mov	l,a
+	ora	h			;a zero text pointer means the function
+					;was never defined
+	jz	uferr			;if so, given an "undefined function" error
+	mov	a,m			;see if there are any parameters
+	cpi	'('			;parameter list starts with "(""
+	jnz	finvls			;skip over parameter setup
+	call	chrgtr			;go past the "("
+	shld	temp3			;save the text pointer to the start of the
+	xchg				;parameter list.
+	lhld	temp2			;now get the text-pointer from the call
+					;which is pointing just past the
+					;function name at the argument list
+	call	synchr
+	db	'('			;make sure the argument list is there
+	xra	a			;indicate end of values to assign
+	push	psw
+	push	h			;save the callers text pointer
+	xchg				;get the pointer to the beginning of the
+					;parameter list
+asgmor:	mvi	a,128			;outlaw arrays when scanning
+	sta	subflg			;parameters
+	call	ptrget			;read a parameter
+	xchg				;[d,e]=parameter list text,[h,l]=variable pointer
+	xthl				;save the variables position and
+					;get the pointer at the arg list
+	lda	valtyp			;and its type (for coercion)
+	push	psw
+	push	d			;save the text pointer into the parameter
+	call	frmevl			;evaluate the argument
+	shld	temp2			;save the argument list pointer
+	pop	h			;and the parameter list pointer
+	shld	temp3
+	pop	psw			;get the value type
+	call	docnvf			;coerce the argument
+	mvi	c,4			;make sure there is room for the value
+	call	getstk
+	lxi	h,0-8			;save eight places
+	dad	sp
+	sphl	
+	call	vmovmf			;put value into reserved place in stack
+	lda	valtyp			;save type for assignment
+	push	psw
+	lhld	temp2			;reget the argument list pointer
+	mov	a,m			;see what comes after the argument formula
+	cpi	')'			;is the argument list ending?
+	jz	popasg			;make sure the argument list also ended
+	call	synchr
+	db	54o			;skip over argument comma
+	push	h			;save the argument list text pointer
+	lhld	temp3			;get the text pointer into the defintion's
+					;parameter list
+	call	synchr
+	db	54o			;skip over the parameter list comma
+	jmp	asgmor			;and bind the rest of the parameters
+popas2:	pop	psw			;if assignment is sucessful update prmln2
+	sta	prmln2			;indicate new variable is in place
+popasg:	pop	psw			;get the value type
+	ora	a
+	jz	finasg			;zero means no more left to pop and assign
+	sta	valtyp
+	lxi	h,0			;point into stack
+	dad	sp			;to get saved value
+	call	vmovfm			;put value into fac
+	lxi	h,0+8			;free up stack area
+	dad	sp
+	sphl	
+	pop	d			;get place to store to
+	mvi	l,3			;calculate the size of the looks (name)
+lpsizl:	inr	l			;increment size
+	dcx	d			;point at previous character
+	ldax	d			;see if it is the length or another character
+	ora	a
+	jm	lpsizl			;high bit indicates still part of name
+	dcx	d			;back up over looks
+	dcx	d
+	dcx	d
+	lda	valtyp			;get size of value
+	add	l			;add on size of name
+	mov	b,a			;save total length in [b]
+	lda	prmln2			;get current size of block
+	mov	c,a			;save in [c]
+	add	b			;get potential new size
+	cpi	prmsiz			;can't exceed allocated storage
+	jnc	fcerr
+	push	psw			;save new size
+	mov	a,l			;[a]=size of name
+	mvi	b,0			;[b,c]=size of parm2
+	lxi	h,parm2			;base of place to store into
+	dad	b			;[h,l]=place to start the new variable
+	mov	c,a			;[b,c]=length of name of variable
+	call	bctran			;put in the new name
+	lxi	b,popas2		;place to return after assignment
+	push	b
+	push	b			;save extra entry on stack
+	jmp	letcn4			;perform assignment on [h,l] (extra pop d)
+finasg:	lhld	temp2			;get argument list pointer
+	call	chrgtr			;skip over the closing parenthesis
+	push	h			;save the argument text pointer
+	lhld	temp3			;get the parameter list text pointer
+	call	synchr
+	db	')'			;make sure the parameter list
+					;ended at the same time
+	db	76q			;skip the next byte with "mvi al,"
+finvls:	push	d			;here when there were no arguments
+					;or parameters
+					;save the text pointer of the caller
+	shld	temp3			;save the text pointer of the function
+	lda	prmlen			;push parm1 stuff onto the stack
+	adi	4			;with prmlen and prmstk (4 bytes extra)
+	push	psw			;save the number of bytes
+	rrc				;number of two byte entries in [a]
+	mov	c,a
+	call	getstk			;is there room on the stack?
+	pop	psw			;[a]=amount to put onto stack
+	mov	c,a
+	cma				;complement [a]
+	inr	a
+	mov	l,a
+	mvi	h,255
+	dad	sp
+	sphl				;set up new stack
+	push	h			;save the new value for prmstk
+	lxi	d,prmstk		;fetch data from here
+	call	bctran
+	pop	h
+	shld	prmstk			;link parameter block for garbage collection
+	lhld	prmln2			;now put parm2 into parm1
+	shld	prmlen			;set up length
+	mov	b,h
+	mov	c,l			;[b,c]=transfer count
+	lxi	h,parm1
+	lxi	d,parm2
+	call	bctran
+	mov	h,a			;clear out parm2
+	mov	l,a
+	shld	prmln2
+	lhld	funact			;increment function count
+	inx	h
+	shld	funact
+	mov	a,h
+	ora	l			;set up active flag non-zero
+	sta	nofuns
+	lhld	temp3			;get back the function definition text pointer
+;	dcx	h		;detect a multi-line function
+;	chrget			;if the definition ends now
+;	jz	mulfun		;if ends, its a multi-line function
+					;skip over the "=" in the definition
+	call	frmeql			;and evaluate the definition formula
+					;can have recursion at this point
+	dcx	h
+	call	chrgtr			;see if the statement ended right
+	jnz	snerr			;this is a cheat, since the line
+					;number of the error will be the callers
+					;line # instead of the definitions line #
+	call	getypr			;see it the result is a string
+	jnz	nocprs			;whose descriptor is about to be wiped out
+					;because it is sitting in parm1 (this
+					; happens it the function is a projection
+					; function on a string argument)
+	lxi	d,dsctmp		;dsctmp is past all the temp area
+	lhld	faclo			;get the address of the descriptor
+	call	dcompr
+	jc	nocprs			;result is a temp - no copy nesc
+	call	strcpy			;make a copy in dsctmp
+	call	puttmp			;put result in a temp and make faclo point at it
+nocprs:	lhld	prmstk			;get place to restore parm1 from stack
+	mov	d,h
+	mov	e,l
+	inx	h			;point at length
+	inx	h
+	mov	c,m			;[b,c]=length
+	inx	h
+	mov	b,m
+	inx	b			;include extra bytes
+	inx	b
+	inx	b
+	inx	b
+	lxi	h,prmstk		;place to store into
+	call	bctran
+	xchg				;[d,e]=place to restore stack to
+	sphl	
+	lhld	funact			;decrease active function count
+	dcx	h
+	shld	funact
+	mov	a,h
+	ora	l			;set up function flag
+	sta	nofuns
+	pop	h			;get back the callers text pointer
+	pop	psw			;get back the type of the function
+docnvf:	push	h			;save the text pointer
+	ani	7			;setup dispatch to force
+					;formula type to conform
+					;to the variable its being assigned to
+	lxi	h,frctbl		;table of force routines
+	mov	c,a			;[b,c]=two byte offset
+	mvi	b,0
+	dad	b
+	call	dispat			;dispatch
+	pop	h			;get back the text pointer
+	ret	
+;
+; block transfer routine with source in [d,e] destination in [h,l]
+; and count in [b,c]. transfer is forward.
+;
+bctral:	ldax	d
+	mov	m,a
+	inx	h
+	inx	d
+	dcx	b
+bctran:	mov	a,b
+	ora	c
+	jnz	bctral
+	ret	
+;
+; subroutine to see if we are in direct mode and
+; complain if so
+;
+errdir:	push	h			;save their [h,l]
+	lhld	curlin			;see what the current line is
+	inx	h			;direct is 65,535 so now 0
+	mov	a,h
+	ora	l			;is it zero now?
+	pop	h
+	rnz				;return if not
+	mvi	e,errid			;"illegal direct" error
+	jmp	error
+;
+; subroutine to get a pointer to a function name
+;
+getfnm:	call	synchr
+	db	fntk			;must start with "fn"
+	mvi	a,128			;dont allow an array
+	sta	subflg			;don't recognize the "(" as
+					;the start of an array refereence
+	ora	m			;put function bit on
+	mov	c,a			;get first character into [c]
+	jmp	ptrgt2
+	page
+	subttl	string functions - left hand side mid$
+ismid$:	cpi	377o-$end		;lhs mid$?
+	jnz	snerr			;no, error.
+	inx	h			;point to next char
+	mov	a,m			;get fn descriptor
+	cpi	midtk			;is it mid?
+	jnz	snerr			;no, error
+	inx	h			;bump pointer
+	extrn	lhsmid			;code is in bistrs.mac
+	jmp	lhsmid
+	page
+	subttl	inp, out, wait, console, width
+;
+; the following functions allow the 
+; user full access to the altair i/o ports
+; inp(channel#) returns an integer which is the status
+; of the channel. out channel#,value puts out the integer
+; value on channel #. it is a statement, not a function.
+;
+fninp:	call	conint			;get integer channel #
+	sta	inpwrd+1		;gen inp instr
+inpwrd:	in	0			;the inp instr
+	jmp	sngflt			;sngflt result
+fnout:	call	setio			;get ready
+					;do the "out" and return
+	public	outwrd
+outwrd:	out	0			;do it
+	ret	
+;
+; the wait channel#,mask,mask2 waits until the status
+; returned by channel# is non zero when xored with mask2
+; and then anded with mask. if mask2 is not present it is assumed
+; to be zero.
+;
+fnwait:	call	setio			;set up for wait
+	push	psw			;save the mask
+	mvi	e,0			;default mask2 to zero
+	dcx	h
+	call	chrgtr			;see if the statement ended
+	jz	notthr			;if no third argument skip this
+	call	synchr
+	db	44			;make sure there is a ","
+	call	getbyt
+notthr:	pop	b			;reget the "and" mask
+lopinp:
+stainp:	in	0			;the input instr
+	xra	e			;xor with mask2
+	ana	b			;and with mask
+	jz	lopinp			;loop until result is non-zero
+					;note: this loop cannot be control-c'ed
+					;unless the wait is being done on channel
+					;zero. however a restart at 0 is ok.
+	ret	
+consol:	jmp	snerr
+; this is the width (terminal width) command command
+; arg must be .gt. 15 and .lt. 255
+width:
+	cpi	$lprin			;width lprint?
+	jnz	notwlp			;no
+	call	chrgtr			;fetch next char
+	call	getbyt			;get width
+	sta	lptsiz			;save it
+	call	morcp3			;compute last comma column
+	sta	nlppos			;save it
+	ret	
+notwlp:
+	call	getbyt			;get the channel #
+	sta	linlen			;setup the line length
+morcp2:
+	call	morcp3
+	sta	clmlst			;set last comma posit
+	ret				;done
+morcp3:	sui	clmwid
+	jnc	morcp3
+	adi	2*clmwid
+	cma	
+	inr	a
+	add	e
+	ret				;back to newstt
+	public	getin2,getint
+getint:	call	chrgtr
+getin2:	call	frmevl			;evaluate a formula
+intfr2:	push	h			;save the text pointer
+	call	frcint			;convert the formula to an integer in [h,l]
+	xchg				;put the integer into [d,e]
+	pop	h			;retsore the text pointer
+	mov	a,d			;set the condition codes on the high order
+	ora	a
+	ret	
+setio:	call	getbyt			;get integer channel number in [a]
+	sta	stainp+1		;setup "wait"
+	sta	outwrd+1		;setup "out"
+	call	synchr
+	db	44			;make sure there is a comma
+	jmp	getbyt
+					;"mvi b," around the chrget (mvi ah,)
+gtbytc:	call	chrgtr
+	public	getbyt,conint
+getbyt:	call	frmevl			;evaluate a formula
+conint:	call	intfr2			;convert the fac to an integer in [d,e]
+					;and set the condition codes based
+					;on the high order
+	jnz	fcerr			;wasn't error
+	dcx	h			;actually functions can get here
+					;with bad [h,l] but not serious
+					;set condition codes on terminator
+	call	chrgtr
+	mov	a,e			;return the result in [a] and [e]
+	ret	
+	page
+	subttl	execute basic program on prom
+					;go run it
+	page
+	subttl	extended list, delete, llist
+llist:
+					;prtflg=1 for regular list
+	mvi	a,1			;get non zero value
+	sta	prtflg			;save in i/o flag (end of lpt)
+list:
+	pop	b			;get rid of newstt return addr
+	call	scnlin			;scan line range
+	push	b			;save pointer to 1st line
+	call	prochk			;dont even list line #
+list4:	lxi	h,0+65535		;dont allow ^c to change
+	shld	curlin			;continue parameters
+	pop	h			;get pointer to line
+	pop	d			;get max line # off stack
+	mov	c,m			;[b,c]=the link pointing to the next line
+	inx	h
+	mov	b,m
+	inx	h
+	mov	a,b			;see if end of chain
+	ora	c
+	jz	ready			;last line, stop.  
+	push	h			;don't allow ^c
+	lhld	ptrfil
+	mov	a,h			;on file output
+	ora	l
+	pop	h
+	cz	iscntc
+					;check for control-c
+	push	b			;save link
+	mov	c,m			;push the line #
+	inx	h
+	mov	b,m
+	inx	h
+	push	b
+	xthl				;get line # into [h,l]
+	xchg				;get max line in [h,l]
+	call	dcompr			;past last line in range?
+	pop	b			;text pointer to [b,c]
+	jc	stprdy			;if past, then done listing.
+	xthl				;save max on bottom of stack
+	push	h			;save link on top
+	push	b			;save text pointer back
+	xchg				;get line # in [h,l]
+	shld	dot			;save for later edit or list
+					;and we want [h,l] on the stack
+	call	linprt			;print as int without leading space
+	pop	h
+	mov	a,m			;get byte from line
+	cpi	9			;is it a tab?
+	jz	nospal			;then dont print space
+	mvi	a,' '
+	call	outdo			;print a space after the line #
+nospal:	call	buflin			;unpack the line into buf
+	lxi	h,buf			;point at the start of the unpacked characters
+	call	lisprt			;print the line
+	call	crdo			;print crlf
+	jmp	list4			;go back for next line
+lisprt:	mov	a,m
+	ora	a			;set cc
+	rz				;if =0 then end of line
+	extrn	outch1
+	call	outch1			;output char and check for lf
+	inx	h			;incr pointer
+	jmp	lisprt			;print next char
+buflin:	lxi	b,buf			;get start of text buffer
+	mvi	d,buflen		;get its length into [d]
+	xra	a			;set on special char for space insertion
+	sta	tempa
+	call	prochk			;only proceed if ok
+	jmp	ploop2			;start here
+ploop:	inx	b			;increment deposit ptr.
+	inx	h			;advance text ptr
+	dcr	d			;bump down count
+	rz				;if buffer full, return
+ploop2:	mov	a,m			;get char from buf
+	ora	a			;set cc's
+	stax	b			;save this char
+	rz				;if end of source buffer, all done.
+	cpi	octcon			;is it smaller than smallest embedded constant?
+	jc	ntembl			;yes, dont treat as one
+	cpi	dblcon+1		;is it embeded constant?
+	mov	e,a			;save char in [e]
+	jc	prtvar			;print leading space if nesc.
+ntembl:	ora	a			;set cc's
+	jm	ploopr			;reserved word of some kind
+	mov	e,a			;save char in [e]
+	cpi	'.'			;dot is part of var name
+	jz	prtvar
+	call	tstanm			;is char alphanumeric
+	jnc	prtvar			;alphanumeric
+	xra	a			;make special
+	jmp	plooph
+prtvar:	lda	tempa			;what did we do last?
+	ora	a			;set condition codes
+	jz	ploopg			;special, never insert space
+	inr	a			;in reserved word?
+	jnz	ploopg			;no
+	mvi	a,' '			;put out space before resword
+	stax	b			;store in buffer
+	inx	b			;incrment pointer into buffer
+	dcr	d			;space left?
+	rz				;no, done
+ploopg:	mvi	a,1			;store flag saying in var
+plooph:	sta	tempa
+	mov	a,e			;get back char we had
+	cpi	octcon			;is it smaller than smallest embedded constant?
+	jc	ploopz			;yes, dont treat as one
+	cpi	dblcon+1		;is it embeded constant?
+	jc	numlin			;yes, unpack it
+ploopz:	stax	b			;make sure byte stored after space
+	jmp	ploop			;store in buffer
+ploopr:
+	inr	a			;set zero if fn token
+	mov	a,m			;get char back
+	jnz	ntfntk			;not function just treat normally
+	inx	h			;bump pointer
+	mov	a,m			;get char
+	ani	177o			;turn off high bit
+ntfntk:	inx	h			;advance to point after
+	cpi	sngqtk			;single quote token?
+	jnz	ntqttk			;no, jump out
+	dcx	b			;move deposit ptr back over :$rem
+	dcx	b
+	dcx	b
+	dcx	b
+	inr	d
+	inr	d
+	inr	d
+	inr	d			;fix up char count
+ntqttk:	cpi	$else			;else?
+	cz	dcxbrt			;move deposit ptr back over leading colon.
+	push	h			;save text ptr.
+	push	b			;save deposit ptr.
+	push	d			;save char count.
+	lxi	h,reslst-1		;get ptr to start of reserved word list
+	mov	b,a			;save this char in [b]
+	mvi	c,'A'-1			;init leading char value
+ressr3:	inr	c			;bump leading char value.
+ressr1:	inx	h			;bump pointer into reslst
+ressrc:	mov	d,h			;save ptr to start of this reswrd
+	mov	e,l
+ressr2:
+	mov	a,m			;get char from reslst
+	ora	a			;set cc's
+	jz	ressr3			;if end of this chars table, go back & bump c
+	inx	h			;bump source ptr
+	jp	ressr2			;if not end of this reswrd, then keep looking
+	mov	a,m			;get ptr to reserved word value
+	cmp	b			;same as the one we search for?
+	jnz	ressr1			;no, keep looking.
+	xchg				;save found ptr in [h,l]
+	cpi	$usr			;usr function token?
+	jz	noispa			;dont insert space
+	cpi	$fn			;is it function token?
+noispa:
+	mov	a,c			;get leading char
+	pop	d			;restore line char count
+	pop	b			;restore deposit ptr
+	mov	e,a			;save leading char
+	jnz	ntfnex			;not "fn" expansion
+	lda	tempa			;set cc's on tempa
+	ora	a
+	mvi	a,0			;clear reswrd flag - mark as special
+	sta	tempa			;set flag
+	jmp	morlnz			;do expansion
+ntfnex:
+	cpi	'Z'+1			;was it a special char?
+	jnz	ntspch			;non-special char
+	xra	a			;set non-special
+	sta	tempa
+	jmp	morpur			;print it
+ntspch:	lda	tempa			;what did we do last?
+	ora	a			;special?
+	mvi	a,255			;flag in reserved word
+	sta	tempa			;clear flag
+morlnz:	jz	morln0			;get char and proceed
+	mvi	a,' '			;put space in buffer
+	stax	b
+	inx	b
+	dcr	d			;any space left in buffer
+	jz	ppswrt			;no, return
+morln0:	mov	a,e
+	jmp	morln1			;continue
+morpur:
+	mov	a,m			;get byte from reswrd
+	inx	h			;bump pointer
+morlnp:	mov	e,a			;save char
+morln1:	ani	177o			;and off high order bit for disk & edit
+	stax	b			;store this char
+	inx	b			;bump ptr
+	dcr	d			;bump down remaining char count
+	jz	ppswrt			;if end of line, just return
+	ora	e			;set cc's
+	jp	morpur			;end of reswrd?
+	cpi	'('+128			;spc( or tab( ?
+	jnz	ntspct			;no
+	xra	a			;clear flag
+	sta	tempa			;to insert space afterwards
+ntspct:
+	pop	h			;restore source ptr.
+	jmp	ploop2			;get next char from line
+tstanm:	call	islet2			;letter?
+	rnc				;yes
+	cpi	'0'			;digit?
+	rc				;too small
+	cpi	'9'+1			;last digit
+	cmc				;make carry right
+	ret				;no carry=digit
+numlin:	dcx	h			;move pointer back as chrget inx's
+	call	chrgtr			;scan the constant
+	push	d			;save char count
+	push	b			;save deposit ptr
+	push	psw			;save constant type.
+	call	confac			;move constant into fac
+	pop	psw			;restore constant type
+	lxi	b,conlin		;put return addr on stack
+	push	b			;save it
+	cpi	octcon			;octal constant?
+	jz	fouto			;print it
+	cpi	hexcon			;hex constant?
+	jz	fouth			;print in hex
+	lhld	conlo			;get line # value if one.
+	jmp	fout			;print remaining possibilities.
+conlin:	pop	b			;restore deposit ptr.
+	pop	d			;restore char count
+	lda	consav			;get saved constant token
+	mvi	e,'O'			;assume octal constant
+	cpi	octcon			;octal constant?
+	jz	savbas			;yes, print it
+	cpi	hexcon			;hex constant?
+	mvi	e,'H'			;assume so.
+	jnz	numsln			;not base constant
+savbas:
+	mvi	a,'&'			;print leading base indicator
+	stax	b			;save it
+	inx	b			;bump ptr
+	dcr	d			;bump down char count
+	rz				;return if end of buffer
+	mov	a,e			;get base char
+	stax	b			;save it
+	inx	b			;bump ptr
+	dcr	d			;bump down base count
+	rz				;end of buffer, done
+					;[e] set up
+numsln:
+	lda	contyp			;get type of constant we are
+	cpi	4			;is it single or double prec?
+	mvi	e,0			;no, never print trailing type indicator
+	jc	typset
+	mvi	e,'!'			;assume single prec.
+	jz	typset			;is contyp=4, was single
+	mvi	e,'#'			;double prec indicator
+typset:
+	mov	a,m			;get leading char
+	cpi	' '			;leading space
+	cz	inxhrt			;go by it
+numsl2:	mov	a,m			;get char from number buffer
+	inx	h			;bump pointer
+	ora	a			;set cc's
+	jz	numdn			;if zero, all done.
+	stax	b			;save char in buf.
+	inx	b			;bump ptr
+	dcr	d			;see if end of buffer
+	rz				;if end of buffer, return
+	lda	contyp			;get type of constant to be printed
+	cpi	4			;test for single or double precision
+	jc	numsl2			;no, was integer
+	dcx	b			;pick up saved char
+	ldax	b			;easier than pushing on stack
+	inx	b			;restore to point where it should
+	jnz	dblscn			;if double, dont test for embeded "."
+	cpi	'.'			;test for fraction
+	jz	zere			;if single & embeded ., then dont print !
+dblscn:	cpi	'D'			;double prec. exponent?
+	jz	zere			;yes, mark no value type indicator nesc.
+	cpi	'E'			;single prec. exponent?
+	jnz	numsl2			;no, proceed
+zere:	mvi	e,0			;mark no printing of type indicator
+	jmp	numsl2			;keep moving number chars into buf
+numdn:
+	mov	a,e			;get flag to indicate whether to insert
+	ora	a			;a "d" after double prec. #
+	jz	nod			;no, dont insert it
+	stax	b			;save in buffer
+	inx	b			;bump pointer
+	dcr	d			;decrment count of chars left in buffer
+	rz				;=0, must truncate list of this line.
+nod:
+	lhld	contxt			;get back text pointer after constant
+	jmp	ploop2			;get next char
+;
+; the following code is for the delete range
+; command. before the lines are deleted, 'ok'
+; is typed.
+;
+delete:
+	call	scnlin			;scan line range
+	push	b
+	call	deptr			;change pointers back to numbers
+	pop	b
+	pop	d			;pop max line off stack
+	push	b			;save pointer to start of deletion
+					;for use by chead after fini
+	push	b			;save pointer to start of 1st line
+	call	fndlin			;find the last line
+	jnc	fcerrg			;must have a match on the upper bound
+	mov	d,h			;[d,e] =  pointer at the start of the line
+	mov	e,l			;beyond the last line in the range
+	xthl				;save the pointer to the next line
+	push	h			;save the pointer to the start of
+					;the first line in the range
+	call	dcompr			;make sure the start comes before the end
+fcerrg:	jnc	fcerr			;if not, "illegal function call"
+	lxi	h,reddy			;print "ok" prematurely
+	call	strout
+	pop	b			;get pointer to first in [b,c]
+	lxi	h,fini			;go back to fini when done
+	xthl				;[h,l]=pointer to the next line
+	public	del
+; erase a line from memory
+; [b,c]=start of line being deleted
+; [d,e]=start of next line
+del:
+	xchg				;[d,e] now have the pointer to the line
+					;beyond this one
+	lhld	vartab			;compactifying to vartab
+mloop:	ldax	d
+	stax	b			;shoving down to eliminate a line
+	inx	b
+	inx	d
+	call	dcompr
+	jnz	mloop			;done compactifying?
+	mov	h,b
+	mov	l,c
+	shld	vartab
+	ret	
+	page
+	subttl	peek and poke
+;
+; note: in the 8k peek only accepts positive numbers up to 32767
+; poke will only take an address up to 32767 , no
+; fudging allowed. the value is unsigned.
+; in the extended version negative numbers can be
+; used to refer to locations higher than 32767.
+; the correspondence is given by subtracting 65536 from locations
+; higher than 32767 or by specifying a positive number up to 65535.
+;
+peek:	call	frqint			;get an integer in [h,l]
+	extrn	prodir
+	call	prodir			;dont allow direct if protected file
+	mov	a,m			;get the value to return
+	jmp	sngflt			;and float it
+poke:	call	frmevl			;read a formula
+	push	h			;save text ptr
+	call	frqint			;force value into int in [h,l]
+	xthl				;put value on stack & get txt ptr back
+					;save value on stack
+	call	prodir			;dont allow direct if protected file
+	call	synchr
+	db	44			;check for a comma
+	call	getbyt
+	pop	d			;get the address back
+	stax	d			;store it away
+	ret				;scanned everything
+	public	frqint
+frqint:	lxi	b,frcint		;return here
+	push	b			;save addr
+	call	getypr			;set the cc's on valtype
+	rm				;return if already integer.
+	lda	fac			;get exponent
+	cpi	220o			;is magnitude .gt. 32767
+	rnz				;no, force integer
+	lda	fac-1			;get sign of number
+	ora	a			;is it negative, only allowable # is -32768
+	rm				;assume thats what it is, else give overflow
+	lxi	b,221q*256+200q
+	lxi	d,0*256+0		;get -65536.
+	jmp	fadd			;subtract it, and then force integer
+					;make the same for radio shack version
+
+	page
+	subttl	renumber
+; the reseq(uence) command take up to three arguments
+; reseq [nn[,mm[,inc]]]
+; where nn is the first destination line of the
+; lines being resequenced, lines less than mm are
+; not resequenced, and inc is the increment.
+reseq:
+	lxi	b,0+10			;assume inc=10
+	push	b			;save on stack
+	mov	d,b			;reseq all lines by setting [d,e]=0
+	mov	e,b
+	jz	resnn			;if just 'reseq' reseq 10 by 10
+	cpi	54o			;comma
+	jz	eatcom			;dont use starting # of zero
+	push	d			;save [d,e]
+	call	linspc			;get new nn
+	mov	b,d			;get in in [b,c] where it belongs
+	mov	c,e
+	pop	d			;get back [d,e]
+	jz	resnn			;if eos, done
+eatcom:	call	synchr
+	db	54o			;expect comma
+	call	linspc			;get new mm
+	jz	resnn			;if eos, done
+	pop	psw			;get rid of old inc
+	call	synchr
+	db	54o			;expect comma
+	push	d			;save mm
+	call	linget			;get new inc
+	jnz	snerr			;should have terminated.
+	mov	a,d			;see if inc=0 (illegal)
+	ora	e
+	jz	fcerr			;yes, blow him up now
+	xchg				;flip new inc & [h,l]
+	xthl				;new inc onto stack
+	xchg				;get [h,l] back, orig [d,e] back
+resnn:	push	b			;save nn on stack
+	call	fndlin			;find mm line
+	pop	d			;get nn off stack
+	push	d			;save nn back
+	push	b			;save pointer to mm line
+	call	fndlin			;find first line to reseq.
+	mov	h,b			;get ptr to this line in [h,l]
+	mov	l,c
+	pop	d			;get line ptd to by mm
+	call	dcompr			;compare to first line reseqed
+	xchg				;get ptr to mm line in [h,l]
+	jc	fcerr			;cant allow program to be resequed
+					;on top of itself
+	pop	d			;get nn back
+	pop	b			;get inc in [b,c]
+	pop	psw			;get rid of newstt
+	push	h			;save ptr to first line to reseq.
+	push	d			;save nn on stack
+	jmp	nxtrsl
+nxtrsc:	dad	b			;add increment into
+	jc	fcerr			;uh oh, his inc was too large.
+	xchg				;flip link field, accum.
+	push	h			;save link field
+	lxi	h,0+65529		;test for too large line
+	call	dcompr			;compare to current #
+	pop	h			;restore link field
+	jc	fcerr			;uh oh, his inc was too large.
+nxtrsl:	push	d			;save current line accum
+	mov	e,m			;get link field into [d,e]
+	mov	a,e			;get low part into k[a] for zero test
+	inx	h
+	mov	d,m			;get high part of link
+	ora	d			;set cc's on link field
+	xchg				;see if next link zero
+	pop	d			;get back accum line #
+	jz	ressd1			;zero, done
+	mov	a,m			;get first byte of link
+	inx	h			;inc pointer
+	ora	m			;set cc's
+	dcx	h			;move pointer back
+	xchg				;back in [d,e]
+	jnz	nxtrsc			;inc count
+ressd1:	push	b			;save inc
+	call	scclin			;scan program converting lines to ptrs.
+	pop	b			;get back inc
+	pop	d			;get nn
+	pop	h			;get ptr to first line to reseq
+resnx1:	push	d			;save current line
+	mov	e,m			;get link field
+	mov	a,e			;prepare for zero link field test
+	inx	h
+	mov	d,m
+	ora	d
+	jz	sccall			;stop reseqing when see end of pgm
+	xchg				;flip line ptr, link field
+	xthl				;put link on stack, get new line # off
+	xchg				;put new line # in [d,e], this line
+					;ptr in [h,l]
+	inx	h			;point to line # field.
+	mov	m,e			;change to new line #
+	inx	h
+	mov	m,d
+	xchg				;get this line # in [h,l]
+	dad	b			;add inc
+	xchg				;get new line # back in [d,e]
+	pop	h			;get ptr to next line
+	jmp	resnx1			;keep reseqing
+sccall:	lxi	b,stprdy		;where to go when done
+	push	b			;save on stack
+	db	376q			;"cpi al," call sccptr
+; the subroutines scclin and sccptr convert all
+; line #'s to pointers and vice-versa.
+; the only special case is "on error goto 0" where the "0"
+; is left as a line number token so it wont be changed by resequence.
+	public	sccptr
+scclin:	db	366q			;"ori ax," over next byte
+sccptr:	xra	a			;set a=0
+	sta	ptrflg			;set to say wheter lines or ptrs extant
+scnpgm:	lhld	txttab			;get ptr to start of pgm
+	dcx	h			;nop next inx.
+scnpln:	inx	h			;point to byte after zero at end of line
+	mov	a,m			;get link field into [d,e]
+	inx	h			;bump ptr
+	ora	m			;set cc's
+	rz				;return if all done.
+	inx	h			;point past line #
+	mov	e,m			;get low byte of line #
+	inx	h
+	mov	d,m			;get high byte of line #
+scnext:	call	chrgtr			;get next char from line
+scnex2:	ora	a			;end of line
+	jz	scnpln			;scan next line
+	mov	c,a			;save [a]
+	lda	ptrflg			;change line tokens which way?
+	ora	a			;set cc's
+	mov	a,c			;get back current char
+	jz	scnpt2			;changing pointers to #'s
+	cpi	$error			;is it error token?
+	jnz	nterrg			;no.
+	call	chrgtr			;scan next char
+	cpi	$goto			;error goto?
+	jnz	scnex2			;get next one
+	call	chrgtr			;get next char
+	cpi	lincon			;line # constant?
+	jnz	scnex2			;no, ignore.
+	push	d			;save [d,e]
+	call	lingt3			;get it
+	mov	a,d			;is it line # zero?
+	ora	e			;set cc's
+	jnz	chgptr			;change it to a pointer
+	jmp	scnex3			;yes, dont change it
+nterrg:	cpi	lincon			;line # constant?
+	jnz	scnext			;not, keep scanning
+	push	d			;save current line # for possible error msg
+	call	lingt3			;get line # of line constant into [d,e]
+chgptr:
+	push	h			;save text pointer just at end of lincon 3 bytes
+	call	fndlin			;try to find line in pgm.
+	dcx	b			;point to zero at end of previous line
+	mvi	a,ptrcon		;change line # to ptr
+	jc	makptr			;if line found chane # to ptr
+	call	crdonz			;print crlf if required
+	lxi	h,linm			;print "undefined line" message
+	push	d			;save line #
+	call	strout			;print it
+	pop	h			;get line # in [h,l]
+	call	linprt			;print it
+	pop	b			;get text ptr off stack
+	pop	h			;get current line #
+	push	h			;save back
+	push	b			;save back text ptr
+	call	inprt			;print it
+scnpop:	pop	h			;pop off current text pointer
+scnex3:	pop	d			;get back current line #
+	dcx	h			;backup pointer
+	jmp	scnext			;keep scanning
+linm:	dc	'undefined line '
+	db	0
+scnpt2:	cpi	ptrcon			;pointer
+	jnz	scnext			;no, keep scanning
+	push	d			;save current line #
+	call	lingt3			;get #
+	push	h			;save text pointer
+	xchg				;flip current text ptr & ptr
+	inx	h			;bump pointer
+	inx	h			;point to line # field
+	inx	h
+	mov	c,m			;pick up line #
+	inx	h			;point to high part
+	mov	b,m
+	mvi	a,lincon		;change to line constant
+makptr:	lxi	h,scnpop		;place to return to after changing constant
+	push	h			;save on stack
+conchg:	lhld	contxt			;get txt ptr after constant in [h,l]
+conch2:	push	h			;save ptr to end of constant
+	dcx	h
+	mov	m,b
+	dcx	h
+	mov	m,c			;change to value in [b,c]
+	dcx	h			;point to constant token
+	mov	m,a			;change to value in [a]
+	pop	h			;restore pointer to after constant
+	ret	
+	public	deptr
+deptr:	lda	ptrflg			;do line pointers exist in pgm?
+	ora	a			;set cc's
+	rz				;no, just return
+	jmp	sccptr			;convert then to line #'s
+	subttl	ansi - the routines to handle ansi features
+datas	set	data
+option:	call	synchr
+	db	'B'
+	call	synchr
+	db	'A'
+	call	synchr
+	db	'S'
+	call	synchr
+	db	'E'
+	lda	optflg
+	ora	a			;have we seen option base before
+	jnz	dderr			;if so "double dimension error"
+	push	h			;save the text pointer
+	lhld	arytab			;see if we have any arrays yet
+	xchg	
+	lhld	strend
+	call	dcompr			;if these are equal we have not
+	jnz	dderr
+	pop	h
+	mov	a,m			;get the base number
+	sui	'0'
+	jc	snerr
+	cpi	2			;only 0 and 1 are legal
+	jnc	snerr
+	sta	optval			;save if for dim and ptrget
+	inr	a			;make sure [a] is non zero
+	sta	optflg			;flag that we have seen "option base"
+	call	chrgtr			;fetch the terminator
+	ret	
+; this routine is called by the math package
+; to print error messages wtout disturbing ptrfil, etc.
+strprn:
+	mov	a,m			;get byte from message
+	ora	a			;end of message
+	rz				;yes, done
+	call	caltty			;print char
+	inx	h			;increment pointer
+	jmp	strprn			;print next char
+caltty:	push	psw			;save [a] on stack
+	jmp	ttychr			;put out char
+					;print crlf and return
+random:	jz	inprg			;if no argument ask from terminal
+	call	frmevl			;fetch the formula argument
+	push	h
+	call	frcint			;allow normal integers
+	jmp	strnds			;store the new random seed
+	extrn	rndmn2
+inprg:	push	h
+inprag:
+	lxi	h,ranmes		;ask for some random input
+	call	strout
+	call	qinlin
+	pop	d			;get back text pointer
+	jc	stpend			;go away if control c
+	push	d			;resave text pointer
+	inx	h			;move past bufmin to buf
+	mov	a,m			;get first char of typein (fin expects it)
+	call	fin			;read a number
+	mov	a,m			;get the terminator
+	ora	a
+	jnz	inprag			;don't allow bad format
+	call	frcint			;allow normal integers
+strnds:	shld	rndx+1
+	call	rndmn2
+	pop	h			;get back the text pointer
+	ret	
+ranmes:	dc	'random number seed (-32768- to 32767)'
+	db	0
+;
+; this code scans ahead to find the "next" that matches a "for"
+; in order to 1) handle empty loops and 2) make sure loops
+; match up properly.
+;
+	public	wndscn
+wndscn:	mvi	c,errwh			;scan for matching wend this is error if fail
+	jmp	scncnt
+nxtscn:	mvi	c,errfn
+scncnt:
+	mvi	b,0			;set up the count of "for"s seen
+	xchg				;initialize nxtlin for next on same line
+	lhld	curlin
+	shld	nxtlin
+	xchg				;restore the text pointer to [h,l]
+forinc:	inr	b			;increment the count whenever "for" is seen
+fnlop:	dcx	h			;** fix here for 5.03 can't call data
+scanwf:	call	chrgtr			;to skip to statement because could
+	jz	fortrm			;have statement after "then"
+ntqtsc:
+	cpi	$else			;else statment
+	jz	fnnwst			;then allow next or wend after it
+	cpi	$then			;so scan using chrget waiting for end
+	jnz	scanwf			;of statement or $then
+fortrm:	ora	a			;see how it ended
+	jnz	fnnwst			;just new statement -- examine it
+					;or could be colon in string but no harm
+					;in non kanabs (hghbit) version since no reserved
+					;words will match the next character
+	inx	h
+	mov	a,m			;scan the link at the start of the next line
+	inx	h
+	ora	m			;to see if its zero (end of program)
+	mov	e,c			;set up error number
+	jz	error
+	inx	h			;pick up the new line number
+	mov	e,m
+	inx	h
+	mov	d,m
+	xchg				;[h,l]= new line number
+	shld	nxtlin			;save as "next" line number
+	xchg	
+fnnwst:	call	chrgtr			;get the type of the next statement
+	mov	a,c			;get the error number to see what we are
+	cpi	errfn			;scanning for
+	mov	a,m			;get back the character
+	jz	nxtlok			;for/next searching
+	cpi	$while			;another while/wend nest?
+	jz	forinc
+	cpi	$wend
+	jnz	fnlop
+	dcr	b
+	jnz	fnlop
+	ret	
+nxtlok:
+	cpi	$for			;another "for"?
+	jz	forinc			;increment the for count
+	cpi	$next			;end with next?
+	jnz	fnlop			;skip over this statement
+decnxt:	dcr	b			;decrement the loop count
+	rz				;return with [h,l] about to get first character of "next" variable
+;
+; scan  the variables listed in a "next" statement
+;
+	call	chrgtr			;see if there is a name
+	jz	fortrm			;only one so scan more statements
+	xchg				;save text pointer in [d,e]
+	lhld	curlin			;save the current line number
+	push	h
+	lhld	nxtlin			;make error come from "next"
+	shld	curlin
+	xchg				;[h,l]= text pointer
+	push	b			;save the "for" count
+	call	ptrget			;skip over the variable name
+	pop	b			;get back the "for" count
+	dcx	h			;check terminator
+	call	chrgtr
+	lxi	d,fortrm		;place to go to
+	jz	trmnxt			;end of "next"
+	call	synchr
+	db	44			;should have commas in between
+	dcx	h			;rescan first character
+	lxi	d,decnxt		;place to go back to
+trmnxt:	xthl				;save the text pointer on the stack
+	shld	curlin
+	pop	h
+	push	d			;go off to address in [b,c]
+	ret	
+;
+; this routine clears flgovc to reset to normal overflow mode.
+; in normal mode, overr always prints overflow because flgovc=0
+; function dispatch, fin (&findbl), and exponentiation set up an overflow
+; mode where flgovc=1 and after one overflow flgovc=2 and no more
+; overflow messages are printed. fin (&findbl) also store flgovc in ovcstr
+; before resetting flgovc so a caller can detect overflow occurance.
+;
+	public	clrovc,finovc
+finovc:	push	psw
+	lda	flgovc			;store overflow flag to indicate
+	sta	ovcstr			;whether an overflow occured
+	pop	psw
+clrovc:	push	psw			;save everything
+	xra	a			;normal overflow mode
+	sta	flgovc
+	pop	psw
+	ret	
+
+	end	start
+
