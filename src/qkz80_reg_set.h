@@ -44,6 +44,8 @@ class qkz80_reg_set {
   void set_flags_from_diff8(qkz80_big_uint a,qkz80_uint8 half_carry);
   void set_flags_from_diff16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2, qkz80_big_uint carry);
   void set_flags_from_add16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2);
+  void set_flags_from_adc16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2, qkz80_big_uint carry);
+  void set_flags_from_sbc16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2, qkz80_big_uint carry);
   void set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry);
   qkz80_uint8 get_flags(void) const;
   void set_flags(qkz80_uint8 new_flags);

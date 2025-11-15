@@ -189,6 +189,63 @@ void qkz80_reg_set::set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry) {
   set_flags(result);
 }
 
+// Helper: Bit-by-bit 16-bit addition with carry (based on tnylpo)
+// Returns result and sets H, C, and overflow flags via bit-simulation
+static qkz80_uint16 add16_bitwise(qkz80_uint16 s1, qkz80_uint16 s2, int carry_in,
+                                   qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v) {
+  qkz80_uint16 result = 0;
+  qkz80_big_uint cy = carry_in ? 1 : 0;
+  qkz80_big_uint ma = 1;
+  int c14 = 0;
+
+  for (int i = 0; i < 16; i++) {
+    // XOR to get result bit
+    result |= (s1 ^ s2 ^ cy) & ma;
+    // Calculate carry out: (s2 & cy) | (s1 & (s2 | cy))
+    cy = ((s2 & cy) | (s1 & (s2 | cy))) & ma;
+
+    if (i == 11) flag_h = (cy != 0) ? 1 : 0;  // Half-carry from bit 11
+    if (i == 14) c14 = (cy != 0) ? 1 : 0;      // Save carry from bit 14
+    if (i == 15) flag_c = (cy != 0) ? 1 : 0;   // Carry from bit 15
+
+    cy <<= 1;
+    ma <<= 1;
+  }
+
+  // Overflow = carry_out_bit15 XOR carry_out_bit14
+  flag_v = flag_c ^ c14;
+
+  return result;
+}
+
+// Helper: Bit-by-bit 16-bit subtraction with borrow (based on tnylpo)
+static qkz80_uint16 sub16_bitwise(qkz80_uint16 minuend, qkz80_uint16 subtrahend, int borrow_in,
+                                   qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v) {
+  qkz80_uint16 result = 0;
+  qkz80_big_uint cy = borrow_in ? 1 : 0;
+  qkz80_big_uint ma = 1;
+  int c14 = 0;
+
+  for (int i = 0; i < 16; i++) {
+    // XOR to get result bit
+    result |= (minuend ^ subtrahend ^ cy) & ma;
+    // Calculate borrow: (subtrahend & cy) | (~minuend & (subtrahend | cy))
+    cy = ((subtrahend & cy) | (~minuend & (subtrahend | cy))) & ma;
+
+    if (i == 11) flag_h = (cy != 0) ? 1 : 0;  // Half-borrow from bit 11
+    if (i == 14) c14 = (cy != 0) ? 1 : 0;      // Save borrow from bit 14
+    if (i == 15) flag_c = (cy != 0) ? 1 : 0;   // Borrow from bit 15
+
+    cy <<= 1;
+    ma <<= 1;
+  }
+
+  // Overflow = borrow_out_bit15 XOR borrow_out_bit14
+  flag_v = flag_c ^ c14;
+
+  return result;
+}
+
 // Z80-specific: 16-bit ADD (ADD HL,ss / ADD IX,ss / ADD IY,ss)
 // Only affects: H (half carry from bit 11), N (reset), C (carry from bit 15)
 // Does NOT affect: S, Z, P/V
@@ -199,21 +256,21 @@ void qkz80_reg_set::set_flags_from_add16(qkz80_big_uint result, qkz80_big_uint v
   qkz80_uint8 preserve_mask = qkz80_cpu_flags::S | qkz80_cpu_flags::Z | qkz80_cpu_flags::P;
   qkz80_uint8 preserved = flags & preserve_mask;
 
+  // Use bit-by-bit simulation to get exact flag values
+  qkz80_uint8 flag_h, flag_c, flag_v;
+  add16_bitwise(val1 & 0xFFFF, val2 & 0xFFFF, 0, flag_h, flag_c, flag_v);
+
   // Clear N flag (this is addition)
   flags &= ~qkz80_cpu_flags::N;
 
-  // Set carry flag if bit 16 is set
-  if (result & 0x10000)
+  // Set carry flag
+  if (flag_c)
     flags |= qkz80_cpu_flags::CY;
   else
     flags &= ~qkz80_cpu_flags::CY;
 
-  // Set half-carry if carry from bit 11 to bit 12
-  // H = (val1[11] & val2[11]) | ((val1[11] | val2[11]) & ~result[11])
-  qkz80_uint16 val1_11 = (val1 >> 11) & 1;
-  qkz80_uint16 val2_11 = (val2 >> 11) & 1;
-  qkz80_uint16 res_11 = (result >> 11) & 1;
-  if ((val1_11 & val2_11) | ((val1_11 | val2_11) & (~res_11 & 1)))
+  // Set half-carry flag
+  if (flag_h)
     flags |= qkz80_cpu_flags::H;
   else
     flags &= ~qkz80_cpu_flags::H;
@@ -224,28 +281,30 @@ void qkz80_reg_set::set_flags_from_add16(qkz80_big_uint result, qkz80_big_uint v
   set_flags(flags);
 }
 
-// Z80-specific: 16-bit ADC/SBC (ADC HL,ss / SBC HL,ss)
-// Affects: S, Z, H, P/V (overflow), N, C
-// Uses subtract semantics even for ADC (caller must clear N for ADC)
-void qkz80_reg_set::set_flags_from_diff16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2, qkz80_big_uint carry) {
-  qkz80_uint8 flags = 0;
+// Z80-specific: 16-bit ADC HL,ss
+// Affects: S, Z, H, P/V (overflow), N (cleared), C
+void qkz80_reg_set::set_flags_from_adc16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2, qkz80_big_uint carry) {
   qkz80_uint16 result16 = result & 0xFFFF;
 
-  // Set N flag (this is subtraction - caller clears for ADC)
-  flags |= qkz80_cpu_flags::N;
+  // Use bit-by-bit simulation to get exact flag values (addition with carry)
+  qkz80_uint8 flag_h, flag_c, flag_v;
+  add16_bitwise(val1 & 0xFFFF, val2 & 0xFFFF, carry, flag_h, flag_c, flag_v);
 
-  // Carry flag (bit 16)
-  qkz80_uint8 c15 = (result >> 16) & 1;
-  if (c15)
+  qkz80_uint8 flags = 0;
+
+  // Clear N flag (this is addition)
+  // N already 0, no need to clear
+
+  // Set carry flag
+  if (flag_c)
     flags |= qkz80_cpu_flags::CY;
 
-  // Calculate carry from bit 14 for overflow
-  // For subtraction: val1 - val2 - carry
-  qkz80_big_uint temp = ((val1 & 0x7FFF) - (val2 & 0x7FFF) - carry);
-  qkz80_uint8 c14 = (temp >> 15) & 1;
+  // Set half-carry flag
+  if (flag_h)
+    flags |= qkz80_cpu_flags::H;
 
-  // Overflow = C15 XOR C14 (from tnylpo)
-  if (c15 ^ c14)
+  // Set overflow flag (P/V)
+  if (flag_v)
     flags |= qkz80_cpu_flags::P;
 
   // Zero flag (16-bit result is zero)
@@ -256,11 +315,50 @@ void qkz80_reg_set::set_flags_from_diff16(qkz80_big_uint result, qkz80_big_uint 
   if (result16 & 0x8000)
     flags |= qkz80_cpu_flags::S;
 
-  // Half-carry from bit 11 (carry out of bit 11)
-  qkz80_big_uint temp_h = ((val1 & 0x0FFF) - (val2 & 0x0FFF) - carry);
-  if (temp_h & 0x1000)
+  set_flags(fix_flags(flags));
+}
+
+// Z80-specific: 16-bit SBC HL,ss
+// Affects: S, Z, H, P/V (overflow), N (set), C
+void qkz80_reg_set::set_flags_from_sbc16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2, qkz80_big_uint carry) {
+  qkz80_uint16 result16 = result & 0xFFFF;
+
+  // Use bit-by-bit simulation to get exact flag values (subtraction with borrow)
+  qkz80_uint8 flag_h, flag_c, flag_v;
+  sub16_bitwise(val1 & 0xFFFF, val2 & 0xFFFF, carry, flag_h, flag_c, flag_v);
+
+  qkz80_uint8 flags = 0;
+
+  // Set N flag (this is subtraction)
+  flags |= qkz80_cpu_flags::N;
+
+  // Set carry flag
+  if (flag_c)
+    flags |= qkz80_cpu_flags::CY;
+
+  // Set half-carry flag
+  if (flag_h)
     flags |= qkz80_cpu_flags::H;
 
+  // Set overflow flag (P/V)
+  if (flag_v)
+    flags |= qkz80_cpu_flags::P;
+
+  // Zero flag (16-bit result is zero)
+  if (result16 == 0)
+    flags |= qkz80_cpu_flags::Z;
+
+  // Sign flag (bit 15 of result)
+  if (result16 & 0x8000)
+    flags |= qkz80_cpu_flags::S;
+
   set_flags(fix_flags(flags));
+}
+
+// Z80-specific: 16-bit ADC/SBC (ADC HL,ss / SBC HL,ss)
+// Kept for backward compatibility - redirects to appropriate function
+void qkz80_reg_set::set_flags_from_diff16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2, qkz80_big_uint carry) {
+  // Default to SBC behavior (subtraction)
+  set_flags_from_sbc16(result, val1, val2, carry);
 }
 

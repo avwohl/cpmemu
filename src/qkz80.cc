@@ -323,12 +323,8 @@ void qkz80::execute(void) {
       qkz80_big_uint carry = fetch_carry_as_int();
       qkz80_big_uint result = hl_val + rp_val + carry;
       set_reg16(result, regp_HL);
-      // Z80: ADC HL sets all flags like subtraction (but N=0 for add)
-      regs.set_flags_from_diff16(result, hl_val, rp_val, carry);
-      // Fix N flag for addition
-      qkz80_uint8 flags = regs.get_flags();
-      flags &= ~qkz80_cpu_flags::N;
-      regs.set_flags(flags);
+      // Z80: ADC HL is addition with carry, sets all flags
+      regs.set_flags_from_adc16(result, hl_val, rp_val, carry);
       trace->asm_op("adc hl,%s", name_reg16(rp));
       return;
     }
@@ -340,7 +336,8 @@ void qkz80::execute(void) {
       qkz80_big_uint carry = fetch_carry_as_int();
       qkz80_big_uint result = hl_val - rp_val - carry;
       set_reg16(result, regp_HL);
-      regs.set_flags_from_diff16(result, hl_val, rp_val, carry);
+      // Z80: SBC HL is subtraction with borrow, sets all flags
+      regs.set_flags_from_sbc16(result, hl_val, rp_val, carry);
       trace->asm_op("sbc hl,%s", name_reg16(rp));
       return;
     }
