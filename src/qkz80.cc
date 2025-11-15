@@ -1411,11 +1411,13 @@ void qkz80::execute(void) {
     qkz80_uint8 high_a_nibble(LOW_NIBBLE(rega>>4));
     qkz80_uint8 carry(fetch_carry_as_int());
     qkz80_uint8 half_carry((flags&qkz80_cpu_flags::AC)!=0);
+    qkz80_uint8 n_flag((flags&qkz80_cpu_flags::N)!=0);  // Check if previous op was subtraction
     qkz80_uint16 correction(0);
 
     qkz80_uint8 high_nib_is_high(high_a_nibble>9);
     qkz80_uint8 low_nib_is_high(low_a_nibble>9);
 
+    // Calculate correction value
     if(half_carry || low_nib_is_high)
       correction|=6;
 
@@ -1424,10 +1426,21 @@ void qkz80::execute(void) {
       carry=1;
     }
 
-    qkz80_uint8 sum(rega+correction);
-    set_reg8(sum,reg_A);
-    qkz80_uint8 new_half_carry(compute_sum_half_carry(rega,correction,0));
-    regs.set_zspa_from_inr(sum,new_half_carry);
+    // Apply correction: add for addition, subtract for subtraction
+    qkz80_uint8 result;
+    qkz80_uint8 new_half_carry;
+    if(n_flag) {
+      // After subtraction: subtract correction
+      result = rega - correction;
+      new_half_carry = compute_subtract_half_carry(rega, result, correction, 0);
+    } else {
+      // After addition: add correction
+      result = rega + correction;
+      new_half_carry = compute_sum_half_carry(rega, correction, 0);
+    }
+
+    set_reg8(result, reg_A);
+    regs.set_zspa_from_inr(result, new_half_carry);
     regs.set_carry_from_int(carry);
     return;
   }
