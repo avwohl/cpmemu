@@ -190,9 +190,11 @@ void qkz80_reg_set::set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry) {
 }
 
 // Helper: Bit-by-bit 16-bit addition with carry (based on tnylpo)
-// Returns result and sets H, C, and overflow flags via bit-simulation
+// Returns result and sets all flags via bit-simulation
 static qkz80_uint16 add16_bitwise(qkz80_uint16 s1, qkz80_uint16 s2, int carry_in,
-                                   qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v) {
+                                   qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
+                                   qkz80_uint8& flag_x, qkz80_uint8& flag_y,
+                                   qkz80_uint8& flag_z, qkz80_uint8& flag_s) {
   qkz80_uint16 result = 0;
   qkz80_big_uint cy = carry_in ? 1 : 0;
   qkz80_big_uint ma = 1;
@@ -215,12 +217,22 @@ static qkz80_uint16 add16_bitwise(qkz80_uint16 s1, qkz80_uint16 s2, int carry_in
   // Overflow = carry_out_bit15 XOR carry_out_bit14
   flag_v = flag_c ^ c14;
 
+  // Undocumented X and Y flags from bits 11 and 13 of result
+  flag_x = (result & 0x0800) ? 1 : 0;  // Bit 11
+  flag_y = (result & 0x2000) ? 1 : 0;  // Bit 13
+
+  // Zero and sign flags
+  flag_z = (result == 0) ? 1 : 0;
+  flag_s = (result & 0x8000) ? 1 : 0;
+
   return result;
 }
 
 // Helper: Bit-by-bit 16-bit subtraction with borrow (based on tnylpo)
 static qkz80_uint16 sub16_bitwise(qkz80_uint16 minuend, qkz80_uint16 subtrahend, int borrow_in,
-                                   qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v) {
+                                   qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
+                                   qkz80_uint8& flag_x, qkz80_uint8& flag_y,
+                                   qkz80_uint8& flag_z, qkz80_uint8& flag_s) {
   qkz80_uint16 result = 0;
   qkz80_big_uint cy = borrow_in ? 1 : 0;
   qkz80_big_uint ma = 1;
@@ -243,12 +255,20 @@ static qkz80_uint16 sub16_bitwise(qkz80_uint16 minuend, qkz80_uint16 subtrahend,
   // Overflow = borrow_out_bit15 XOR borrow_out_bit14
   flag_v = flag_c ^ c14;
 
+  // Undocumented X and Y flags from bits 11 and 13 of result
+  flag_x = (result & 0x0800) ? 1 : 0;  // Bit 11
+  flag_y = (result & 0x2000) ? 1 : 0;  // Bit 13
+
+  // Zero and sign flags
+  flag_z = (result == 0) ? 1 : 0;
+  flag_s = (result & 0x8000) ? 1 : 0;
+
   return result;
 }
 
 // Z80-specific: 16-bit ADD (ADD HL,ss / ADD IX,ss / ADD IY,ss)
-// Only affects: H (half carry from bit 11), N (reset), C (carry from bit 15)
-// Does NOT affect: S, Z, P/V
+// Affects: H, N (cleared), C, X, Y (undocumented)
+// Does NOT affect: S, Z, P/V (these are preserved)
 void qkz80_reg_set::set_flags_from_add16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2) {
   qkz80_uint8 flags = get_flags();
 
@@ -257,8 +277,8 @@ void qkz80_reg_set::set_flags_from_add16(qkz80_big_uint result, qkz80_big_uint v
   qkz80_uint8 preserved = flags & preserve_mask;
 
   // Use bit-by-bit simulation to get exact flag values
-  qkz80_uint8 flag_h, flag_c, flag_v;
-  add16_bitwise(val1 & 0xFFFF, val2 & 0xFFFF, 0, flag_h, flag_c, flag_v);
+  qkz80_uint8 flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
+  add16_bitwise(val1 & 0xFFFF, val2 & 0xFFFF, 0, flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s);
 
   // Clear N flag (this is addition)
   flags &= ~qkz80_cpu_flags::N;
@@ -275,82 +295,67 @@ void qkz80_reg_set::set_flags_from_add16(qkz80_big_uint result, qkz80_big_uint v
   else
     flags &= ~qkz80_cpu_flags::H;
 
-  // Restore preserved flags
+  // Set undocumented X and Y flags from result
+  if (flag_x)
+    flags |= qkz80_cpu_flags::X;
+  else
+    flags &= ~qkz80_cpu_flags::X;
+
+  if (flag_y)
+    flags |= qkz80_cpu_flags::Y;
+  else
+    flags &= ~qkz80_cpu_flags::Y;
+
+  // Restore preserved flags (S, Z, P/V)
   flags = (flags & ~preserve_mask) | preserved;
 
   set_flags(flags);
 }
 
 // Z80-specific: 16-bit ADC HL,ss
-// Affects: S, Z, H, P/V (overflow), N (cleared), C
+// Affects: S, Z, H, P/V (overflow), N (cleared), C, X, Y (undocumented)
 void qkz80_reg_set::set_flags_from_adc16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2, qkz80_big_uint carry) {
-  qkz80_uint16 result16 = result & 0xFFFF;
-
   // Use bit-by-bit simulation to get exact flag values (addition with carry)
-  qkz80_uint8 flag_h, flag_c, flag_v;
-  add16_bitwise(val1 & 0xFFFF, val2 & 0xFFFF, carry, flag_h, flag_c, flag_v);
+  qkz80_uint8 flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
+  add16_bitwise(val1 & 0xFFFF, val2 & 0xFFFF, carry, flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s);
 
   qkz80_uint8 flags = 0;
 
   // Clear N flag (this is addition)
   // N already 0, no need to clear
 
-  // Set carry flag
-  if (flag_c)
-    flags |= qkz80_cpu_flags::CY;
-
-  // Set half-carry flag
-  if (flag_h)
-    flags |= qkz80_cpu_flags::H;
-
-  // Set overflow flag (P/V)
-  if (flag_v)
-    flags |= qkz80_cpu_flags::P;
-
-  // Zero flag (16-bit result is zero)
-  if (result16 == 0)
-    flags |= qkz80_cpu_flags::Z;
-
-  // Sign flag (bit 15 of result)
-  if (result16 & 0x8000)
-    flags |= qkz80_cpu_flags::S;
+  // Set all flags from bit-by-bit simulation
+  if (flag_c) flags |= qkz80_cpu_flags::CY;
+  if (flag_h) flags |= qkz80_cpu_flags::H;
+  if (flag_v) flags |= qkz80_cpu_flags::P;
+  if (flag_z) flags |= qkz80_cpu_flags::Z;
+  if (flag_s) flags |= qkz80_cpu_flags::S;
+  if (flag_x) flags |= qkz80_cpu_flags::X;
+  if (flag_y) flags |= qkz80_cpu_flags::Y;
 
   set_flags(fix_flags(flags));
 }
 
 // Z80-specific: 16-bit SBC HL,ss
-// Affects: S, Z, H, P/V (overflow), N (set), C
+// Affects: S, Z, H, P/V (overflow), N (set), C, X, Y (undocumented)
 void qkz80_reg_set::set_flags_from_sbc16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2, qkz80_big_uint carry) {
-  qkz80_uint16 result16 = result & 0xFFFF;
-
   // Use bit-by-bit simulation to get exact flag values (subtraction with borrow)
-  qkz80_uint8 flag_h, flag_c, flag_v;
-  sub16_bitwise(val1 & 0xFFFF, val2 & 0xFFFF, carry, flag_h, flag_c, flag_v);
+  qkz80_uint8 flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
+  sub16_bitwise(val1 & 0xFFFF, val2 & 0xFFFF, carry, flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s);
 
   qkz80_uint8 flags = 0;
 
   // Set N flag (this is subtraction)
   flags |= qkz80_cpu_flags::N;
 
-  // Set carry flag
-  if (flag_c)
-    flags |= qkz80_cpu_flags::CY;
-
-  // Set half-carry flag
-  if (flag_h)
-    flags |= qkz80_cpu_flags::H;
-
-  // Set overflow flag (P/V)
-  if (flag_v)
-    flags |= qkz80_cpu_flags::P;
-
-  // Zero flag (16-bit result is zero)
-  if (result16 == 0)
-    flags |= qkz80_cpu_flags::Z;
-
-  // Sign flag (bit 15 of result)
-  if (result16 & 0x8000)
-    flags |= qkz80_cpu_flags::S;
+  // Set all flags from bit-by-bit simulation
+  if (flag_c) flags |= qkz80_cpu_flags::CY;
+  if (flag_h) flags |= qkz80_cpu_flags::H;
+  if (flag_v) flags |= qkz80_cpu_flags::P;
+  if (flag_z) flags |= qkz80_cpu_flags::Z;
+  if (flag_s) flags |= qkz80_cpu_flags::S;
+  if (flag_x) flags |= qkz80_cpu_flags::X;
+  if (flag_y) flags |= qkz80_cpu_flags::Y;
 
   set_flags(fix_flags(flags));
 }
