@@ -480,10 +480,12 @@ void qkz80::execute(void) {
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 de = get_reg16(regp_DE);
       qkz80_uint16 bc = get_reg16(regp_BC);
-      mem.store_mem(de, mem.fetch_mem(hl));
+      qkz80_uint8 byte_val = mem.fetch_mem(hl);
+      mem.store_mem(de, byte_val);
       set_reg16(hl + 1, regp_HL);
       set_reg16(de + 1, regp_DE);
       set_reg16(bc - 1, regp_BC);
+      regs.set_flags_from_block_ld(get_reg8(reg_A), byte_val, bc - 1);
       trace->asm_op("ldi");
       return;
     }
@@ -491,10 +493,12 @@ void qkz80::execute(void) {
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 de = get_reg16(regp_DE);
       qkz80_uint16 bc = get_reg16(regp_BC);
-      mem.store_mem(de, mem.fetch_mem(hl));
+      qkz80_uint8 byte_val = mem.fetch_mem(hl);
+      mem.store_mem(de, byte_val);
       set_reg16(hl + 1, regp_HL);
       set_reg16(de + 1, regp_DE);
       set_reg16(bc - 1, regp_BC);
+      regs.set_flags_from_block_ld(get_reg8(reg_A), byte_val, bc - 1);
       if (bc != 1) regs.PC.set_pair16(regs.PC.get_pair16() - 2);  // Repeat
       trace->asm_op("ldir");
       return;
@@ -503,10 +507,12 @@ void qkz80::execute(void) {
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 de = get_reg16(regp_DE);
       qkz80_uint16 bc = get_reg16(regp_BC);
-      mem.store_mem(de, mem.fetch_mem(hl));
+      qkz80_uint8 byte_val = mem.fetch_mem(hl);
+      mem.store_mem(de, byte_val);
       set_reg16(hl - 1, regp_HL);
       set_reg16(de - 1, regp_DE);
       set_reg16(bc - 1, regp_BC);
+      regs.set_flags_from_block_ld(get_reg8(reg_A), byte_val, bc - 1);
       trace->asm_op("ldd");
       return;
     }
@@ -514,10 +520,12 @@ void qkz80::execute(void) {
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 de = get_reg16(regp_DE);
       qkz80_uint16 bc = get_reg16(regp_BC);
-      mem.store_mem(de, mem.fetch_mem(hl));
+      qkz80_uint8 byte_val = mem.fetch_mem(hl);
+      mem.store_mem(de, byte_val);
       set_reg16(hl - 1, regp_HL);
       set_reg16(de - 1, regp_DE);
       set_reg16(bc - 1, regp_BC);
+      regs.set_flags_from_block_ld(get_reg8(reg_A), byte_val, bc - 1);
       if (bc != 1) regs.PC.set_pair16(regs.PC.get_pair16() - 2);  // Repeat
       trace->asm_op("lddr");
       return;

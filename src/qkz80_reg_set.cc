@@ -364,6 +364,38 @@ void qkz80_reg_set::set_flags_from_ld_a_ir(qkz80_uint8 loaded_val) {
   set_flags(flags);
 }
 
+// Block Load Instructions (LDI/LDIR/LDD/LDDR) - Flag updates
+// H: Reset to 0
+// N: Reset to 0
+// P/V: Set if BC != 0 after decrement, reset if BC = 0
+// S, Z, C: Preserved (unchanged)
+// X, Y (undocumented): From bits 3 and 5 of (A + copied_byte)
+void qkz80_reg_set::set_flags_from_block_ld(qkz80_uint8 a_val, qkz80_uint8 copied_byte, qkz80_uint16 bc_after) {
+  qkz80_uint8 flags = get_flags();
+
+  // Preserve S, Z, C flags
+  qkz80_uint8 preserved = flags & (qkz80_cpu_flags::S | qkz80_cpu_flags::Z | qkz80_cpu_flags::CY);
+  flags = preserved;
+
+  // Clear H and N
+  // (already cleared since we started with just preserved flags)
+
+  // P/V flag: Set if BC != 0 after decrement
+  if (bc_after != 0)
+    flags |= qkz80_cpu_flags::P;
+
+  // X and Y flags (Z80 only): From A + copied_byte
+  if (cpu_mode == MODE_Z80) {
+    qkz80_uint8 n = a_val + copied_byte;
+    if (n & 0x08)
+      flags |= qkz80_cpu_flags::X;
+    if (n & 0x02)  // Note: Y flag is bit 1 of (A + byte), not bit 5!
+      flags |= qkz80_cpu_flags::Y;
+  }
+
+  set_flags(flags);
+}
+
 void qkz80_reg_set::set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry, bool is_increment) {
   a&=0x0ff;
   qkz80_uint8 result(get_flags());
