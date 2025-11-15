@@ -1067,6 +1067,84 @@ void qkz80::execute(void) {
     return;
   }
 
+  // Special handling for ALU operations with IXH/IXL/IYH/IYL (undocumented Z80 instructions)
+  // Check if this is an ALU operation (opcodes 0x80-0xBF) with DD/FD prefix and H or L register
+  if ((has_dd_prefix || has_fd_prefix) && (opcode >= 0x80 && opcode <= 0xBF)) {
+    qkz80_uint8 reg_num = opcode & 0x7;
+    if (reg_num == reg_H || reg_num == reg_L) {
+      // Get the value from IXH/IXL/IYH/IYL instead of H/L
+      qkz80_uint8 regb = (reg_num == reg_H) ?
+        (has_dd_prefix ? regs.IX.get_high() : regs.IY.get_high()) :
+        (has_dd_prefix ? regs.IX.get_low() : regs.IY.get_low());
+
+      qkz80_uint16 rega = get_reg8(reg_A);
+
+      // Determine which ALU operation
+      qkz80_uint8 alu_op = (opcode >> 3) & 0x7;
+      switch(alu_op) {
+        case 0: { // ADD
+          qkz80_big_uint sum(rega + regb);
+          regs.set_flags_from_sum8(sum, rega, regb, 0);
+          set_A(sum);
+          trace->asm_op("add %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          break;
+        }
+        case 1: { // ADC
+          qkz80_uint16 carry = fetch_carry_as_int();
+          qkz80_big_uint sum(rega + regb + carry);
+          regs.set_flags_from_sum8(sum, rega, regb, carry);
+          set_A(sum);
+          trace->asm_op("adc %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          break;
+        }
+        case 2: { // SUB
+          qkz80_big_uint diff(rega - regb);
+          regs.set_flags_from_diff8(diff, rega, regb, 0);
+          set_A(diff);
+          trace->asm_op("sub %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          break;
+        }
+        case 3: { // SBC
+          qkz80_uint16 carry = fetch_carry_as_int();
+          qkz80_big_uint diff(rega - regb - carry);
+          regs.set_flags_from_diff8(diff, rega, regb, carry);
+          set_A(diff);
+          trace->asm_op("sbc %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          break;
+        }
+        case 4: { // AND
+          qkz80_uint8 result = rega & regb;
+          qkz80_uint8 hc(((rega | regb) & 0x08) != 0);
+          regs.set_flags_from_logic8(result, 0, hc);
+          set_A(result);
+          trace->asm_op("and %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          break;
+        }
+        case 5: { // XOR
+          qkz80_uint8 result = rega ^ regb;
+          regs.set_flags_from_logic8(result, 0, 0);
+          set_A(result);
+          trace->asm_op("xor %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          break;
+        }
+        case 6: { // OR
+          qkz80_uint8 result = rega | regb;
+          regs.set_flags_from_logic8(result, 0, 0);
+          set_A(result);
+          trace->asm_op("or %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          break;
+        }
+        case 7: { // CP
+          qkz80_big_uint diff(rega - regb);
+          regs.set_flags_from_diff8(diff, rega, regb, 0);
+          trace->asm_op("cp %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          break;
+        }
+      }
+      return;
+    }
+  }
+
   if ((opcode & 0xf8) == 0x88 ) { // ADC
     qkz80_uint8 reg_num(opcode & 0x7);
     qkz80_uint16 rega(get_reg8(reg_A));
