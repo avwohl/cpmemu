@@ -5,8 +5,10 @@
 static qkz80_trace dummy_trace;
 qkz80::qkz80():
   qkz80_debug(false),
-  trace(&dummy_trace)
+  trace(&dummy_trace),
+  cpu_mode(MODE_Z80)  // Default to Z80 mode
 {
+  regs.cpu_mode = qkz80_reg_set::MODE_Z80;
 }
 
 #define LOW_NIBBLE(xx_foo) ((xx_foo)&0x0f)
@@ -321,7 +323,12 @@ void qkz80::execute(void) {
       qkz80_big_uint carry = fetch_carry_as_int();
       qkz80_big_uint result = hl_val + rp_val + carry;
       set_reg16(result, regp_HL);
-      regs.set_flags_from_sum16(result);
+      // Z80: ADC HL sets all flags like subtraction (but N=0 for add)
+      regs.set_flags_from_diff16(result, hl_val, rp_val, carry);
+      // Fix N flag for addition
+      qkz80_uint8 flags = regs.get_flags();
+      flags &= ~qkz80_cpu_flags::N;
+      regs.set_flags(flags);
       trace->asm_op("adc hl,%s", name_reg16(rp));
       return;
     }
@@ -333,7 +340,7 @@ void qkz80::execute(void) {
       qkz80_big_uint carry = fetch_carry_as_int();
       qkz80_big_uint result = hl_val - rp_val - carry;
       set_reg16(result, regp_HL);
-      regs.set_flags_from_sum16(result);  // TODO: should be diff16
+      regs.set_flags_from_diff16(result, hl_val, rp_val, carry);
       trace->asm_op("sbc hl,%s", name_reg16(rp));
       return;
     }
@@ -969,7 +976,15 @@ void qkz80::execute(void) {
     qkz80_big_uint pair2(get_reg16(active_hl));
     qkz80_big_uint sum(pair1+pair2);
     set_reg16(sum,active_hl);
-    regs.set_carry_from_int((sum& ~0x0ffff)!=0);
+
+    // Use Z80-specific flag handling if in Z80 mode
+    if (cpu_mode == MODE_Z80) {
+      regs.set_flags_from_add16(sum, pair2, pair1);
+    } else {
+      // 8080: Only sets carry flag
+      regs.set_carry_from_int((sum& ~0x0ffff)!=0);
+    }
+
     if (has_dd_prefix) trace->asm_op("add ix,%s",name_reg16(rp));
     else if (has_fd_prefix) trace->asm_op("add iy,%s",name_reg16(rp));
     else trace->asm_op("dad %s",name_reg16(rp));

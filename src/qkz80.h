@@ -4,6 +4,11 @@
 
 class qkz80 {
  public:
+  enum CPUMode {
+    MODE_8080,  // Intel 8080 compatibility mode
+    MODE_Z80    // Zilog Z80 mode (default)
+  };
+
   enum {
     regp_BC=0,
     regp_DE=1,
@@ -31,9 +36,18 @@ class qkz80 {
   qkz80_cpu_mem mem;
   qkz80_trace *trace;
   bool qkz80_debug;
+  CPUMode cpu_mode;  // 8080 or Z80 mode
 
   void set_debug(bool new_debug) {
     qkz80_debug=new_debug;
+  }
+
+  void set_cpu_mode(CPUMode mode) {
+    cpu_mode = mode;
+  }
+
+  CPUMode get_cpu_mode() const {
+    return cpu_mode;
   }
   
   char *get_mem(void) {

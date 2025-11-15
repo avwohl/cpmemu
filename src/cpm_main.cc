@@ -1489,8 +1489,9 @@ int main(int argc, char** argv) {
     cpu.regs.PC.set_pair16(TPA_START);
 
     // Run
-    int max_instructions = 10000000;  // Safety limit
-    int instruction_count = 0;
+    long long max_instructions = 5000000000LL;  // Safety limit (5B for Zexall/Zexdoc)
+    long long instruction_count = 0;
+    long long last_report = 0;
 
     while (true) {
         qkz80_uint16 pc = cpu.regs.PC.get_pair16();
@@ -1504,6 +1505,13 @@ int main(int argc, char** argv) {
         cpu.execute();
 
         instruction_count++;
+
+        // Progress report every 100M instructions
+        if (instruction_count - last_report >= 100000000) {
+            fprintf(stderr, "Progress: %lldM instructions\n", instruction_count / 1000000);
+            last_report = instruction_count;
+        }
+
         if (instruction_count >= max_instructions) {
             fprintf(stderr, "Reached instruction limit\n");
             fprintf(stderr, "PC = 0x%04X\n", cpu.regs.PC.get_pair16());

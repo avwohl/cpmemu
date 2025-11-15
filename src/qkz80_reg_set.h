@@ -7,6 +7,11 @@
 
 class qkz80_reg_set {
  public:
+  enum CPUMode {
+    MODE_8080,  // Intel 8080 compatibility mode
+    MODE_Z80    // Zilog Z80 mode
+  };
+
   qkz80_reg_pair AF;
   qkz80_reg_pair BC;
   qkz80_reg_pair DE;
@@ -27,13 +32,18 @@ class qkz80_reg_set {
   qkz80_uint8 IFF2;   // Interrupt flip-flop 2
   qkz80_uint8 IM;     // Interrupt mode (0, 1, or 2)
 
+  CPUMode cpu_mode;   // CPU mode for flag calculations
+
   bool condition_code(qkz80_uint8 a,qkz80_uint8 cpu_flags) const;
+  // Flag setting functions - now aware of CPU mode
   void set_flags_from_logic8(qkz80_big_uint a,
 			     qkz80_uint8 new_carry,
 			     qkz80_uint8 new_half_carry);
   void set_flags_from_sum8(qkz80_big_uint a,qkz80_uint8 new_half_carry);
   void set_flags_from_sum16(qkz80_big_uint a);
   void set_flags_from_diff8(qkz80_big_uint a,qkz80_uint8 half_carry);
+  void set_flags_from_diff16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2, qkz80_big_uint carry);
+  void set_flags_from_add16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2);
   void set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry);
   qkz80_uint8 get_flags(void) const;
   void set_flags(qkz80_uint8 new_flags);
