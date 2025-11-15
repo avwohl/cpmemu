@@ -676,6 +676,87 @@ void qkz80::execute(void) {
     return;
   }
 
+  if (opcode == 0x10) { // DJNZ - Decrement B and Jump if Not Zero
+    qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+    qkz80_uint8 b_val = get_reg8(reg_B);
+    b_val--;
+    set_reg8(b_val, reg_B);
+    if (b_val != 0) {
+      qkz80_uint16 pc = regs.PC.get_pair16();
+      regs.PC.set_pair16(pc + offset);
+      trace->asm_op("djnz $%+d", offset);
+      trace->comment("taken, B=%02x", b_val);
+    } else {
+      trace->asm_op("djnz $%+d", offset);
+      trace->comment("not taken, B=0");
+    }
+    return;
+  }
+
+  if (opcode == 0x18) { // JR - Unconditional relative jump
+    qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+    qkz80_uint16 pc = regs.PC.get_pair16();
+    regs.PC.set_pair16(pc + offset);
+    trace->asm_op("jr $%+d", offset);
+    return;
+  }
+
+  if (opcode == 0x20) { // JR NZ
+    qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+    if (!regs.condition_code(1, regs.get_flags())) { // NZ condition (code 0 for NZ is inverted to 1 for Z check)
+      qkz80_uint16 pc = regs.PC.get_pair16();
+      regs.PC.set_pair16(pc + offset);
+      trace->asm_op("jr nz,$%+d", offset);
+      trace->comment("taken");
+    } else {
+      trace->asm_op("jr nz,$%+d", offset);
+      trace->comment("not taken");
+    }
+    return;
+  }
+
+  if (opcode == 0x28) { // JR Z
+    qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+    if (regs.condition_code(1, regs.get_flags())) { // Z condition
+      qkz80_uint16 pc = regs.PC.get_pair16();
+      regs.PC.set_pair16(pc + offset);
+      trace->asm_op("jr z,$%+d", offset);
+      trace->comment("taken");
+    } else {
+      trace->asm_op("jr z,$%+d", offset);
+      trace->comment("not taken");
+    }
+    return;
+  }
+
+  if (opcode == 0x30) { // JR NC
+    qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+    if (!regs.condition_code(3, regs.get_flags())) { // NC condition (code 2 for NC is inverted to 3 for C check)
+      qkz80_uint16 pc = regs.PC.get_pair16();
+      regs.PC.set_pair16(pc + offset);
+      trace->asm_op("jr nc,$%+d", offset);
+      trace->comment("taken");
+    } else {
+      trace->asm_op("jr nc,$%+d", offset);
+      trace->comment("not taken");
+    }
+    return;
+  }
+
+  if (opcode == 0x38) { // JR C
+    qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+    if (regs.condition_code(3, regs.get_flags())) { // C condition
+      qkz80_uint16 pc = regs.PC.get_pair16();
+      regs.PC.set_pair16(pc + offset);
+      trace->asm_op("jr c,$%+d", offset);
+      trace->comment("taken");
+    } else {
+      trace->asm_op("jr c,$%+d", offset);
+      trace->comment("not taken");
+    }
+    return;
+  }
+
   if (opcode == 0xd9) { // EXX - exchange BC,DE,HL with alternates
     qkz80_uint16 bc = regs.BC.get_pair16();
     qkz80_uint16 de = regs.DE.get_pair16();
