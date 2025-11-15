@@ -646,10 +646,21 @@ void qkz80::execute(void) {
       if ((val & 0x80) && bit_num == 7) flags |= qkz80_cpu_flags::S;  // Set S if bit 7 is set
 
       // X and Y flags (Z80 only) - undocumented behavior
-      // For BIT n,r: copy from the tested value
+      // Source depends on addressing mode:
       if (regs.cpu_mode == qkz80_reg_set::MODE_Z80) {
-        if (val & 0x08) flags |= qkz80_cpu_flags::X;
-        if (val & 0x20) flags |= qkz80_cpu_flags::Y;
+        qkz80_uint8 xy_source;
+        if (has_dd_prefix || has_fd_prefix) {
+          // BIT n,(IX+d) or BIT n,(IY+d): Use high byte of effective address
+          xy_source = (addr >> 8) & 0xFF;
+        } else if (reg_sel == reg_M) {
+          // BIT n,(HL): Use H register (high byte of HL)
+          xy_source = get_reg8(reg_H);
+        } else {
+          // BIT n,r: Use the register value
+          xy_source = val;
+        }
+        if (xy_source & 0x08) flags |= qkz80_cpu_flags::X;
+        if (xy_source & 0x20) flags |= qkz80_cpu_flags::Y;
       }
 
       regs.set_flags(flags);
@@ -1443,14 +1454,14 @@ void qkz80::execute(void) {
 qkz80_uint8 qkz80::do_rlc(qkz80_uint8 val) {
   qkz80_uint8 carry = (val & 0x80) ? 1 : 0;
   qkz80_uint8 result = (val << 1) | carry;
-  regs.set_flags_from_logic8(result, carry, 0);
+  regs.set_flags_from_rotate8(result, carry);
   return result;
 }
 
 qkz80_uint8 qkz80::do_rrc(qkz80_uint8 val) {
   qkz80_uint8 carry = val & 0x01;
   qkz80_uint8 result = (val >> 1) | (carry << 7);
-  regs.set_flags_from_logic8(result, carry, 0);
+  regs.set_flags_from_rotate8(result, carry);
   return result;
 }
 
@@ -1458,7 +1469,7 @@ qkz80_uint8 qkz80::do_rl(qkz80_uint8 val) {
   qkz80_uint8 old_carry = regs.get_carry_as_int();
   qkz80_uint8 new_carry = (val & 0x80) ? 1 : 0;
   qkz80_uint8 result = (val << 1) | old_carry;
-  regs.set_flags_from_logic8(result, new_carry, 0);
+  regs.set_flags_from_rotate8(result, new_carry);
   return result;
 }
 
@@ -1466,21 +1477,21 @@ qkz80_uint8 qkz80::do_rr(qkz80_uint8 val) {
   qkz80_uint8 old_carry = regs.get_carry_as_int();
   qkz80_uint8 new_carry = val & 0x01;
   qkz80_uint8 result = (val >> 1) | (old_carry << 7);
-  regs.set_flags_from_logic8(result, new_carry, 0);
+  regs.set_flags_from_rotate8(result, new_carry);
   return result;
 }
 
 qkz80_uint8 qkz80::do_sla(qkz80_uint8 val) {
   qkz80_uint8 carry = (val & 0x80) ? 1 : 0;
   qkz80_uint8 result = val << 1;
-  regs.set_flags_from_logic8(result, carry, 0);
+  regs.set_flags_from_rotate8(result, carry);
   return result;
 }
 
 qkz80_uint8 qkz80::do_sra(qkz80_uint8 val) {
   qkz80_uint8 carry = val & 0x01;
   qkz80_uint8 result = (val >> 1) | (val & 0x80);  // preserve sign bit
-  regs.set_flags_from_logic8(result, carry, 0);
+  regs.set_flags_from_rotate8(result, carry);
   return result;
 }
 
@@ -1488,14 +1499,14 @@ qkz80_uint8 qkz80::do_sll(qkz80_uint8 val) {
   // Undocumented: shift left, bit 0 becomes 1
   qkz80_uint8 carry = (val & 0x80) ? 1 : 0;
   qkz80_uint8 result = (val << 1) | 0x01;
-  regs.set_flags_from_logic8(result, carry, 0);
+  regs.set_flags_from_rotate8(result, carry);
   return result;
 }
 
 qkz80_uint8 qkz80::do_srl(qkz80_uint8 val) {
   qkz80_uint8 carry = val & 0x01;
   qkz80_uint8 result = val >> 1;
-  regs.set_flags_from_logic8(result, carry, 0);
+  regs.set_flags_from_rotate8(result, carry);
   return result;
 }
 

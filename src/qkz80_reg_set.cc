@@ -98,6 +98,42 @@ void qkz80_reg_set::set_flags_from_logic8(qkz80_big_uint a,
   set_flags(new_flags);
 }
 
+// Flag setting for CB-prefixed rotate/shift instructions (RLC, RRC, RL, RR, SLA, SRA, SLL, SRL)
+// These differ from logical operations in that H is always 0 (not calculated from operands)
+void qkz80_reg_set::set_flags_from_rotate8(qkz80_uint8 result, qkz80_uint8 new_carry) {
+  qkz80_uint8 new_flags = 0;
+
+  // Set carry flag
+  if (new_carry)
+    new_flags |= qkz80_cpu_flags::CY;
+
+  // H flag is always cleared for rotate/shift (NOT set based on calculation)
+  // N flag is always cleared for rotate/shift
+  // (Both already 0)
+
+  // Set Z flag
+  if (result == 0)
+    new_flags |= qkz80_cpu_flags::Z;
+
+  // Set S flag
+  if (result & 0x80)
+    new_flags |= qkz80_cpu_flags::S;
+
+  // Set P/V flag as parity
+  if (parity_info.get_parity_of_byte(result))
+    new_flags |= qkz80_cpu_flags::P;
+
+  // X and Y flags (Z80 only) - copy bits 3 and 5 of result
+  if (cpu_mode == MODE_Z80) {
+    if (result & 0x08)
+      new_flags |= qkz80_cpu_flags::X;  // Copy bit 3
+    if (result & 0x20)
+      new_flags |= qkz80_cpu_flags::Y;  // Copy bit 5
+  }
+
+  set_flags(new_flags);
+}
+
 // 8-bit addition (ADD, ADC) - uses bit-by-bit simulation for exact flag calculation
 void qkz80_reg_set::set_flags_from_sum8(qkz80_big_uint result, qkz80_uint8 val1, qkz80_uint8 val2, qkz80_uint8 carry) {
   // Use bit-by-bit simulation to get exact flag values
