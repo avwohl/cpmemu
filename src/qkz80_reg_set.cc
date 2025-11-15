@@ -607,6 +607,7 @@ static qkz80_uint8 add8_bitwise(qkz80_uint8 s1, qkz80_uint8 s2, int carry_in,
     if (i == 6) c6 = (cy != 0) ? 1 : 0;      // Save carry from bit 6
     if (i == 7) flag_c = (cy != 0) ? 1 : 0;  // Carry from bit 7
 
+    // Shift carry for next iteration (like tnylpo)
     cy <<= 1;
     ma <<= 1;
   }
