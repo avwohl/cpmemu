@@ -195,6 +195,10 @@ void qkz80_reg_set::set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry) {
 void qkz80_reg_set::set_flags_from_add16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2) {
   qkz80_uint8 flags = get_flags();
 
+  // Preserve S, Z, P/V flags (ADD HL doesn't modify them!)
+  qkz80_uint8 preserve_mask = qkz80_cpu_flags::S | qkz80_cpu_flags::Z | qkz80_cpu_flags::P;
+  qkz80_uint8 preserved = flags & preserve_mask;
+
   // Clear N flag (this is addition)
   flags &= ~qkz80_cpu_flags::N;
 
@@ -205,27 +209,44 @@ void qkz80_reg_set::set_flags_from_add16(qkz80_big_uint result, qkz80_big_uint v
     flags &= ~qkz80_cpu_flags::CY;
 
   // Set half-carry if carry from bit 11 to bit 12
-  // Check if (val1 & 0xFFF) + (val2 & 0xFFF) > 0xFFF
-  if (((val1 & 0x0FFF) + (val2 & 0x0FFF)) & 0x1000)
+  // H = (val1[11] & val2[11]) | ((val1[11] | val2[11]) & ~result[11])
+  qkz80_uint16 val1_11 = (val1 >> 11) & 1;
+  qkz80_uint16 val2_11 = (val2 >> 11) & 1;
+  qkz80_uint16 res_11 = (result >> 11) & 1;
+  if ((val1_11 & val2_11) | ((val1_11 | val2_11) & (~res_11 & 1)))
     flags |= qkz80_cpu_flags::H;
   else
     flags &= ~qkz80_cpu_flags::H;
+
+  // Restore preserved flags
+  flags = (flags & ~preserve_mask) | preserved;
 
   set_flags(flags);
 }
 
 // Z80-specific: 16-bit ADC/SBC (ADC HL,ss / SBC HL,ss)
 // Affects: S, Z, H, P/V (overflow), N, C
+// Uses subtract semantics even for ADC (caller must clear N for ADC)
 void qkz80_reg_set::set_flags_from_diff16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2, qkz80_big_uint carry) {
   qkz80_uint8 flags = 0;
   qkz80_uint16 result16 = result & 0xFFFF;
 
-  // Set N flag (this is subtraction)
+  // Set N flag (this is subtraction - caller clears for ADC)
   flags |= qkz80_cpu_flags::N;
 
-  // Carry flag
-  if (result & 0x10000)
+  // Carry flag (bit 16)
+  qkz80_uint8 c15 = (result >> 16) & 1;
+  if (c15)
     flags |= qkz80_cpu_flags::CY;
+
+  // Calculate carry from bit 14 for overflow
+  // For subtraction: val1 - val2 - carry
+  qkz80_big_uint temp = ((val1 & 0x7FFF) - (val2 & 0x7FFF) - carry);
+  qkz80_uint8 c14 = (temp >> 15) & 1;
+
+  // Overflow = C15 XOR C14 (from tnylpo)
+  if (c15 ^ c14)
+    flags |= qkz80_cpu_flags::P;
 
   // Zero flag (16-bit result is zero)
   if (result16 == 0)
@@ -235,17 +256,10 @@ void qkz80_reg_set::set_flags_from_diff16(qkz80_big_uint result, qkz80_big_uint 
   if (result16 & 0x8000)
     flags |= qkz80_cpu_flags::S;
 
-  // Half-carry from bit 11
-  if (((val1 & 0x0FFF) - (val2 & 0x0FFF) - carry) & 0x1000)
+  // Half-carry from bit 11 (carry out of bit 11)
+  qkz80_big_uint temp_h = ((val1 & 0x0FFF) - (val2 & 0x0FFF) - carry);
+  if (temp_h & 0x1000)
     flags |= qkz80_cpu_flags::H;
-
-  // Overflow: set if signs of operands differ from sign of result incorrectly
-  // For subtraction: overflow if (val1 and result have different signs) AND (val1 and val2 have different signs)
-  qkz80_uint8 val1_sign = (val1 >> 15) & 1;
-  qkz80_uint8 val2_sign = (val2 >> 15) & 1;
-  qkz80_uint8 res_sign = (result16 >> 15) & 1;
-  if ((val1_sign != res_sign) && (val1_sign != val2_sign))
-    flags |= qkz80_cpu_flags::P;
 
   set_flags(fix_flags(flags));
 }
