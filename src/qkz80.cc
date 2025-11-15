@@ -51,9 +51,29 @@ qkz80_uint8 qkz80::compute_subtract_half_carry(qkz80_uint16 rega,
 }
 
 void qkz80::halt(void) {
-  std::cerr
-    << "halt"
-    << std::endl;
+  // Print all registers and flags for debugging
+  qkz80_uint8 flags = regs.get_flags();
+
+  std::cerr << "=== HALT - Register Dump ===" << std::endl;
+  std::cerr << "AF: " << std::hex << std::uppercase
+            << (int)regs.AF.get_high() << (int)regs.AF.get_low() << std::endl;
+  std::cerr << "BC: " << (int)regs.BC.get_high() << (int)regs.BC.get_low() << std::endl;
+  std::cerr << "DE: " << (int)regs.DE.get_high() << (int)regs.DE.get_low() << std::endl;
+  std::cerr << "HL: " << (int)regs.HL.get_high() << (int)regs.HL.get_low() << std::endl;
+  std::cerr << "SP: " << (int)regs.SP.get_pair16() << std::endl;
+  std::cerr << "PC: " << (int)regs.PC.get_pair16() << std::endl;
+
+  std::cerr << "Flags (0x" << std::hex << (int)flags << "): ";
+  if (flags & 0x80) std::cerr << "S "; else std::cerr << "- ";
+  if (flags & 0x40) std::cerr << "Z "; else std::cerr << "- ";
+  if (flags & 0x20) std::cerr << "Y "; else std::cerr << "- ";
+  if (flags & 0x10) std::cerr << "H "; else std::cerr << "- ";
+  if (flags & 0x08) std::cerr << "X "; else std::cerr << "- ";
+  if (flags & 0x04) std::cerr << "P "; else std::cerr << "- ";
+  if (flags & 0x02) std::cerr << "N "; else std::cerr << "- ";
+  if (flags & 0x01) std::cerr << "C"; else std::cerr << "-";
+  std::cerr << std::endl;
+
   exit(1);
 }
 
@@ -365,8 +385,7 @@ void qkz80::execute(void) {
     if ((opcode & 0xc7) == 0x44) {  // NEG (also duplicates at 4C,54,5C,64,6C,74,7C)
       qkz80_uint8 a_val = get_reg8(reg_A);
       qkz80_big_uint result = 0 - a_val;
-      qkz80_uint8 hc = compute_subtract_half_carry(0, result, a_val, 0);
-      regs.set_flags_from_diff8(result, hc);
+      regs.set_flags_from_diff8(result, 0, a_val, 0);
       set_A(result);
       trace->asm_op("neg");
       return;
@@ -506,8 +525,7 @@ void qkz80::execute(void) {
       qkz80_uint8 a_val = get_reg8(reg_A);
       qkz80_uint8 mem_val = mem.fetch_mem(hl);
       qkz80_big_uint diff = a_val - mem_val;
-      qkz80_uint8 hc = compute_subtract_half_carry(a_val, diff, mem_val, 0);
-      regs.set_flags_from_diff8(diff, hc);
+      regs.set_flags_from_diff8(diff, a_val, mem_val, 0);
       set_reg16(hl + 1, regp_HL);
       set_reg16(bc - 1, regp_BC);
       trace->asm_op("cpi");
@@ -519,8 +537,7 @@ void qkz80::execute(void) {
       qkz80_uint8 a_val = get_reg8(reg_A);
       qkz80_uint8 mem_val = mem.fetch_mem(hl);
       qkz80_big_uint diff = a_val - mem_val;
-      qkz80_uint8 hc = compute_subtract_half_carry(a_val, diff, mem_val, 0);
-      regs.set_flags_from_diff8(diff, hc);
+      regs.set_flags_from_diff8(diff, a_val, mem_val, 0);
       set_reg16(hl + 1, regp_HL);
       set_reg16(bc - 1, regp_BC);
       if (bc != 1 && diff != 0) regs.PC.set_pair16(regs.PC.get_pair16() - 2);  // Repeat if not found
@@ -533,8 +550,7 @@ void qkz80::execute(void) {
       qkz80_uint8 a_val = get_reg8(reg_A);
       qkz80_uint8 mem_val = mem.fetch_mem(hl);
       qkz80_big_uint diff = a_val - mem_val;
-      qkz80_uint8 hc = compute_subtract_half_carry(a_val, diff, mem_val, 0);
-      regs.set_flags_from_diff8(diff, hc);
+      regs.set_flags_from_diff8(diff, a_val, mem_val, 0);
       set_reg16(hl - 1, regp_HL);
       set_reg16(bc - 1, regp_BC);
       trace->asm_op("cpd");
@@ -546,8 +562,7 @@ void qkz80::execute(void) {
       qkz80_uint8 a_val = get_reg8(reg_A);
       qkz80_uint8 mem_val = mem.fetch_mem(hl);
       qkz80_big_uint diff = a_val - mem_val;
-      qkz80_uint8 hc = compute_subtract_half_carry(a_val, diff, mem_val, 0);
-      regs.set_flags_from_diff8(diff, hc);
+      regs.set_flags_from_diff8(diff, a_val, mem_val, 0);
       set_reg16(hl - 1, regp_HL);
       set_reg16(bc - 1, regp_BC);
       if (bc != 1 && diff != 0) regs.PC.set_pair16(regs.PC.get_pair16() - 2);  // Repeat if not found
@@ -811,8 +826,7 @@ void qkz80::execute(void) {
     qkz80_uint16 regb(get_reg8(reg_num));
     qkz80_uint16 carry(fetch_carry_as_int());
     qkz80_big_uint sum(rega+regb+carry);
-    qkz80_uint8 hc(compute_sum_half_carry(rega,regb,carry));
-    regs.set_flags_from_sum8(sum,hc);
+    regs.set_flags_from_sum8(sum, rega, regb, carry);
     set_A(sum);
     trace->add_reg8(reg_num);
     trace->asm_op("add %s",name_reg8(reg_num));
@@ -824,8 +838,7 @@ void qkz80::execute(void) {
     qkz80_uint16 rega(get_reg8(reg_A));
     qkz80_uint16 regb(get_reg8(reg_num));
     qkz80_big_uint sum(rega+regb);
-    qkz80_uint8 hc(compute_sum_half_carry(rega,regb,0));
-    regs.set_flags_from_sum8(sum,hc);
+    regs.set_flags_from_sum8(sum, rega, regb, 0);
     set_A(sum);
     trace->asm_op("add %s",name_reg8(reg_num));
     trace->add_reg8(reg_num);
@@ -836,8 +849,7 @@ void qkz80::execute(void) {
     qkz80_uint16 rega(get_reg8(reg_A));
     qkz80_uint16 dat(pull_byte_from_opcode_stream());
     qkz80_big_uint sum(dat+rega);
-    qkz80_uint8 hc(compute_sum_half_carry(rega,dat,0));
-    regs.set_flags_from_sum8(sum,hc);
+    regs.set_flags_from_sum8(sum, rega, dat, 0);
     set_A(sum);
     trace->asm_op("adi 0x%0x",dat);
     return;
@@ -848,8 +860,7 @@ void qkz80::execute(void) {
     qkz80_uint16 dat(pull_byte_from_opcode_stream());
     qkz80_uint16 cy(fetch_carry_as_int());
     qkz80_big_uint sum(dat+rega+cy);
-    qkz80_uint8 hc(compute_sum_half_carry(rega,dat,cy));
-    regs.set_flags_from_sum8(sum,hc);
+    regs.set_flags_from_sum8(sum, rega, dat, cy);
     set_A(sum);
     trace->asm_op("aci 0x%0x",dat);
     return;
@@ -860,8 +871,7 @@ void qkz80::execute(void) {
     qkz80_uint16 rega(get_reg8(reg_A));
     qkz80_uint16 regb(get_reg8(reg_num));
     qkz80_big_uint diff(rega-regb);
-    qkz80_uint8 hc(compute_subtract_half_carry(rega,diff,regb,0));
-    regs.set_flags_from_diff8(diff,hc);
+    regs.set_flags_from_diff8(diff, rega, regb, 0);
     set_A(diff);
     trace->asm_op("sub %s",name_reg8(reg_num));
     trace->add_reg8(reg_num);
@@ -873,8 +883,7 @@ void qkz80::execute(void) {
     qkz80_uint8 rega(get_reg8(reg_A));
     qkz80_uint8 regb(get_reg8(reg_num));
     qkz80_big_uint diff(rega-regb);
-    qkz80_uint8 hc(compute_subtract_half_carry(rega,diff,regb,0));
-    regs.set_flags_from_diff8(diff,hc);
+    regs.set_flags_from_diff8(diff, rega, regb, 0);
     trace->asm_op("cmp %s",name_reg8(reg_num));
     trace->add_reg8(reg_num);
     return;
@@ -884,8 +893,7 @@ void qkz80::execute(void) {
     qkz80_uint16 dat(pull_byte_from_opcode_stream());
     qkz80_uint16 rega(get_reg8(reg_A));
     qkz80_big_uint diff(rega-dat);
-    qkz80_uint8 hc(compute_subtract_half_carry(rega,diff,dat,0));
-    regs.set_flags_from_diff8(diff,hc);
+    regs.set_flags_from_diff8(diff, rega, dat, 0);
     trace->asm_op("cpi 0x%0x",dat);
     trace->add_reg8(reg_A);
     return;
@@ -895,8 +903,7 @@ void qkz80::execute(void) {
     qkz80_uint16 dat(pull_byte_from_opcode_stream());
     qkz80_uint16 rega(get_reg8(reg_A));
     qkz80_big_uint diff(rega-dat);
-    qkz80_uint8 hc(compute_subtract_half_carry(rega,diff,dat,0));
-    regs.set_flags_from_diff8(diff,hc);
+    regs.set_flags_from_diff8(diff, rega, dat, 0);
     set_A(diff);
     trace->asm_op("cpi 0x%0x",dat);
     return;
@@ -907,8 +914,7 @@ void qkz80::execute(void) {
     qkz80_uint16 regb(get_reg8(reg_num));
     qkz80_uint16 carry(fetch_carry_as_int());
     qkz80_big_uint diff(rega-regb-carry);
-    qkz80_uint8 hc(compute_subtract_half_carry(rega,diff,regb,carry));
-    regs.set_flags_from_diff8(diff,hc);
+    regs.set_flags_from_diff8(diff, rega, regb, carry);
     set_A(diff);
     trace->asm_op("sbb %s",name_reg8(reg_num));
     trace->add_reg8(reg_num);
@@ -920,8 +926,7 @@ void qkz80::execute(void) {
     qkz80_uint16 rega(get_reg8(reg_A));
     qkz80_uint16 carry(fetch_carry_as_int());
     qkz80_big_uint diff(rega-dat-carry);
-    qkz80_uint8 hc(compute_subtract_half_carry(rega,diff,dat,carry));
-    regs.set_flags_from_diff8(diff,hc);
+    regs.set_flags_from_diff8(diff, rega, dat, carry);
     set_A(diff);
     trace->asm_op("sbi 0x%0x",dat);
     return;
@@ -944,7 +949,7 @@ void qkz80::execute(void) {
     num--;
     set_reg8(num,reg_num);
     qkz80_uint8 hc(!((num & 0xf) == 0xf));
-    regs.set_zspa_from_inr(num,hc);
+    regs.set_zspa_from_inr(num,hc,false);  // false = decrement
     trace->asm_op("dcr %s",name_reg8(reg_num));
     return;
   }

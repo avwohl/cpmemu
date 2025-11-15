@@ -33,6 +33,16 @@ public:
 
 static parity_info_type parity_info;
 
+// Forward declarations of helper functions for bit-by-bit flag simulation
+static qkz80_uint8 add8_bitwise(qkz80_uint8 s1, qkz80_uint8 s2, int carry_in,
+                                 qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
+                                 qkz80_uint8& flag_x, qkz80_uint8& flag_y,
+                                 qkz80_uint8& flag_z, qkz80_uint8& flag_s);
+static qkz80_uint8 sub8_bitwise(qkz80_uint8 minuend, qkz80_uint8 subtrahend, int borrow_in,
+                                 qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
+                                 qkz80_uint8& flag_x, qkz80_uint8& flag_y,
+                                 qkz80_uint8& flag_z, qkz80_uint8& flag_s);
+
 // Note: This is now a member function (const), not static, so it can access cpu_mode
 qkz80_uint8 qkz80_reg_set::fix_flags(qkz80_uint8 new_flags) const {
   if (cpu_mode == MODE_8080) {
@@ -77,42 +87,66 @@ void qkz80_reg_set::set_flags_from_logic8(qkz80_big_uint a,
   set_flags(new_flags);
 }
 
-void qkz80_reg_set::set_flags_from_diff8(qkz80_big_uint a,qkz80_uint8 new_half_carry) {
-  set_flags_from_sum8(a,new_half_carry);
+// 8-bit addition (ADD, ADC) - uses bit-by-bit simulation for exact flag calculation
+void qkz80_reg_set::set_flags_from_sum8(qkz80_big_uint result, qkz80_uint8 val1, qkz80_uint8 val2, qkz80_uint8 carry) {
+  // Use bit-by-bit simulation to get exact flag values
+  qkz80_uint8 flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
+  add8_bitwise(val1, val2, carry, flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s);
 
-  // Z80: Set N flag for subtraction
-  if(cpu_mode == MODE_Z80) {
-    qkz80_uint8 flags = get_flags();
-    flags |= qkz80_cpu_flags::N;
-    set_flags(flags);
-  }
-}
+  qkz80_uint8 flags = 0;
 
-void qkz80_reg_set::set_flags_from_sum8(qkz80_big_uint a,qkz80_uint8 new_half_carry) {
-  set_flags_from_logic8(a,(a & 0x0100)!=0,new_half_carry);
+  // Set all flags from bit-by-bit simulation
+  if (flag_c) flags |= qkz80_cpu_flags::CY;
+  if (flag_h) flags |= qkz80_cpu_flags::H;
+  if (flag_z) flags |= qkz80_cpu_flags::Z;
+  if (flag_s) flags |= qkz80_cpu_flags::S;
+  if (flag_x) flags |= qkz80_cpu_flags::X;
+  if (flag_y) flags |= qkz80_cpu_flags::Y;
 
-  qkz80_uint8 new_flags(get_flags());
+  // N flag is cleared for addition
+  // (already 0 since we started with flags = 0)
 
-  // Clear N flag for addition (Z80 only, but harmless on 8080)
-  new_flags &= ~qkz80_cpu_flags::N;
-
-  if(cpu_mode == MODE_Z80) {
-    // Z80: P flag is overflow for arithmetic operations
-    // Overflow occurs if sign changes incorrectly
-    // For now, use parity - TODO: implement proper overflow detection
-    if(parity_info.get_parity_of_byte(a))
-      new_flags|=qkz80_cpu_flags::P;
-    else
-      new_flags&= ~qkz80_cpu_flags::P;
+  if (cpu_mode == MODE_Z80) {
+    // Z80: P/V flag is overflow for arithmetic operations
+    if (flag_v) flags |= qkz80_cpu_flags::P;
   } else {
     // 8080: P is always parity
-    if(parity_info.get_parity_of_byte(a))
-      new_flags|=qkz80_cpu_flags::P;
-    else
-      new_flags&= ~qkz80_cpu_flags::P;
+    if (parity_info.get_parity_of_byte(result & 0xFF))
+      flags |= qkz80_cpu_flags::P;
   }
 
-  set_flags(new_flags);
+  set_flags(flags);
+}
+
+// 8-bit subtraction (SUB, SBC, CP) - uses bit-by-bit simulation for exact flag calculation
+void qkz80_reg_set::set_flags_from_diff8(qkz80_big_uint result, qkz80_uint8 val1, qkz80_uint8 val2, qkz80_uint8 carry) {
+  // Use bit-by-bit simulation to get exact flag values
+  qkz80_uint8 flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
+  sub8_bitwise(val1, val2, carry, flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s);
+
+  qkz80_uint8 flags = 0;
+
+  // Set all flags from bit-by-bit simulation
+  if (flag_c) flags |= qkz80_cpu_flags::CY;
+  if (flag_h) flags |= qkz80_cpu_flags::H;
+  if (flag_z) flags |= qkz80_cpu_flags::Z;
+  if (flag_s) flags |= qkz80_cpu_flags::S;
+  if (flag_x) flags |= qkz80_cpu_flags::X;
+  if (flag_y) flags |= qkz80_cpu_flags::Y;
+
+  // N flag is set for subtraction
+  flags |= qkz80_cpu_flags::N;
+
+  if (cpu_mode == MODE_Z80) {
+    // Z80: P/V flag is overflow for arithmetic operations
+    if (flag_v) flags |= qkz80_cpu_flags::P;
+  } else {
+    // 8080: P is always parity
+    if (parity_info.get_parity_of_byte(result & 0xFF))
+      flags |= qkz80_cpu_flags::P;
+  }
+
+  set_flags(flags);
 }
 
 void qkz80_reg_set::set_flags_from_sum16(qkz80_big_uint a) {
@@ -164,7 +198,7 @@ void qkz80_reg_set::set_carry_from_int(qkz80_big_uint x) {
   set_flags(result);
 }
 
-void qkz80_reg_set::set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry) {
+void qkz80_reg_set::set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry, bool is_increment) {
   a&=0x0ff;
   qkz80_uint8 result(get_flags());
   if(half_carry)
@@ -183,15 +217,110 @@ void qkz80_reg_set::set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry) {
   else
     result&= ~qkz80_cpu_flags::S;
 
-  if(parity_info.get_parity_of_byte(a))
-    result|=qkz80_cpu_flags::P;
-  else
-    result&= ~qkz80_cpu_flags::P;
+  // P/V flag
+  if(cpu_mode == MODE_Z80) {
+    // Z80: P/V is overflow for INC/DEC
+    // For INC: overflow when 0x7F -> 0x80 (positive to negative)
+    // For DEC: overflow when 0x80 -> 0x7F (negative to positive)
+    bool overflow = false;
+    if (is_increment) {
+      overflow = (a == 0x80);  // Just incremented to 0x80
+    } else {
+      overflow = (a == 0x7F);  // Just decremented to 0x7F
+    }
 
+    if (overflow)
+      result|=qkz80_cpu_flags::P;
+    else
+      result&= ~qkz80_cpu_flags::P;
+  } else {
+    // 8080: P is always parity
+    if(parity_info.get_parity_of_byte(a))
+      result|=qkz80_cpu_flags::P;
+    else
+      result&= ~qkz80_cpu_flags::P;
+  }
 
   result=fix_flags(result);
 
   set_flags(result);
+}
+
+// Helper: Bit-by-bit 8-bit addition with carry (based on tnylpo)
+// Returns result and sets all flags via bit-simulation
+static qkz80_uint8 add8_bitwise(qkz80_uint8 s1, qkz80_uint8 s2, int carry_in,
+                                 qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
+                                 qkz80_uint8& flag_x, qkz80_uint8& flag_y,
+                                 qkz80_uint8& flag_z, qkz80_uint8& flag_s) {
+  qkz80_uint8 result = 0;
+  qkz80_uint16 cy = carry_in ? 1 : 0;
+  qkz80_uint16 ma = 1;
+  int c6 = 0;  // Carry out of bit 6 (for overflow calculation)
+
+  for (int i = 0; i < 8; i++) {
+    // XOR to get result bit
+    result |= (s1 ^ s2 ^ cy) & ma;
+    // Calculate carry out: (s2 & cy) | (s1 & (s2 | cy))
+    cy = ((s2 & cy) | (s1 & (s2 | cy))) & ma;
+
+    if (i == 3) flag_h = (cy != 0) ? 1 : 0;  // Half-carry from bit 3
+    if (i == 6) c6 = (cy != 0) ? 1 : 0;      // Save carry from bit 6
+    if (i == 7) flag_c = (cy != 0) ? 1 : 0;  // Carry from bit 7
+
+    cy <<= 1;
+    ma <<= 1;
+  }
+
+  // Overflow = carry_out_bit7 XOR carry_out_bit6
+  flag_v = flag_c ^ c6;
+
+  // Undocumented X and Y flags from bits 3 and 5 of result
+  flag_x = (result & 0x08) ? 1 : 0;  // Bit 3
+  flag_y = (result & 0x20) ? 1 : 0;  // Bit 5
+
+  // Zero and sign flags
+  flag_z = (result == 0) ? 1 : 0;
+  flag_s = (result & 0x80) ? 1 : 0;
+
+  return result;
+}
+
+// Helper: Bit-by-bit 8-bit subtraction with borrow (based on tnylpo)
+static qkz80_uint8 sub8_bitwise(qkz80_uint8 minuend, qkz80_uint8 subtrahend, int borrow_in,
+                                 qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
+                                 qkz80_uint8& flag_x, qkz80_uint8& flag_y,
+                                 qkz80_uint8& flag_z, qkz80_uint8& flag_s) {
+  qkz80_uint8 result = 0;
+  qkz80_uint16 cy = borrow_in ? 1 : 0;
+  qkz80_uint16 ma = 1;
+  int c6 = 0;  // Borrow out of bit 6 (for overflow calculation)
+
+  for (int i = 0; i < 8; i++) {
+    // XOR to get result bit
+    result |= (minuend ^ subtrahend ^ cy) & ma;
+    // Calculate borrow: (subtrahend & cy) | (~minuend & (subtrahend | cy))
+    cy = ((subtrahend & cy) | (~minuend & (subtrahend | cy))) & ma;
+
+    if (i == 3) flag_h = (cy != 0) ? 1 : 0;  // Half-borrow from bit 3
+    if (i == 6) c6 = (cy != 0) ? 1 : 0;      // Save borrow from bit 6
+    if (i == 7) flag_c = (cy != 0) ? 1 : 0;  // Borrow from bit 7
+
+    cy <<= 1;
+    ma <<= 1;
+  }
+
+  // Overflow = borrow_out_bit7 XOR borrow_out_bit6
+  flag_v = flag_c ^ c6;
+
+  // Undocumented X and Y flags from bits 3 and 5 of result
+  flag_x = (result & 0x08) ? 1 : 0;  // Bit 3
+  flag_y = (result & 0x20) ? 1 : 0;  // Bit 5
+
+  // Zero and sign flags
+  flag_z = (result == 0) ? 1 : 0;
+  flag_s = (result & 0x80) ? 1 : 0;
+
+  return result;
 }
 
 // Helper: Bit-by-bit 16-bit addition with carry (based on tnylpo)

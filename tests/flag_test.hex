@@ -1,0 +1,17 @@
+# Test 1: ADD overflow
+3E 7F       # LD A, 0x7F
+C6 01       # ADD A, 0x01
+00          # NOP
+
+# Test 2: ADD carry
+3E FF       # LD A, 0xFF
+C6 01       # ADD A, 0x01
+00          # NOP
+
+# Test 3: ADD half-carry
+3E 0F       # LD A, 0x0F
+C6 01       # ADD A, 0x01
+00          # NOP
+
+# Exit
+C3 00 00    # JP 0x0000
