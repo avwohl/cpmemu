@@ -1176,6 +1176,12 @@ void qkz80::execute(void) {
         case 7: { // CP
           qkz80_big_uint diff(rega - regb);
           regs.set_flags_from_diff8(diff, rega, regb, 0);
+          // CP is special: X and Y flags come from the operand, not the result
+          qkz80_uint8 flags = regs.get_flags();
+          flags &= ~(qkz80_cpu_flags::X | qkz80_cpu_flags::Y);  // Clear X and Y
+          if (regb & 0x08) flags |= qkz80_cpu_flags::X;          // Set X from bit 3 of operand
+          if (regb & 0x20) flags |= qkz80_cpu_flags::Y;          // Set Y from bit 5 of operand
+          regs.set_flags(flags);
           if (reg_num == reg_M) {
             trace->asm_op("cp (%s+d)", has_dd_prefix ? "ix" : "iy");
           } else {
@@ -1252,17 +1258,29 @@ void qkz80::execute(void) {
     qkz80_uint8 regb(get_reg8(reg_num));
     qkz80_big_uint diff(rega-regb);
     regs.set_flags_from_diff8(diff, rega, regb, 0);
+    // CP is special: X and Y flags come from the operand, not the result
+    qkz80_uint8 flags = regs.get_flags();
+    flags &= ~(qkz80_cpu_flags::X | qkz80_cpu_flags::Y);  // Clear X and Y
+    if (regb & 0x08) flags |= qkz80_cpu_flags::X;          // Set X from bit 3 of operand
+    if (regb & 0x20) flags |= qkz80_cpu_flags::Y;          // Set Y from bit 5 of operand
+    regs.set_flags(flags);
     trace->asm_op("cmp %s",name_reg8(reg_num));
     trace->add_reg8(reg_num);
     return;
   }
 
-  if (opcode == 0xfe ) { // CPI
+  if (opcode == 0xfe ) { // CP n
     qkz80_uint16 dat(pull_byte_from_opcode_stream());
     qkz80_uint16 rega(get_reg8(reg_A));
     qkz80_big_uint diff(rega-dat);
     regs.set_flags_from_diff8(diff, rega, dat, 0);
-    trace->asm_op("cpi 0x%0x",dat);
+    // CP is special: X and Y flags come from the operand, not the result
+    qkz80_uint8 flags = regs.get_flags();
+    flags &= ~(qkz80_cpu_flags::X | qkz80_cpu_flags::Y);  // Clear X and Y
+    if (dat & 0x08) flags |= qkz80_cpu_flags::X;           // Set X from bit 3 of operand
+    if (dat & 0x20) flags |= qkz80_cpu_flags::Y;           // Set Y from bit 5 of operand
+    regs.set_flags(flags);
+    trace->asm_op("cp 0x%0x",dat);
     trace->add_reg8(reg_A);
     return;
   }
