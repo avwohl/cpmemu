@@ -1717,43 +1717,68 @@ void qkz80::execute(void) {
     return;
   } 
 
- if (opcode == 0x27) { // DAA
-    qkz80_uint16 rega(get_reg8(reg_A));
-    qkz80_uint8 flags(regs.get_flags());
-    qkz80_uint8 low_a_nibble(LOW_NIBBLE(rega));
-    qkz80_uint8 high_a_nibble(LOW_NIBBLE(rega>>4));
-    qkz80_uint8 carry(fetch_carry_as_int());
-    qkz80_uint8 half_carry((flags&qkz80_cpu_flags::AC)!=0);
-    qkz80_uint8 n_flag((flags&qkz80_cpu_flags::N)!=0);  // Check if previous op was subtraction
-    qkz80_uint16 correction(0);
+ if (opcode == 0x27) { // DAA - Based on tnylpo implementation
+    qkz80_uint8 rega = get_reg8(reg_A);
+    qkz80_uint8 flags = regs.get_flags();
+    qkz80_uint8 low = rega & 0x0f;
+    qkz80_uint8 high = (rega >> 4) & 0x0f;
+    qkz80_uint8 flag_c = fetch_carry_as_int();
+    qkz80_uint8 flag_h = (flags & qkz80_cpu_flags::AC) != 0;
+    qkz80_uint8 flag_n = (flags & qkz80_cpu_flags::N) != 0;
+    qkz80_uint8 diff;
+    qkz80_uint8 new_c, new_h;
 
-    qkz80_uint8 high_nib_is_high(high_a_nibble>9);
-    qkz80_uint8 low_nib_is_high(low_a_nibble>9);
-
-    // Calculate correction value
-    if(half_carry || low_nib_is_high)
-      correction|=6;
-
-    if(carry || high_nib_is_high || ((high_a_nibble>=9) && low_nib_is_high )) {
-      correction|=0x60;
-      carry=1;
+    // Calculate adjustment byte for A (tnylpo logic)
+    if (flag_c) {
+      if (low < 0xa) {
+        diff = flag_h ? 0x66 : 0x60;
+      } else {
+        diff = 0x66;
+      }
+    } else {
+      if (low < 0xa) {
+        if (high < 0xa) {
+          diff = flag_h ? 0x06 : 0x00;
+        } else {
+          diff = flag_h ? 0x66 : 0x60;
+        }
+      } else {
+        diff = (high < 0x9) ? 0x06 : 0x66;
+      }
     }
 
-    // Apply correction: add for addition, subtract for subtraction
-    qkz80_uint8 result;
-    qkz80_uint8 new_half_carry;
-    if(n_flag) {
-      // After subtraction: subtract correction
-      result = rega - correction;
-      new_half_carry = compute_subtract_half_carry(rega, result, correction, 0);
+    // Calculate new C flag (tnylpo logic)
+    if (flag_c) {
+      new_c = 1;
     } else {
-      // After addition: add correction
-      result = rega + correction;
-      new_half_carry = compute_sum_half_carry(rega, correction, 0);
+      if (low < 0xa) {
+        new_c = (high < 0xa) ? 0 : 1;
+      } else {
+        new_c = (high < 0x9) ? 0 : 1;
+      }
+    }
+
+    // Calculate new H flag (tnylpo logic)
+    if (flag_n) {
+      if (flag_h) {
+        new_h = (low < 0x6) ? 1 : 0;
+      } else {
+        new_h = 0;
+      }
+    } else {
+      new_h = (low < 0xa) ? 0 : 1;
+    }
+
+    // Apply correction and set result
+    qkz80_uint8 result;
+    if (flag_n) {
+      result = rega - diff;
+    } else {
+      result = rega + diff;
     }
 
     set_reg8(result, reg_A);
-    regs.set_flags_from_daa(result, n_flag, new_half_carry, carry);
+    regs.set_flags_from_daa(result, flag_n, new_h, new_c);
     trace->asm_op("daa");
     return;
   }
