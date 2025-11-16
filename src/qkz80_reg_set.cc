@@ -46,7 +46,7 @@ static qkz80_uint8 sub8_bitwise(qkz80_uint8 minuend, qkz80_uint8 subtrahend, int
 // Note: This is now a member function (const), not static, so it can access cpu_mode
 qkz80_uint8 qkz80_reg_set::fix_flags(qkz80_uint8 new_flags) const {
   if (cpu_mode == MODE_8080) {
-    // 8080 mode: Clear undefined bits, force bit 1 to 1
+    // 8080 mode: Clear bits 3,5 (always 0 in 8080), force bit 1 to 1 (always 1 in 8080)
     new_flags &= ~(qkz80_cpu_flags::UNUSED2 | qkz80_cpu_flags::UNUSED3);
     new_flags |= qkz80_cpu_flags::UNUSED1;
   }
