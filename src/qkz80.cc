@@ -52,12 +52,12 @@ qkz80_uint8 qkz80::compute_subtract_half_carry(qkz80_uint16 rega,
 
 void qkz80::debug_dump_regs(const char* label) {
   // Print compact register state on one line for tracing
-  qkz80_uint8 flags = regs.get_flags();
+  qkz80_uint8 flags = regs.fix_flags(regs.get_flags());  // Apply fix_flags for display (matches PUSH PSW)
 
   fprintf(stderr, "%s PC=%04X AF=%02X%02X BC=%02X%02X DE=%02X%02X HL=%02X%02X SP=%04X IX=%04X IY=%04X [",
           label,
           regs.PC.get_pair16(),
-          regs.AF.get_high(), regs.AF.get_low(),
+          regs.AF.get_high(), flags,  // Show fixed flags (as PUSH PSW would)
           regs.BC.get_high(), regs.BC.get_low(),
           regs.DE.get_high(), regs.DE.get_low(),
           regs.HL.get_high(), regs.HL.get_low(),
