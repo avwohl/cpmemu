@@ -1,195 +1,250 @@
-# CP/M 2.2 Emulator - Current Status
+# Z80 CPU Emulator - Test Status
 
-## What's Working ✅
+## zexdoc Test Results: 63/67 Passing (94%)
 
-### Core Emulation
-- ✅ CP/M 2.2 memory layout properly implemented
-- ✅ BIOS jump table at correct location (0xFA00)
-- ✅ BDOS entry point at 0x0005
-- ✅ Low memory setup (0x0000-0x00FF)
-- ✅ TPA (Transient Program Area) from 0x0100
+### Passing Tests (63) ✅
 
-### BDOS Functions Implemented
-- ✅ Console I/O (functions 1, 2, 9, 11)
-- ✅ System info (function 12 - CP/M version)
-- ✅ Drive operations (functions 14, 25)
-- ✅ File operations (functions 15-22: open, close, read, write, make, delete)
-- ✅ DMA buffer management (function 26)
-- ✅ User number (function 32)
+#### 16-bit Arithmetic
+- ✅ `<adc,sbc> hl,<bc,de,hl,sp>`
+- ✅ `add hl,<bc,de,hl,sp>`
+- ✅ `add ix,<bc,de,ix,sp>`
+- ✅ `add iy,<bc,de,iy,sp>`
 
-### BIOS Functions Implemented
-- ✅ CONST (console status)
-- ✅ CONIN (console input)
-- ✅ CONOUT (console output)
-- ✅ WBOOT (warm boot/exit)
+#### Bit Operations
+- ✅ `bit n,(<ix,iy>+1)`
+- ✅ `bit n,<b,c,d,e,h,l,(hl),a>`
 
-### File I/O
-- ✅ Basic file operations (open, close, read, write)
-- ✅ FCB (File Control Block) parsing
-- ✅ CP/M 8.3 filename format
-- ✅ Sequential file access
-- ✅ Lowercase Unix filename matching
-- ✅ File mapping system (programmable)
+#### Block Operations
+- ✅ `cpd<r>` - Compare and decrement
+- ✅ `cpi<r>` - Compare and increment
+- ✅ `ldd<r> (1)` - Load and decrement
+- ✅ `ldd<r> (2)`
+- ✅ `ldi<r> (1)` - Load and increment
+- ✅ `ldi<r> (2)`
 
-### Testing
-- ✅ **MBASIC.COM runs successfully!**
-  ```
-  BASIC-80 Rev. 5.21
-  [CP/M Version]
-  Copyright 1977-1981 (C) by Microsoft
-  Created: 28-Jul-81
-  34866 Bytes free
-  Ok
-  ```
+#### Special Instructions
+- ✅ `<daa,cpl,scf,ccf>` - **FIXED!** Decimal adjust, complement, flag operations
+- ✅ `neg` - Negate accumulator
+- ✅ `<rrd,rld>` - Rotate digit operations
 
-## What Needs Work 🚧
+#### Increment/Decrement
+- ✅ `<inc,dec> a`
+- ✅ `<inc,dec> b`
+- ✅ `<inc,dec> bc`
+- ✅ `<inc,dec> c`
+- ✅ `<inc,dec> d`
+- ✅ `<inc,dec> de`
+- ✅ `<inc,dec> e`
+- ✅ `<inc,dec> h`
+- ✅ `<inc,dec> hl`
+- ✅ `<inc,dec> ix`
+- ✅ `<inc,dec> iy`
+- ✅ `<inc,dec> l`
+- ✅ `<inc,dec> (hl)`
+- ✅ `<inc,dec> sp`
+- ✅ `<inc,dec> (<ix,iy>+1)`
+- ✅ `<inc,dec> ixh`
+- ✅ `<inc,dec> ixl`
+- ✅ `<inc,dec> iyh`
+- ✅ `<inc,dec> iyl`
 
-### High Priority
-1. ⏳ **^Z EOF handling** - Text files use 0x1A as EOF marker
-2. ⏳ **EOL conversion** - Unix `\n` ↔ CP/M `\r\n` (critical for m80.com)
-3. ⏳ **128-byte record padding** - CP/M writes in 128-byte blocks
-4. ⏳ **Configuration file support** - Better than hardcoding file paths
+#### Load Instructions
+- ✅ `ld <bc,de>,(nnnn)`
+- ✅ `ld hl,(nnnn)`
+- ✅ `ld sp,(nnnn)`
+- ✅ `ld <ix,iy>,(nnnn)`
+- ✅ `ld (nnnn),<bc,de>`
+- ✅ `ld (nnnn),hl`
+- ✅ `ld (nnnn),sp`
+- ✅ `ld (nnnn),<ix,iy>`
+- ✅ `ld <bc,de,hl,sp>,nnnn`
+- ✅ `ld <ix,iy>,nnnn`
+- ✅ `ld a,<(bc),(de)>`
+- ✅ `ld <b,c,d,e,h,l,(hl),a>,nn`
+- ✅ `ld (<ix,iy>+1),nn`
+- ✅ `ld <b,c,d,e>,(<ix,iy>+1)`
+- ✅ `ld <h,l>,(<ix,iy>+1)`
+- ✅ `ld a,(<ix,iy>+1)`
+- ✅ `ld <ixh,ixl,iyh,iyl>,nn`
+- ✅ `ld <bcdehla>,<bcdehla>`
+- ✅ `ld <bcdexya>,<bcdexya>`
+- ✅ `ld a,(nnnn) / ld (nnnn),a`
+- ✅ `ld (<ix,iy>+1),<b,c,d,e>`
+- ✅ `ld (<ix,iy>+1),<h,l>`
+- ✅ `ld (<ix,iy>+1),a`
+- ✅ `ld (<bc,de>),a`
 
-### Medium Priority
-5. ⏳ **Wildcard file mapping** - `*.BAS = /path/**/*.bas`
-6. ⏳ **Text/binary mode tracking** - Per-file type specification
-7. ⏳ **File type detection** - Heuristics for auto-detecting text vs binary
-8. ⏳ **Console input buffering** - Currently limited
+#### Rotate/Shift Operations
+- ✅ `<rlca,rrca,rla,rra>` - Accumulator rotates
+- ✅ `shf/rot (<ix,iy>+1)` - Shifts and rotates with indexed addressing
+- ✅ `shf/rot <b,c,d,e,h,l,(hl),a>` - Shifts and rotates
 
-### Lower Priority
-9. ⏳ **Search first/next** - Directory scanning (functions 17-18)
-10. ⏳ **Random access** - File positioning (functions 33-34, 36)
-11. ⏳ **Extended BDOS** - Functions beyond CP/M 2.2 standard
+#### Set/Reset Bits
+- ✅ `<set,res> n,<bcdehl(hl)a>`
+- ✅ `<set,res> n,(<ix,iy>+1)`
 
-## Test Resources 📁
+### Failing Tests (4) ❌
 
-### Available Test Files
+All failures are ALU (arithmetic/logic) operations with different addressing modes:
 
-**Location**: `/home/wohl/cl/mbasic/`
+1. ❌ `aluop a,nn` - ALU ops with immediate values
+   - CRC expected: 48799360, found: fb9db85a
 
-1. **Test Suite** (`tests/` directory)
-   - 100+ .BAS test files
-   - 2753 lines of BASIC code
-   - Already in CP/M format (`\r\n` line endings)
-   - Examples: `printsep.bas`, `recurse.bas`, `test_while_for_mix.bas`
+2. ❌ `aluop a,<b,c,d,e,h,l,(hl),a>` - ALU ops with registers
+   - CRC expected: fe43b016, found: 334649bb
 
-2. **Classic Programs** (`site-dev/library/`)
-   - Business: budget, finance, mortgage, diary
-   - Data management: databases, file utilities
-   - Utilities: sort, convert, charfreq
-   - Games: Super Star Trek
+3. ❌ `aluop a,<ixh,ixl,iyh,iyl>` - ALU ops with IX/IY high/low
+   - CRC expected: a4026d5a, found: 6e027aa3
 
-3. **Notable Files**
-   - `superstartrek.bas` - Classic game
-   - `com/trand.bas` - Random number tests
+4. ❌ `aluop a,(<ix,iy>+1)` - ALU ops with indexed memory
+   - CRC expected: e849676e, found: 14e03297
 
-## Usage
+**Note**: "aluop" includes ADD, ADC, SUB, SBC, AND, OR, XOR, CP instructions
 
-### Current (Simple)
-```bash
-cd /home/wohl/qkz80
-src/cpm_emulator com/mbasic.com
-```
+## Recent Progress
 
-### Planned (With Config)
-```bash
-# Using configuration file
-src/cpm_emulator examples/mbasic_tests.cfg
+### Session Summary
+- **Starting point**: 62/67 tests passing
+- **Current**: 63/67 tests passing (94% pass rate)
+- **Achievement**: Fixed DAA (Decimal Adjust Accumulator) instruction
 
-# Direct file mapping
-src/cpm_emulator com/mbasic.com TEST.BAS=/path/to/test.bas
-```
+### DAA Fix Details
+The DAA instruction was completely rewritten using tnylpo's proven implementation:
 
-## File Format Issues
+**Key Changes**:
+1. **Correction calculation**: Uses comprehensive lookup table based on:
+   - Current carry flag state
+   - Current half-carry flag state
+   - High and low nibble values
 
-### The Problem
-1. **CP/M**: Files are 128-byte records, text files end at `^Z`, uses `\r\n`
-2. **Unix**: Exact file sizes, no EOF marker, uses `\n`
-3. **No automatic detection**: Can't reliably distinguish text from binary
+2. **H flag calculation**: Based on low nibble value and N flag, NOT from the correction operation
+   - After addition (N=0): `H = (low_nibble >= 0xA) ? 1 : 0`
+   - After subtraction (N=1): More complex logic based on old H flag
 
-### The Solution
-Configuration files specify:
-- Which files are text vs binary
-- Whether to convert EOL
-- Whether to handle `^Z`
-- File path mappings (including wildcards)
+3. **C flag calculation**: Follows Z80 specification for BCD overflow
 
-See `docs/file_handling_notes.md` for detailed explanation.
+**Location**: `src/qkz80.cc:1720-1784`
 
-## Building
+## Analysis of Remaining Failures
 
-```bash
-cd /home/wohl/qkz80/src
-g++ -g -O2 -o cpm_emulator cpm_main.cc qkz80.cc qkz80_mem.cc \
-    qkz80_errors.cc qkz80_reg_set.cc
-```
+All 4 failing tests share the same characteristic: they test ALU operations. This suggests a systematic issue with flag setting for arithmetic/logic operations, rather than individual instruction bugs.
 
-## Architecture
+### Possible Issues
+1. **Flag calculation**: While bit-by-bit addition/subtraction appears correct (verified with test cases), there may be edge cases not covered
+2. **CPU mode handling**: X/Y flags may be set unconditionally when they should be Z80-only
+3. **P/V flag**: Different behavior needed for arithmetic (overflow) vs logic (parity) operations
+4. **Undocumented behavior**: zexdoc may test undocumented flag combinations
 
-### File Structure
-- `src/cpm_main.cc` - Main CP/M emulator (851 lines)
-- `src/qkz80.cc` - 8080 CPU emulator
-- `src/qkz80_*.cc` - CPU support files
-- `docs/file_handling_notes.md` - Detailed file I/O design
-- `examples/*.cfg` - Example configuration files
+### Investigation Approach
+Since fixing DAA by adopting tnylpo's exact logic was successful, the same approach should work for ALU operations:
+1. Compare qkz80 flag-setting functions with tnylpo's `add8()` and `sub8()`
+2. Identify any semantic differences
+3. Adopt tnylpo's logic where it differs
 
-### Key Classes
-- `CPMEmulator` - Main emulator class
-  - Handles BDOS/BIOS calls
-  - Manages file mappings
-  - Tracks open files
-- `qkz80` - CPU emulator (existing)
+## Implementation Status
 
-### Memory Layout (64K system)
-```
-0x0000-0x0002: JMP WBOOT
-0x0003:        IOBYTE
-0x0004:        Drive/User
-0x0005-0x0007: JMP BDOS
-0x005C-0x007F: Default FCB
-0x0080-0x00FF: DMA buffer / command line
-0x0100:        TPA start (programs load here)
-0xE400:        CCP (not implemented, reserved)
-0xEC00:        BDOS entry (magic address)
-0xFA00:        BIOS jump table (magic addresses)
-```
+### Core Z80 Features
+- ✅ All standard 8080 instructions
+- ✅ Z80 extended instructions (IX/IY indexing)
+- ✅ Undocumented instructions (IXH/IXL/IYH/IYL)
+- ✅ Bit-by-bit flag calculation for precise emulation
+- ✅ CPU mode switching (8080 vs Z80)
+- ✅ DAA instruction (BCD operations)
+- ⏳ ALU flag handling (4 tests failing)
+
+### Flag Handling
+- ✅ S (Sign)
+- ✅ Z (Zero)
+- ✅ H (Half-carry) - Verified correct for binary addition
+- ⏳ P/V (Parity/Overflow) - May have issues
+- ✅ N (Add/Subtract)
+- ⏳ C (Carry) - May have issues
+- ✅ X, Y (Undocumented) - Set from result bits 3 and 5
+
+## Files Modified
+
+### This Session
+- `src/qkz80.cc` - Rewrote DAA instruction (lines 1720-1784)
+- `src/cpm_emulator` - Rebuilt binary
+
+### Previous Sessions
+- `src/qkz80_reg_set.cc` - Flag calculation functions, CPU mode handling
+- `src/qkz80.cc` - Instruction implementations
 
 ## Next Steps
 
-### Immediate (to get file I/O working)
-1. Add ^Z EOF detection to `bdos_read_sequential()`
-2. Add 128-byte padding to `bdos_write_sequential()`
-3. Implement basic .cfg parser
-4. Add text/binary mode flag to `OpenFile` structure
+### High Priority - Fix ALU Operations
+1. **Compare implementations**: Review tnylpo's add8/sub8/logic operations
+2. **Identify differences**: Find where qkz80 diverges from tnylpo
+3. **Targeted fixes**: Apply tnylpo's logic to failing operations
+4. **Test incrementally**: Verify each fix doesn't break passing tests
 
-### Short Term (for m80.com compatibility)
-1. Implement EOL conversion filters
-2. Add file type heuristics
-3. Test with m80.com assembler
+### Testing Strategy
+1. Create minimal test cases for each ALU operation
+2. Compare qkz80 vs tnylpo flag results
+3. Identify specific flag combinations that differ
+4. Fix and verify
 
-### Long Term (polish)
-1. Wildcard file mapping
-2. Multiple drive support
-3. Random access file I/O
-4. Better error handling
-5. Interactive console input
+## Reference Information
 
-## Success Criteria
+### Test Mask
+zexdoc uses mask **0xD7** which tests:
+- Bit 7: S (Sign)
+- Bit 6: Z (Zero)
+- Bit 5: ~~Y (ignored)~~
+- Bit 4: H (Half-carry)
+- Bit 3: ~~X (ignored)~~
+- Bit 2: P/V (Parity/Overflow)
+- Bit 1: N (Add/Subtract)
+- Bit 0: C (Carry)
 
-- ✅ MBASIC runs and shows prompt
-- ⏳ MBASIC can LOAD and RUN .BAS files
-- ⏳ M80.COM assembler can process .ASM files
-- ⏳ Round-trip: write file in CP/M, read in Unix
-- ⏳ Full test suite passes
+### Build Instructions
+```bash
+cd /home/wohl/qkz80/src
+make
+```
 
-## Notes
+### Run Tests
+```bash
+cd /home/wohl/qkz80/src
+timeout 180 ./cpm_emulator ../tests/zexdoc.com 2>&1 | tail -80
+```
 
-The emulator is significantly better than `main2.cc`:
-- Complete BDOS implementation (not just 3 functions)
-- BIOS support (critical for MBASIC)
-- Proper CP/M memory layout
-- File mapping infrastructure
-- Designed for extensibility
+## Technical Notes
 
-Main advantage over tnylpo: integrated file handling with automatic
-conversion rather than requiring pre-conversion of files.
+### Bit-by-bit Addition Algorithm
+Based on full adder simulation (matches tnylpo):
+```
+For each bit i (0-7):
+  result[i] = s1[i] XOR s2[i] XOR carry_in
+  carry_out = (s2[i] AND carry_in) OR (s1[i] AND (s2[i] OR carry_in))
+  carry_in_next = carry_out << 1
+```
+
+### DAA Algorithm
+Complex lookup table based on:
+- Initial carry flag (C)
+- Initial half-carry flag (H)
+- Initial subtract flag (N)
+- High nibble value (0-F)
+- Low nibble value (0-F)
+
+Output:
+- Correction value (0x00, 0x06, 0x60, 0x66)
+- New carry flag
+- New half-carry flag
+
+See `src/qkz80.cc:1720-1784` for full implementation.
+
+## Achievements
+
+- ✅ 94% test pass rate (63/67)
+- ✅ All bit operations working
+- ✅ All load/store operations working
+- ✅ All increment/decrement operations working
+- ✅ All rotate/shift operations working
+- ✅ All block operations working
+- ✅ IX/IY indexed addressing fully working
+- ✅ Undocumented IXH/IXL/IYH/IYL instructions working
+- ✅ DAA instruction correctly implemented
+- ⏳ Final 4 ALU tests to fix
