@@ -1068,14 +1068,25 @@ void qkz80::execute(void) {
   }
 
   // Special handling for ALU operations with IXH/IXL/IYH/IYL (undocumented Z80 instructions)
-  // Check if this is an ALU operation (opcodes 0x80-0xBF) with DD/FD prefix and H or L register
+  // and indexed addressing (IX+d)/(IY+d)
+  // Check if this is an ALU operation (opcodes 0x80-0xBF) with DD/FD prefix
   if ((has_dd_prefix || has_fd_prefix) && (opcode >= 0x80 && opcode <= 0xBF)) {
     qkz80_uint8 reg_num = opcode & 0x7;
-    if (reg_num == reg_H || reg_num == reg_L) {
-      // Get the value from IXH/IXL/IYH/IYL instead of H/L
-      qkz80_uint8 regb = (reg_num == reg_H) ?
-        (has_dd_prefix ? regs.IX.get_high() : regs.IY.get_high()) :
-        (has_dd_prefix ? regs.IX.get_low() : regs.IY.get_low());
+    if (reg_num == reg_H || reg_num == reg_L || reg_num == reg_M) {
+      // Get the operand value
+      qkz80_uint8 regb;
+      if (reg_num == reg_M) {
+        // Indexed addressing: (IX+d) or (IY+d)
+        qkz80_int8 displacement = static_cast<qkz80_int8>(pull_byte_from_opcode_stream());
+        qkz80_uint16 base_addr = has_dd_prefix ? regs.IX.get_pair16() : regs.IY.get_pair16();
+        qkz80_uint16 addr = base_addr + displacement;
+        regb = mem.fetch_mem(addr);
+      } else {
+        // IXH/IXL/IYH/IYL (undocumented half-register operations)
+        regb = (reg_num == reg_H) ?
+          (has_dd_prefix ? regs.IX.get_high() : regs.IY.get_high()) :
+          (has_dd_prefix ? regs.IX.get_low() : regs.IY.get_low());
+      }
 
       qkz80_uint16 rega = get_reg8(reg_A);
 
@@ -1086,7 +1097,11 @@ void qkz80::execute(void) {
           qkz80_big_uint sum(rega + regb);
           regs.set_flags_from_sum8(sum, rega, regb, 0);
           set_A(sum);
-          trace->asm_op("add %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          if (reg_num == reg_M) {
+            trace->asm_op("add (%s+d)", has_dd_prefix ? "ix" : "iy");
+          } else {
+            trace->asm_op("add %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          }
           break;
         }
         case 1: { // ADC
@@ -1094,14 +1109,22 @@ void qkz80::execute(void) {
           qkz80_big_uint sum(rega + regb + carry);
           regs.set_flags_from_sum8(sum, rega, regb, carry);
           set_A(sum);
-          trace->asm_op("adc %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          if (reg_num == reg_M) {
+            trace->asm_op("adc (%s+d)", has_dd_prefix ? "ix" : "iy");
+          } else {
+            trace->asm_op("adc %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          }
           break;
         }
         case 2: { // SUB
           qkz80_big_uint diff(rega - regb);
           regs.set_flags_from_diff8(diff, rega, regb, 0);
           set_A(diff);
-          trace->asm_op("sub %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          if (reg_num == reg_M) {
+            trace->asm_op("sub (%s+d)", has_dd_prefix ? "ix" : "iy");
+          } else {
+            trace->asm_op("sub %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          }
           break;
         }
         case 3: { // SBC
@@ -1109,7 +1132,11 @@ void qkz80::execute(void) {
           qkz80_big_uint diff(rega - regb - carry);
           regs.set_flags_from_diff8(diff, rega, regb, carry);
           set_A(diff);
-          trace->asm_op("sbc %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          if (reg_num == reg_M) {
+            trace->asm_op("sbc (%s+d)", has_dd_prefix ? "ix" : "iy");
+          } else {
+            trace->asm_op("sbc %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          }
           break;
         }
         case 4: { // AND
@@ -1117,27 +1144,43 @@ void qkz80::execute(void) {
           qkz80_uint8 hc(((rega | regb) & 0x08) != 0);
           regs.set_flags_from_logic8(result, 0, hc);
           set_A(result);
-          trace->asm_op("and %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          if (reg_num == reg_M) {
+            trace->asm_op("and (%s+d)", has_dd_prefix ? "ix" : "iy");
+          } else {
+            trace->asm_op("and %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          }
           break;
         }
         case 5: { // XOR
           qkz80_uint8 result = rega ^ regb;
           regs.set_flags_from_logic8(result, 0, 0);
           set_A(result);
-          trace->asm_op("xor %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          if (reg_num == reg_M) {
+            trace->asm_op("xor (%s+d)", has_dd_prefix ? "ix" : "iy");
+          } else {
+            trace->asm_op("xor %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          }
           break;
         }
         case 6: { // OR
           qkz80_uint8 result = rega | regb;
           regs.set_flags_from_logic8(result, 0, 0);
           set_A(result);
-          trace->asm_op("or %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          if (reg_num == reg_M) {
+            trace->asm_op("or (%s+d)", has_dd_prefix ? "ix" : "iy");
+          } else {
+            trace->asm_op("or %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          }
           break;
         }
         case 7: { // CP
           qkz80_big_uint diff(rega - regb);
           regs.set_flags_from_diff8(diff, rega, regb, 0);
-          trace->asm_op("cp %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          if (reg_num == reg_M) {
+            trace->asm_op("cp (%s+d)", has_dd_prefix ? "ix" : "iy");
+          } else {
+            trace->asm_op("cp %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          }
           break;
         }
       }
