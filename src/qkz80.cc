@@ -227,7 +227,8 @@ qkz80_uint16 qkz80::get_reg16(qkz80_uint8 rnum) {
   case regp_SP:
     return regs.SP.get_pair16();
   case regp_AF:
-    return qkz80_MK_INT16(regs.get_flags(),get_reg8(reg_A));
+    // Apply fix_flags() when returning AF for PUSH PSW - ensures bits 1,3,5 are correct in 8080 mode
+    return qkz80_MK_INT16(regs.fix_flags(regs.get_flags()),get_reg8(reg_A));
   case regp_PC:
     return regs.PC.get_pair16();
   case regp_IX:
