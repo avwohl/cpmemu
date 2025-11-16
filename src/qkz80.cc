@@ -1141,7 +1141,8 @@ void qkz80::execute(void) {
         }
         case 4: { // AND
           qkz80_uint8 result = rega & regb;
-          qkz80_uint8 hc(((rega | regb) & 0x08) != 0);
+          // Z80: H always 1, 8080: H = bit 3 of (op1 | op2)
+          qkz80_uint8 hc = (cpu_mode == MODE_Z80) ? 1 : (((rega | regb) & 0x08) != 0);
           regs.set_flags_from_logic8(result, 0, hc);
           set_A(result);
           if (reg_num == reg_M) {
@@ -1490,7 +1491,8 @@ void qkz80::execute(void) {
     qkz80_uint8 dat2(get_reg8(reg_A));
     qkz80_uint8 result(dat1 & dat2);
     set_reg8(result,reg_A);
-    qkz80_uint8 hc(((dat1 | dat2) & 0x08) != 0);
+    // Z80: H always 1, 8080: H = bit 3 of (op1 | op2)
+    qkz80_uint8 hc = (cpu_mode == MODE_Z80) ? 1 : (((dat1 | dat2) & 0x08) != 0);
     regs.set_flags_from_logic8(result,0,hc);
     trace->asm_op("ana %s",name_reg8(src_reg));
     trace->add_reg8(src_reg);
@@ -1502,7 +1504,8 @@ void qkz80::execute(void) {
     qkz80_uint8 dat2(pull_byte_from_opcode_stream());
     qkz80_uint8 result(dat1 & dat2);
     set_reg8(result,reg_A);
-    qkz80_uint8 hc(((dat1 | dat2) & 0x08) != 0);
+    // Z80: H always 1, 8080: H = bit 3 of (op1 | op2)
+    qkz80_uint8 hc = (cpu_mode == MODE_Z80) ? 1 : (((dat1 | dat2) & 0x08) != 0);
     regs.set_flags_from_logic8(result,0,hc);
     trace->asm_op("ani 0x%0x",dat2);
     return;
