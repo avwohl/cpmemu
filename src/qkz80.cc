@@ -1421,7 +1421,15 @@ void qkz80::execute(void) {
       qkz80_uint8 num = mem.fetch_mem(addr);
       num--;
       mem.store_mem(addr, num);
-      qkz80_uint8 hc((num & 0xf) == 0xf);
+      // Half-carry calculation differs between Z80 and 8080 for DCR
+      qkz80_uint8 hc;
+      if (cpu_mode == MODE_8080) {
+        // 8080: HF=1 unless lower nibble is 0xF
+        hc = ((num & 0xf) != 0xf);
+      } else {
+        // Z80: HF=1 when lower nibble is 0xF (borrow from bit 4)
+        hc = ((num & 0xf) == 0xf);
+      }
       regs.set_zspa_from_inr(num,hc,false);  // false = decrement
       if (has_dd_prefix)
         trace->asm_op("dec (ix%+d)", offset);
@@ -1462,7 +1470,15 @@ void qkz80::execute(void) {
     qkz80_uint8 num(get_reg8(reg_num));
     num--;
     set_reg8(num,reg_num);
-    qkz80_uint8 hc((num & 0xf) == 0xf);
+    // Half-carry calculation differs between Z80 and 8080 for DCR
+    qkz80_uint8 hc;
+    if (cpu_mode == MODE_8080) {
+      // 8080: HF=1 unless lower nibble is 0xF
+      hc = ((num & 0xf) != 0xf);
+    } else {
+      // Z80: HF=1 when lower nibble is 0xF (borrow from bit 4)
+      hc = ((num & 0xf) == 0xf);
+    }
     regs.set_zspa_from_inr(num,hc,false);  // false = decrement
     trace->asm_op("dcr %s",name_reg8(reg_num));
     return;

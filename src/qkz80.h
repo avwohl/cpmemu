@@ -44,6 +44,7 @@ class qkz80 {
 
   void set_cpu_mode(CPUMode mode) {
     cpu_mode = mode;
+    regs.cpu_mode = (mode == MODE_8080) ? qkz80_reg_set::MODE_8080 : qkz80_reg_set::MODE_Z80;
   }
 
   CPUMode get_cpu_mode() const {

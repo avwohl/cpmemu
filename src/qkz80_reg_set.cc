@@ -175,7 +175,20 @@ void qkz80_reg_set::set_flags_from_diff8(qkz80_big_uint result, qkz80_uint8 val1
 
   // Set all flags from bit-by-bit simulation
   if (flag_c) flags |= qkz80_cpu_flags::CY;
-  if (flag_h) flags |= qkz80_cpu_flags::H;
+
+  // Half-carry calculation differs between Z80 and 8080
+  if (cpu_mode == MODE_Z80) {
+    // Z80: Use borrow from bit-by-bit simulation
+    if (flag_h) flags |= qkz80_cpu_flags::H;
+  } else {
+    // 8080: Half-carry uses special formula (not borrow!)
+    // Formula from 8080: ~(a ^ result ^ b) & 0x10
+    // This matches real 8080 behavior
+    qkz80_uint8 result8 = result & 0xFF;
+    if ((~(val1 ^ result8 ^ val2) & 0x10) != 0) {
+      flags |= qkz80_cpu_flags::H;
+    }
+  }
   if (flag_z) flags |= qkz80_cpu_flags::Z;
   if (flag_s) flags |= qkz80_cpu_flags::S;
   if (flag_x) flags |= qkz80_cpu_flags::X;
@@ -257,8 +270,11 @@ void qkz80_reg_set::set_flags_from_rotate_acc(qkz80_uint8 result_a, qkz80_uint8 
   else
     flags &= ~qkz80_cpu_flags::CY;
 
-  // Clear N and H flags
-  flags &= ~(qkz80_cpu_flags::N | qkz80_cpu_flags::H);
+  // Clear N and H flags (Z80 only)
+  // In 8080 mode, rotate instructions don't affect H flag
+  if (cpu_mode == MODE_Z80) {
+    flags &= ~(qkz80_cpu_flags::N | qkz80_cpu_flags::H);
+  }
 
   // Set X and Y flags from result (Z80 only)
   if (cpu_mode == MODE_Z80) {
