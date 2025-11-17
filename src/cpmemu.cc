@@ -27,6 +27,30 @@
 #include <fstream>
 #include <sstream>
 #include <termios.h>
+#include <sys/select.h>
+
+// Helper function to check if input is available
+static bool stdin_has_data() {
+    if (!isatty(STDIN_FILENO)) {
+        // If not a terminal, use select() to check for data
+        fd_set readfds;
+        struct timeval tv;
+        FD_ZERO(&readfds);
+        FD_SET(STDIN_FILENO, &readfds);
+        tv.tv_sec = 0;
+        tv.tv_usec = 0;
+        return select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv) > 0;
+    }
+
+    // For terminals, also use select()
+    fd_set readfds;
+    struct timeval tv;
+    FD_ZERO(&readfds);
+    FD_SET(STDIN_FILENO, &readfds);
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+    return select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv) > 0;
+}
 
 // Terminal state management
 static struct termios original_termios;
@@ -73,9 +97,10 @@ static void enable_raw_mode() {
 #define CPM_EOF        0x1A  // ^Z
 
 // BIOS/BDOS placement (for 64K system)
-#define BIOS_BASE      0xFA00  // BIOS starts here
-#define BDOS_BASE      0xEC00  // BDOS starts here
-#define CCP_BASE       0xE400  // CCP starts here
+// Compressed layout since we only need jump tables, not full code
+#define BIOS_BASE      0xFE00  // BIOS starts here (17 jumps * 3 = 51 bytes)
+#define BDOS_BASE      0xFD00  // BDOS starts here (40 jumps * 3 = 120 bytes)
+#define CCP_BASE       0xFC00  // CCP starts here (gives max TPA)
 
 // BIOS function offsets from BIOS_BASE
 #define BIOS_BOOT      0
@@ -1110,6 +1135,7 @@ void CPMEmulator::bdos_write_string() {
 void CPMEmulator::bdos_read_console() {
     int ch = getchar();
     if (ch == EOF) ch = 0x1A;  // EOF becomes ^Z
+    if (ch == '\n') ch = '\r';  // Convert LF to CR for CP/M
     cpu->set_reg8(ch & 0x7F, qkz80::reg_A);
 }
 
@@ -1157,9 +1183,8 @@ void CPMEmulator::bdos_set_iobyte() {
 }
 
 void CPMEmulator::bdos_console_status() {
-    // Simple implementation: always return 0 (no character ready)
-    // A real implementation would use select() or similar
-    cpu->set_reg8(0x00, qkz80::reg_A);
+    // Return 0xFF if character ready, 0x00 if not
+    cpu->set_reg8(stdin_has_data() ? 0xFF : 0x00, qkz80::reg_A);
 }
 
 void CPMEmulator::bdos_get_version() {
@@ -1559,14 +1584,17 @@ void CPMEmulator::bdos_direct_console_io() {
 
     if (e_reg == 0xFF) {
         // Input mode - return character if available, 0 if not
-        // For simplicity, we'll just do blocking input like normal
-        int ch = getchar();
-        if (ch == EOF) ch = 0;
-        cpu->set_reg8(ch & 0x7F, qkz80::reg_A);
+        if (stdin_has_data()) {
+            int ch = getchar();
+            if (ch == EOF) ch = 0;
+            if (ch == '\n') ch = '\r';  // Convert LF to CR for CP/M
+            cpu->set_reg8(ch & 0x7F, qkz80::reg_A);
+        } else {
+            cpu->set_reg8(0, qkz80::reg_A);
+        }
     } else if (e_reg == 0xFE) {
         // Status check - return 0xFF if char ready, 0 if not
-        // For simplicity, always return 0 (no character ready)
-        cpu->set_reg8(0, qkz80::reg_A);
+        cpu->set_reg8(stdin_has_data() ? 0xFF : 0, qkz80::reg_A);
     } else {
         // Output mode - send character
         putchar(e_reg & 0x7F);
@@ -1736,14 +1764,15 @@ void CPMEmulator::bios_call(int offset) {
 }
 
 void CPMEmulator::bios_const() {
-    // Console status - return 0 (no character waiting)
-    cpu->set_reg8(0x00, qkz80::reg_A);
+    // Console status - return 0xFF if character ready, 0x00 if not
+    cpu->set_reg8(stdin_has_data() ? 0xFF : 0x00, qkz80::reg_A);
 }
 
 void CPMEmulator::bios_conin() {
     // Console input
     int ch = getchar();
     if (ch == EOF) ch = 0x1A;
+    if (ch == '\n') ch = '\r';  // Convert LF to CR for CP/M
     cpu->set_reg8(ch & 0x7F, qkz80::reg_A);
 }
 
