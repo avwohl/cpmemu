@@ -137,7 +137,7 @@ void qkz80_reg_set::set_flags_from_rotate8(qkz80_uint8 result, qkz80_uint8 new_c
 // 8-bit addition (ADD, ADC) - uses bit-by-bit simulation for exact flag calculation
 void qkz80_reg_set::set_flags_from_sum8(qkz80_big_uint result, qkz80_uint8 val1, qkz80_uint8 val2, qkz80_uint8 carry) {
   // Use bit-by-bit simulation to get exact flag values
-  qkz80_uint8 flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
+  qkz80_uint8 flag_h(0), flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
   add8_bitwise(val1, val2, carry, flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s);
 
   qkz80_uint8 flags = 0;
@@ -168,7 +168,7 @@ void qkz80_reg_set::set_flags_from_sum8(qkz80_big_uint result, qkz80_uint8 val1,
 // 8-bit subtraction (SUB, SBC, CP) - uses bit-by-bit simulation for exact flag calculation
 void qkz80_reg_set::set_flags_from_diff8(qkz80_big_uint result, qkz80_uint8 val1, qkz80_uint8 val2, qkz80_uint8 carry) {
   // Use bit-by-bit simulation to get exact flag values
-  qkz80_uint8 flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
+  qkz80_uint8 flag_h(0), flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
   sub8_bitwise(val1, val2, carry, flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s);
 
   qkz80_uint8 flags = 0;
@@ -457,7 +457,7 @@ void qkz80_reg_set::set_flags_from_block_ld(qkz80_uint8 a_val, qkz80_uint8 copie
 // X, Y (undocumented): From (A - (HL) - H) where H is the half-carry
 void qkz80_reg_set::set_flags_from_block_cp(qkz80_uint8 a_val, qkz80_uint8 mem_val, qkz80_uint16 bc_after) {
   // First do normal subtraction to get S, Z, H, N flags
-  qkz80_uint8 flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
+  qkz80_uint8 flag_h(0), flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
   sub8_bitwise(a_val, mem_val, 0, flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s);
 
   qkz80_uint8 flags = get_flags();
@@ -768,7 +768,7 @@ void qkz80_reg_set::set_flags_from_add16(qkz80_big_uint result, qkz80_big_uint v
   qkz80_uint8 preserved = flags & preserve_mask;
 
   // Use bit-by-bit simulation to get exact flag values
-  qkz80_uint8 flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
+  qkz80_uint8 flag_h(0), flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
   add16_bitwise(val1 & 0xFFFF, val2 & 0xFFFF, 0, flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s);
 
   // Clear N flag (this is addition)
@@ -807,7 +807,7 @@ void qkz80_reg_set::set_flags_from_add16(qkz80_big_uint result, qkz80_big_uint v
 // Affects: S, Z, H, P/V (overflow), N (cleared), C, X, Y (undocumented)
 void qkz80_reg_set::set_flags_from_adc16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2, qkz80_big_uint carry) {
   // Use bit-by-bit simulation to get exact flag values (addition with carry)
-  qkz80_uint8 flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
+  qkz80_uint8 flag_h(0), flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
   add16_bitwise(val1 & 0xFFFF, val2 & 0xFFFF, carry, flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s);
 
   qkz80_uint8 flags = 0;
@@ -831,7 +831,7 @@ void qkz80_reg_set::set_flags_from_adc16(qkz80_big_uint result, qkz80_big_uint v
 // Affects: S, Z, H, P/V (overflow), N (set), C, X, Y (undocumented)
 void qkz80_reg_set::set_flags_from_sbc16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2, qkz80_big_uint carry) {
   // Use bit-by-bit simulation to get exact flag values (subtraction with borrow)
-  qkz80_uint8 flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
+  qkz80_uint8 flag_h(0), flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
   sub16_bitwise(val1 & 0xFFFF, val2 & 0xFFFF, carry, flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s);
 
   qkz80_uint8 flags = 0;
