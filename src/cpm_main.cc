@@ -24,6 +24,7 @@
 #include <vector>
 #include <algorithm>
 #include <fcntl.h>
+#include <fstream>
 #include <sstream>
 
 // CP/M Memory Layout Constants
@@ -36,6 +37,7 @@
 #define DEFAULT_FCB2   0x006C
 #define DEFAULT_DMA    0x0080
 #define DMA_SIZE       128
+#define CPM_EOF        0x1A  // ^Z
 
 // BIOS/BDOS placement (for 64K system)
 #define BIOS_BASE      0xFA00  // BIOS starts here
@@ -61,6 +63,23 @@
 #define BIOS_LISTST    45  // List status
 #define BIOS_SECTRAN   48  // Sector translate
 
+// File modes
+enum FileMode {
+    MODE_BINARY,
+    MODE_TEXT,
+    MODE_AUTO
+};
+
+// File mapping entry
+struct FileMapping {
+    std::string cpm_pattern;
+    std::string unix_pattern;
+    FileMode mode;
+    bool eol_convert;
+
+    FileMapping() : mode(MODE_AUTO), eol_convert(true) {}
+};
+
 // FCB structure
 struct FCB {
     qkz80_uint8 drive;        // 0 = default, 1 = A:, 2 = B:, etc.
@@ -79,8 +98,16 @@ struct FCB {
 struct OpenFile {
     FILE* fp;
     std::string unix_path;
+    std::string cpm_name;
+    FileMode mode;
+    bool eol_convert;
     int position;  // Current record position
+    bool eof_seen;
     bool write_mode;
+    std::vector<uint8_t> write_buffer;  // Buffer for EOL conversion on write
+
+    OpenFile() : fp(nullptr), mode(MODE_BINARY), eol_convert(false),
+                 position(0), eof_seen(false), write_mode(false) {}
 };
 
 class CPMEmulator {
@@ -90,8 +117,13 @@ private:
     qkz80_uint8 current_user;
     qkz80_uint16 current_dma;
     bool debug;
+    FileMode default_mode;
+    bool default_eol_convert;
 
-    // File mapping: CP/M filename -> Unix path
+    // File mapping with patterns and modes
+    std::vector<FileMapping> file_mappings;
+
+    // Legacy simple file mapping for backward compatibility
     std::map<std::string, std::string> file_map;
 
     // Open files indexed by FCB address
@@ -117,6 +149,7 @@ public:
     CPMEmulator(qkz80* acpu, bool adebug = false)
         : cpu(acpu), current_drive(0), current_user(0),
           current_dma(DEFAULT_DMA), debug(adebug),
+          default_mode(MODE_AUTO), default_eol_convert(true),
           printer_file(nullptr), aux_in_file(nullptr),
           aux_out_file(nullptr), iobyte(0), bios_disk_mode(0) {
     }
@@ -131,12 +164,27 @@ public:
     void setup_memory();
     void setup_command_line(int argc, char** argv);
     void add_file_mapping(const std::string& cpm_name, const std::string& unix_path);
+    void add_file_mapping_ex(const std::string& cpm_pattern, const std::string& unix_pattern,
+                            FileMode mode = MODE_AUTO, bool eol_convert = true);
+    bool load_config_file(const std::string& cfg_path);
     bool handle_pc(qkz80_uint16 pc);
 
     // Device redirection
     void set_printer_file(const std::string& path);
     void set_aux_input_file(const std::string& path);
     void set_aux_output_file(const std::string& path);
+
+private:
+    // File I/O helpers
+    FileMode detect_file_mode(const std::string& filename, const std::string& unix_path);
+    bool is_text_file_heuristic(const std::string& unix_path);
+    std::string find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out, bool* eol_out);
+    bool match_pattern(const std::string& pattern, const std::string& text);
+
+    // EOL and EOF handling
+    size_t read_with_conversion(OpenFile& of, uint8_t* buffer, size_t size);
+    size_t write_with_conversion(OpenFile& of, const uint8_t* buffer, size_t size);
+    void pad_to_128(uint8_t* buffer, size_t actual_size);
 
 private:
     // BDOS functions
@@ -301,6 +349,339 @@ void CPMEmulator::add_file_mapping(const std::string& cpm_name, const std::strin
     if (debug) {
         fprintf(stderr, "File mapping: '%s' -> '%s'\n", normalized.c_str(), unix_path.c_str());
     }
+}
+
+void CPMEmulator::add_file_mapping_ex(const std::string& cpm_pattern, const std::string& unix_pattern,
+                                       FileMode mode, bool eol_convert) {
+    FileMapping mapping;
+    mapping.cpm_pattern = normalize_cpm_filename(cpm_pattern);
+    mapping.unix_pattern = unix_pattern;
+    mapping.mode = mode;
+    mapping.eol_convert = eol_convert;
+    file_mappings.push_back(mapping);
+
+    if (debug) {
+        fprintf(stderr, "File mapping: '%s' -> '%s' (mode: %s, eol: %s)\n",
+                mapping.cpm_pattern.c_str(), unix_pattern.c_str(),
+                mode == MODE_TEXT ? "text" : mode == MODE_BINARY ? "binary" : "auto",
+                eol_convert ? "yes" : "no");
+    }
+}
+
+bool CPMEmulator::is_text_file_heuristic(const std::string& unix_path) {
+    FILE* fp = fopen(unix_path.c_str(), "rb");
+    if (!fp) return false;
+
+    uint8_t buffer[512];
+    size_t nread = fread(buffer, 1, sizeof(buffer), fp);
+    fclose(fp);
+
+    if (nread == 0) return true;  // Empty file, treat as text
+
+    // Count control characters (excluding \r, \n, \t, \f, ^Z)
+    unsigned int control_chars = 0;
+    unsigned int printable_chars = 0;
+
+    for (size_t i = 0; i < nread; i++) {
+        uint8_t ch = buffer[i];
+        if (ch == '\r' || ch == '\n' || ch == '\t' || ch == '\f' || ch == CPM_EOF) {
+            printable_chars++;
+        } else if (ch < 32 || ch == 127) {
+            control_chars++;
+        } else if (ch >= 32 && ch < 127) {
+            printable_chars++;
+        }
+    }
+
+    // If more than 5% control characters, probably binary
+    if (nread > 20 && control_chars * 20 > nread) {
+        return false;
+    }
+
+    return true;
+}
+
+FileMode CPMEmulator::detect_file_mode(const std::string& filename, const std::string& unix_path) {
+    // Check extension
+    std::string upper = filename;
+    for (char& c : upper) c = toupper(c);
+
+    // Known text extensions
+    const char* text_exts[] = {".BAS", ".MAC", ".ASM", ".TXT", ".DOC", ".LST", ".PRN", nullptr};
+    for (int i = 0; text_exts[i]; i++) {
+        if (upper.find(text_exts[i]) != std::string::npos) {
+            return MODE_TEXT;
+        }
+    }
+
+    // Known binary extensions
+    const char* binary_exts[] = {".COM", ".EXE", ".OVL", ".OVR", ".SYS", ".BIN", ".DAT", nullptr};
+    for (int i = 0; binary_exts[i]; i++) {
+        if (upper.find(binary_exts[i]) != std::string::npos) {
+            return MODE_BINARY;
+        }
+    }
+
+    // Try heuristic
+    if (is_text_file_heuristic(unix_path)) {
+        return MODE_TEXT;
+    }
+
+    return MODE_BINARY;  // Default to binary if unsure
+}
+
+bool CPMEmulator::match_pattern(const std::string& pattern, const std::string& text) {
+    // Simple wildcard matching (case-insensitive)
+    std::string pat_upper = pattern;
+    std::string text_upper = text;
+    for (char& c : pat_upper) c = toupper(c);
+    for (char& c : text_upper) c = toupper(c);
+
+    // Simple implementation - just check for exact match or * wildcard
+    if (pat_upper == text_upper) return true;
+    if (pat_upper == "*" || pat_upper == "*.*") return true;
+
+    // Check for *.EXT pattern
+    if (pat_upper[0] == '*' && pat_upper.find('.') != std::string::npos) {
+        size_t dot = text_upper.find('.');
+        if (dot != std::string::npos) {
+            std::string text_ext = text_upper.substr(dot);
+            std::string pat_ext = pat_upper.substr(pat_upper.find('.'));
+            return text_ext == pat_ext;
+        }
+    }
+
+    return false;
+}
+
+std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out, bool* eol_out) {
+    std::string normalized = normalize_cpm_filename(cpm_name);
+
+    // Check new file mappings with patterns
+    for (const auto& mapping : file_mappings) {
+        if (match_pattern(mapping.cpm_pattern, normalized)) {
+            if (access(mapping.unix_pattern.c_str(), F_OK) == 0) {
+                *mode_out = mapping.mode;
+                *eol_out = mapping.eol_convert;
+
+                // Auto-detect if needed
+                if (*mode_out == MODE_AUTO) {
+                    *mode_out = detect_file_mode(normalized, mapping.unix_pattern);
+                }
+
+                return mapping.unix_pattern;
+            }
+        }
+    }
+
+    // Check legacy file map
+    auto it = file_map.find(normalized);
+    if (it != file_map.end()) {
+        *mode_out = detect_file_mode(normalized, it->second);
+        *eol_out = default_eol_convert;
+        return it->second;
+    }
+
+    // Try lowercase version in current directory
+    std::string lowercase;
+    for (char c : normalized) {
+        lowercase += tolower(c);
+    }
+
+    if (access(lowercase.c_str(), F_OK) == 0) {
+        *mode_out = detect_file_mode(normalized, lowercase);
+        *eol_out = default_eol_convert;
+        return lowercase;
+    }
+
+    // Try as-is
+    if (access(normalized.c_str(), F_OK) == 0) {
+        *mode_out = detect_file_mode(normalized, normalized);
+        *eol_out = default_eol_convert;
+        return normalized;
+    }
+
+    return "";  // Not found
+}
+
+size_t CPMEmulator::read_with_conversion(OpenFile& of, uint8_t* buffer, size_t size) {
+    if (of.eof_seen) {
+        return 0;
+    }
+
+    if (of.mode == MODE_BINARY || !of.eol_convert) {
+        // Binary mode or no conversion - read directly
+        size_t nread = fread(buffer, 1, size, of.fp);
+
+        // Check for ^Z EOF in text mode
+        if (of.mode == MODE_TEXT) {
+            for (size_t i = 0; i < nread; i++) {
+                if (buffer[i] == CPM_EOF) {
+                    of.eof_seen = true;
+                    return i;  // Return only data up to ^Z
+                }
+            }
+        }
+
+        return nread;
+    }
+
+    // Text mode with EOL conversion: Unix \n -> CP/M \r\n
+    size_t out_pos = 0;
+
+    while (out_pos < size) {
+        int ch = fgetc(of.fp);
+
+        if (ch == EOF) {
+            break;
+        }
+
+        if (ch == '\n') {
+            // Convert \n to \r\n
+            if (out_pos + 1 < size) {
+                buffer[out_pos++] = '\r';
+                buffer[out_pos++] = '\n';
+            } else {
+                // Not enough space, put back
+                ungetc(ch, of.fp);
+                break;
+            }
+        } else if (ch == CPM_EOF) {
+            // EOF marker
+            of.eof_seen = true;
+            break;
+        } else {
+            buffer[out_pos++] = (uint8_t)ch;
+        }
+    }
+
+    return out_pos;
+}
+
+size_t CPMEmulator::write_with_conversion(OpenFile& of, const uint8_t* buffer, size_t size) {
+    if (of.mode == MODE_BINARY || !of.eol_convert) {
+        // Binary mode - write directly
+        return fwrite(buffer, 1, size, of.fp);
+    }
+
+    // Text mode with EOL conversion: CP/M \r\n -> Unix \n
+    size_t written = 0;
+
+    for (size_t i = 0; i < size; i++) {
+        uint8_t ch = buffer[i];
+
+        if (ch == CPM_EOF) {
+            // Stop at ^Z in text files
+            break;
+        }
+
+        if (ch == '\r') {
+            // Skip \r if next char is \n
+            if (i + 1 < size && buffer[i + 1] == '\n') {
+                continue;  // Skip the \r
+            }
+            // Otherwise write it
+            if (fputc(ch, of.fp) == EOF) break;
+            written++;
+        } else {
+            if (fputc(ch, of.fp) == EOF) break;
+            written++;
+        }
+    }
+
+    fflush(of.fp);
+    return written;
+}
+
+void CPMEmulator::pad_to_128(uint8_t* buffer, size_t actual_size) {
+    if (actual_size < 128) {
+        // Pad with ^Z for CP/M compatibility
+        memset(buffer + actual_size, CPM_EOF, 128 - actual_size);
+    }
+}
+
+bool CPMEmulator::load_config_file(const std::string& cfg_path) {
+    std::ifstream cfg(cfg_path.c_str());
+    if (!cfg.is_open()) {
+        fprintf(stderr, "Cannot open config file: %s\n", cfg_path.c_str());
+        return false;
+    }
+
+    std::string line;
+    int line_num = 0;
+
+    while (std::getline(cfg, line)) {
+        line_num++;
+
+        // Remove comments
+        size_t comment = line.find('#');
+        if (comment != std::string::npos) {
+            line = line.substr(0, comment);
+        }
+
+        // Trim whitespace
+        size_t start = line.find_first_not_of(" \t\r\n");
+        size_t end = line.find_last_not_of(" \t\r\n");
+        if (start == std::string::npos) continue;  // Empty line
+        line = line.substr(start, end - start + 1);
+
+        // Parse key = value
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) {
+            fprintf(stderr, "Config line %d: invalid format (missing =)\n", line_num);
+            continue;
+        }
+
+        std::string key = line.substr(0, eq);
+        std::string value = line.substr(eq + 1);
+
+        // Trim key and value
+        key = key.substr(0, key.find_last_not_of(" \t") + 1);
+        key = key.substr(key.find_first_not_of(" \t"));
+        value = value.substr(value.find_first_not_of(" \t"));
+        value = value.substr(0, value.find_last_not_of(" \t") + 1);
+
+        // Parse configuration directives
+        if (key == "program") {
+            // Handled by caller (main())
+        } else if (key == "default_mode") {
+            if (value == "text") default_mode = MODE_TEXT;
+            else if (value == "binary") default_mode = MODE_BINARY;
+            else default_mode = MODE_AUTO;
+        } else if (key == "debug") {
+            debug = (value == "true" || value == "1" || value == "yes");
+        } else if (key == "eol_convert") {
+            default_eol_convert = (value == "true" || value == "1" || value == "yes");
+        } else if (key == "printer") {
+            set_printer_file(value);
+        } else if (key == "aux_input") {
+            set_aux_input_file(value);
+        } else if (key == "aux_output") {
+            set_aux_output_file(value);
+        } else {
+            // Assume it's a file mapping: pattern = path [mode]
+            FileMode mode = default_mode;
+            bool eol_convert = default_eol_convert;
+
+            // Check for mode specification
+            size_t space = value.find_last_of(' ');
+            if (space != std::string::npos) {
+                std::string mode_str = value.substr(space + 1);
+                if (mode_str == "text") {
+                    mode = MODE_TEXT;
+                    value = value.substr(0, space);
+                } else if (mode_str == "binary") {
+                    mode = MODE_BINARY;
+                    value = value.substr(0, space);
+                    eol_convert = false;
+                }
+            }
+
+            add_file_mapping_ex(key, value, mode, eol_convert);
+        }
+    }
+
+    return true;
 }
 
 void CPMEmulator::set_printer_file(const std::string& path) {
@@ -789,11 +1170,15 @@ void CPMEmulator::bdos_get_set_user() {
 void CPMEmulator::bdos_open_file() {
     qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
     std::string filename = fcb_to_filename(fcb_addr);
-    std::string unix_path = find_unix_file(filename);
 
-    if (debug) {
-        fprintf(stderr, "BDOS Open: '%s' -> '%s'\n", filename.c_str(),
-                unix_path.empty() ? "(not found)" : unix_path.c_str());
+    FileMode mode;
+    bool eol_convert;
+    std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert);
+
+    if (debug || debug_bdos_funcs.count(15)) {
+        fprintf(stderr, "BDOS Open: '%s' -> '%s' (mode: %s)\n", filename.c_str(),
+                unix_path.empty() ? "(not found)" : unix_path.c_str(),
+                mode == MODE_TEXT ? "text" : "binary");
     }
 
     if (unix_path.empty()) {
@@ -813,7 +1198,11 @@ void CPMEmulator::bdos_open_file() {
     OpenFile of;
     of.fp = fp;
     of.unix_path = unix_path;
+    of.cpm_name = filename;
+    of.mode = mode;
+    of.eol_convert = eol_convert;
     of.position = 0;
+    of.eof_seen = false;
     of.write_mode = false;
     open_files[fcb_addr] = of;
 
@@ -830,6 +1219,12 @@ void CPMEmulator::bdos_close_file() {
 
     auto it = open_files.find(fcb_addr);
     if (it != open_files.end()) {
+        // Flush any pending writes
+        if (it->second.write_mode && it->second.write_buffer.size() > 0) {
+            write_with_conversion(it->second, it->second.write_buffer.data(),
+                                it->second.write_buffer.size());
+        }
+
         fclose(it->second.fp);
         open_files.erase(it);
         cpu->set_reg8(0, qkz80::reg_A);  // Success
@@ -848,16 +1243,20 @@ void CPMEmulator::bdos_read_sequential() {
         return;
     }
 
-    // Read 128 bytes to DMA
-    size_t nread = fread(&mem[current_dma], 1, 128, it->second.fp);
+    // Read 128 bytes to DMA with conversion
+    uint8_t buffer[128];
+    size_t nread = read_with_conversion(it->second, buffer, 128);
 
-    if (nread == 0) {
+    if (nread == 0 || it->second.eof_seen) {
         cpu->set_reg8(1, qkz80::reg_A);  // EOF
     } else {
-        // Pad with ^Z if less than 128 bytes
+        // Pad to 128 bytes if needed
         if (nread < 128) {
-            memset(&mem[current_dma + nread], 0x1A, 128 - nread);
+            pad_to_128(buffer, nread);
         }
+
+        // Copy to DMA
+        memcpy(&mem[current_dma], buffer, 128);
         cpu->set_reg8(0, qkz80::reg_A);  // Success
     }
 
@@ -880,10 +1279,12 @@ void CPMEmulator::bdos_write_sequential() {
         }
     }
 
-    // Write 128 bytes from DMA
-    size_t nwritten = fwrite(&mem[current_dma], 1, 128, it->second.fp);
+    it->second.write_mode = true;
 
-    if (nwritten == 128) {
+    // Write 128 bytes from DMA with conversion
+    size_t nwritten = write_with_conversion(it->second, (uint8_t*)&mem[current_dma], 128);
+
+    if (nwritten > 0) {
         cpu->set_reg8(0, qkz80::reg_A);  // Success
     } else {
         cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
@@ -897,11 +1298,11 @@ void CPMEmulator::bdos_make_file() {
     qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
     std::string filename = fcb_to_filename(fcb_addr);
 
-    if (debug) {
+    if (debug || debug_bdos_funcs.count(22)) {
         fprintf(stderr, "Make file: %s\n", filename.c_str());
     }
 
-    // Convert to lowercase
+    // Convert to lowercase for Unix
     std::string unix_name;
     for (char c : filename) {
         unix_name += tolower(c);
@@ -916,7 +1317,11 @@ void CPMEmulator::bdos_make_file() {
     OpenFile of;
     of.fp = fp;
     of.unix_path = unix_name;
+    of.cpm_name = filename;
+    of.mode = default_mode;
+    of.eol_convert = default_eol_convert;
     of.position = 0;
+    of.eof_seen = false;
     of.write_mode = true;
     open_files[fcb_addr] = of;
 
@@ -930,10 +1335,14 @@ void CPMEmulator::bdos_make_file() {
 void CPMEmulator::bdos_delete_file() {
     qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
     std::string filename = fcb_to_filename(fcb_addr);
-    std::string unix_path = find_unix_file(filename);
 
-    if (debug) {
-        fprintf(stderr, "Delete file: %s\n", filename.c_str());
+    FileMode mode;
+    bool eol_convert;
+    std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert);
+
+    if (debug || debug_bdos_funcs.count(19)) {
+        fprintf(stderr, "Delete file: %s -> %s\n", filename.c_str(),
+                unix_path.empty() ? "(not found)" : unix_path.c_str());
     }
 
     if (unix_path.empty() || unlink(unix_path.c_str()) != 0) {
@@ -1020,7 +1429,10 @@ void CPMEmulator::bdos_file_size() {
     qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
     char* mem = cpu->get_mem();
     std::string filename = fcb_to_filename(fcb_addr);
-    std::string unix_path = find_unix_file(filename);
+
+    FileMode mode;
+    bool eol_convert;
+    std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert);
 
     if (unix_path.empty()) {
         cpu->set_reg8(0xFF, qkz80::reg_A);  // Error: file not found
@@ -1071,7 +1483,10 @@ void CPMEmulator::bdos_rename_file() {
     // Bytes 16-31: new filename
 
     std::string old_name = fcb_to_filename(fcb_addr);
-    std::string old_path = find_unix_file(old_name);
+
+    FileMode mode;
+    bool eol_convert;
+    std::string old_path = find_unix_file_ex(old_name, &mode, &eol_convert);
 
     if (old_path.empty()) {
         cpu->set_reg8(0xFF, qkz80::reg_A);  // Error: old file not found
@@ -1091,6 +1506,10 @@ void CPMEmulator::bdos_rename_file() {
     // Convert new name to lowercase for Unix
     for (char c : new_name) {
         new_path += tolower(c);
+    }
+
+    if (debug || debug_bdos_funcs.count(23)) {
+        fprintf(stderr, "Rename: %s -> %s\n", old_path.c_str(), new_path.c_str());
     }
 
     if (rename(old_path.c_str(), new_path.c_str()) != 0) {
@@ -1349,17 +1768,68 @@ void CPMEmulator::bios_listst() {
 // Main program
 int main(int argc, char** argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <program.com> [args...]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <program.com|config.cfg> [args...]\n", argv[0]);
+        fprintf(stderr, "\n");
+        fprintf(stderr, "Examples:\n");
+        fprintf(stderr, "  %s program.com              # Run CP/M program directly\n", argv[0]);
+        fprintf(stderr, "  %s program.com file.dat     # With file arguments\n", argv[0]);
+        fprintf(stderr, "  %s config.cfg               # With config file\n", argv[0]);
         return 1;
     }
 
-    const char* program = argv[1];
+    const char* arg1 = argv[1];
+    bool is_config = (strstr(arg1, ".cfg") != nullptr);
+    const char* program = nullptr;
 
-    // Create CPU
+    // Create CPU and force 8080 mode for CP/M compatibility
     qkz80 cpu;
+    cpu.set_cpu_mode(qkz80::MODE_8080);
 
     // Create emulator
     CPMEmulator cpm(&cpu, false);
+
+    // If config file, load it first
+    if (is_config) {
+        if (!cpm.load_config_file(arg1)) {
+            return 1;
+        }
+
+        // Find program directive in config
+        std::ifstream cfg(arg1);
+        std::string line;
+        while (std::getline(cfg, line)) {
+            size_t eq = line.find('=');
+            if (eq != std::string::npos) {
+                std::string key = line.substr(0, eq);
+                std::string value = line.substr(eq + 1);
+
+                // Trim
+                key = key.substr(key.find_first_not_of(" \t"));
+                key = key.substr(0, key.find_last_not_of(" \t") + 1);
+                value = value.substr(value.find_first_not_of(" \t"));
+                value = value.substr(0, value.find_last_not_of(" \t") + 1);
+
+                // Remove comments from value
+                size_t comment = value.find('#');
+                if (comment != std::string::npos) {
+                    value = value.substr(0, comment);
+                    value = value.substr(0, value.find_last_not_of(" \t") + 1);
+                }
+
+                if (key == "program") {
+                    program = strdup(value.c_str());
+                    break;
+                }
+            }
+        }
+
+        if (!program) {
+            fprintf(stderr, "No 'program' directive in config file\n");
+            return 1;
+        }
+    } else {
+        program = arg1;
+    }
 
     // Setup CP/M memory
     cpm.setup_memory();

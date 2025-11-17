@@ -1,7 +1,7 @@
 all: cpmemu
 
 CXXFLAGS = -std=c++11 -Wall -O2 -I.
-SOURCES = qkz80.cc  qkz80_errors.cc  qkz80_mem.cc  qkz80_reg_set.cc cpmemu.cc
+SOURCES = qkz80.cc  qkz80_errors.cc  qkz80_mem.cc  qkz80_reg_set.cc cpm_main.cc
 OBJECTS = $(SOURCES:.cc=.o)
 TARGET = cpmemu
 
@@ -17,16 +17,16 @@ $(TARGET): $(OBJECTS)
 %.o: %.cc
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-test: cpm_emulator
+test: cpmemu
 	@echo "Running quick tests..."
 	@echo "Simple console (should print ABC):"
-	@./cpm_emulator ../tests/simple_con.com 2>&1 | sed -n 's/.*Loaded.*//; s/Program exit.*//; /./p'
+	@./cpmemu ../tests/simple_con.com 2>&1 | sed -n 's/.*Loaded.*//; s/Program exit.*//; /./p'
 	@echo ""
 	@echo "DJNZ test (should print 321):"
-	@./cpm_emulator ../tests/test_djnz.com 2>&1 | sed -n 's/.*Loaded.*//; s/Program exit.*//; /./p'
+	@./cpmemu ../tests/test_djnz.com 2>&1 | sed -n 's/.*Loaded.*//; s/Program exit.*//; /./p'
 	@echo ""
 	@echo "Flag test (should print: 94 51 10 3E):"
-	@./cpm_emulator ../tests/tflags.com 2>&1 | sed -n 's/.*Loaded.*//; s/Program exit.*//; /./p'
+	@./cpmemu ../tests/tflags.com 2>&1 | sed -n 's/.*Loaded.*//; s/Program exit.*//; /./p'
 	@echo ""
 	@echo "All tests completed!"
 
