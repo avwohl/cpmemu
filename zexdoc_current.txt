@@ -1,47 +1,0 @@
-Loaded 8704 bytes from ../tests/zexdoc.com
-Z80 instruction exerciser
-<adc,sbc> hl,<bc,de,hl,sp>....  ERROR **** crc expected:f8b4eaa9 found:987ecc68
-add hl,<bc,de,hl,sp>..........  ERROR **** crc expected:89fdb635 found:2805a593
-add ix,<bc,de,ix,sp>..........  ERROR **** crc expected:c133790b found:c4442b77
-add iy,<bc,de,iy,sp>..........  ERROR **** crc expected:e8817b9e found:654031bf
-aluop a,nn....................  ERROR **** crc expected:48799360 found:32db663a
-aluop a,<b,c,d,e,h,l,(hl),a>..  ERROR **** crc expected:fe43b016 found:1a9aca4c
-aluop a,<ixh,ixl,iyh,iyl>.....  ERROR **** crc expected:a4026d5a found:72a21eb3
-aluop a,(<ix,iy>+1)...........  ERROR **** crc expected:e849676e found:60c2e937
-bit n,(<ix,iy>+1).............  ERROR **** crc expected:a8ee0867 found:87faef41
-bit n,<b,c,d,e,h,l,(hl),a>....  ERROR **** crc expected:7b55e6c8 found:c800ed09
-cpd<r>........................  ERROR **** crc expected:a87e6cfa found:fbde4441
-cpi<r>........................  ERROR **** crc expected:06deb356 found:3b66f45b
-<daa,cpl,scf,ccf>.............  ERROR **** crc expected:9b4ba675 found:e00dd8d6
-<inc,dec> a...................  ERROR **** crc expected:d18815a4 found:0c9a85d6
-<inc,dec> b...................  ERROR **** crc expected:5f682264 found:10ca00ef
-<inc,dec> bc..................  ERROR **** crc expected:d2ae3bec found:eb7d1a2b
-<inc,dec> c...................  ERROR **** crc expected:c284554c found:d70ba12d
-<inc,dec> d...................  ERROR **** crc expected:4523de10 found:0d1a130f
-<inc,dec> de..................  ERROR **** crc expected:aec6d42c found:63a1b8e7
-<inc,dec> e...................  ERROR **** crc expected:e175afcc found:443334f0
-<inc,dec> h...................  ERROR **** crc expected:1ced847d found:b0dcdb7b
-<inc,dec> hl..................  ERROR **** crc expected:fc0d6d4a found:83c4be26
-<inc,dec> ix..................  ERROR **** crc expected:a54dbe31 found:78e66179
-<inc,dec> iy..................  ERROR **** crc expected:505d51a3 found:86295228
-<inc,dec> l...................  ERROR **** crc expected:56cd06f3 found:5fd9378a
-<inc,dec> (hl)................  ERROR **** crc expected:b83adcef found:87c521d0
-<inc,dec> sp..................  ERROR **** crc expected:5dacd527 found:c99fb24d
-<inc,dec> (<ix,iy>+1).........  ERROR **** crc expected:20581470 found:f4ab2dcd
-<inc,dec> ixh.................  ERROR **** crc expected:6f463662 found:904bacfe
-<inc,dec> ixl.................  ERROR **** crc expected:027bef2c found:02fe986a
-<inc,dec> iyh.................  ERROR **** crc expected:2d966cf3 found:d525a422
-<inc,dec> iyl.................  ERROR **** crc expected:fbcbba95 found:68f49924
-ld <bc,de>,(nnnn).............  ERROR **** crc expected:4d45a9ac found:137631e3
-ld hl,(nnnn)..................  ERROR **** crc expected:5f972487 found:6d1eeb35
-ld sp,(nnnn)..................  ERROR **** crc expected:7acea11b found:5c1e7c0a
-ld <ix,iy>,(nnnn).............  ERROR **** crc expected:858bf16d found:8a8442ed
-ld (nnnn),<bc,de>.............  ERROR **** crc expected:641e8715 found:0376169f
-ld (nnnn),hl..................  ERROR **** crc expected:a3608b47 found:2c5b71d8
-ld (nnnn),sp..................  ERROR **** crc expected:16585fd7 found:b3b32c4a
-ld (nnnn),<ix,iy>.............  ERROR **** crc expected:ba102a6b found:ac2940bc
-ld <bc,de,hl,sp>,nnnn.........  ERROR **** crc expected:de391969 found:fcf46e12
-ld <ix,iy>,nnnn...............  ERROR **** crc expected:227dd525 found:794a692e
-ld a,<(bc),(de)>..............  ERROR **** crc expected:b0818935 found:06cfc034
-ld <b,c,d,e,h,l,(hl),a>,nn....  ERROR **** crc expected:f1dab556 found:eaa72044
-ld (<ix,iy>+1),nn.............unimplemented opcode opcode=0x10 pc=0x1d46

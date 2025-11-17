@@ -1,3 +1,0 @@
-Loaded 8704 bytes from ../tests/zexdoc.com
-Z80 instruction exerciser
-Program exit via JMP 0

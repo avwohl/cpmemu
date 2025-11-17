@@ -4,8 +4,8 @@
 
 static qkz80_trace dummy_trace;
 qkz80::qkz80():
-  qkz80_debug(false),
   trace(&dummy_trace),
+  qkz80_debug(false),
   cpu_mode(MODE_Z80)  // Default to Z80 mode
 {
   regs.cpu_mode = qkz80_reg_set::MODE_Z80;
@@ -31,7 +31,6 @@ qkz80_uint8 qkz80::compute_sum_half_carry(qkz80_uint16 rega,
 						      qkz80_uint16 carry) {
   qkz80_uint16 rega_low(LOW_NIBBLE(rega));
   qkz80_uint16 dat_low(LOW_NIBBLE(dat));
-  qkz80_uint16 carry_low(LOW_NIBBLE(carry));
   qkz80_uint16 sum_low(rega_low+dat_low+carry);
 
   if((sum_low & 0xf0)!=0) {

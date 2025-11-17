@@ -10,6 +10,7 @@
 *.rel
 *.map
 qkz80
+cpmemu
 cpm_emulator
 
 

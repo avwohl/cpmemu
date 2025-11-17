@@ -1,14 +1,21 @@
-all: qkz80 cpm_emulator
+all: cpmemu
 
-qkz80:	qkz80.cc qkz80.h main.cc qkz80_mem.cc qkz80_errors.cc \
-	  qkz80_mem.h qkz80_types.h qkz80_reg_pair.h qkz80_reg_set.h qkz80_reg_set.cc
-	g++ -g -O2 -o qkz80 main.cc qkz80.cc qkz80_mem.cc qkz80_errors.cc \
-           qkz80_reg_set.cc
+CXXFLAGS = -std=c++11 -Wall -O2 -I.
+SOURCES = qkz80.cc  qkz80_errors.cc  qkz80_mem.cc  qkz80_reg_set.cc cpmemu.cc
+OBJECTS = $(SOURCES:.cc=.o)
+TARGET = cpmemu
 
-cpm_emulator: cpm_emulator.cc qkz80.cc qkz80_mem.cc qkz80_errors.cc qkz80_reg_set.cc \
-	  qkz80.h qkz80_mem.h qkz80_types.h qkz80_reg_pair.h qkz80_reg_set.h
-	g++ -g -O2 -o cpm_emulator cpm_emulator.cc qkz80.cc qkz80_mem.cc qkz80_errors.cc \
-           qkz80_reg_set.cc
+all: $(TARGET)
+
+# Rule to link object files into the executable
+$(TARGET): $(OBJECTS)
+	$(CXX) $(CXXFLAGS) $(OBJECTS) -o $(TARGET)
+
+# Pattern rule to compile .cc files into .o object files
+# $< is the first dependency (the .cc file)
+# $@ is the target (the .o file)
+%.o: %.cc
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 test: cpm_emulator
 	@echo "Running quick tests..."
@@ -24,4 +31,4 @@ test: cpm_emulator
 	@echo "All tests completed!"
 
 clean:	.
-	@rm -f qkz80 cpm_emulator *.o *.lst *.ihx *.com *.cdb *.rel *.map *~
+	@rm -f qkz80 cpm_emulator cpmemu *.o *.lst *.ihx *.com *.cdb *.rel *.map *~
