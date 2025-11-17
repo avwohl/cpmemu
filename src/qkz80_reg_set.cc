@@ -55,11 +55,11 @@ qkz80_uint8 qkz80_reg_set::fix_flags(qkz80_uint8 new_flags) const {
 }
 
 qkz80_uint8 qkz80_reg_set::get_flags(void) const {
-  return AF.get_low();  // Return raw flags - fix_flags() only applies in get_reg16(AF) for PUSH PSW
+  return fix_flags(AF.get_low());  // Always return properly fixed flags
 }
 
 void qkz80_reg_set::set_flags(qkz80_uint8 new_flags) {
-  return AF.set_low(new_flags);  // Store flags as-is, fix_flags() only applies when reading for PUSH PSW
+  return AF.set_low(fix_flags(new_flags));  // Always fix flag bits when storing in 8080 mode
 }
 
 void qkz80_reg_set::set_flags_from_logic8(qkz80_big_uint a,

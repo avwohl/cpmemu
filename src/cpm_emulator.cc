@@ -121,7 +121,7 @@ public:
     }
 
     void setup_memory();
-    void setup_command_line(int argc, char** argv);
+    void setup_command_line(int argc, char** argv, int program_arg_index = 1);
     void add_file_mapping(const std::string& cpm_pattern, const std::string& unix_pattern,
                          FileMode mode = MODE_AUTO, bool eol_convert = true);
     bool load_config_file(const std::string& cfg_path);
@@ -639,17 +639,17 @@ void CPMEmulator::setup_memory() {
     cpu->regs.SP.set_pair16(0xFFF0);
 }
 
-void CPMEmulator::setup_command_line(int argc, char** argv) {
+void CPMEmulator::setup_command_line(int argc, char** argv, int program_arg_index) {
     char* mem = cpu->get_mem();
 
-    if (argc < 2) {
+    if (argc < program_arg_index + 1) {
         mem[DEFAULT_DMA] = 0;
         return;
     }
 
     std::string cmdline;
-    for (int i = 2; i < argc; i++) {
-        if (i > 2) cmdline += " ";
+    for (int i = program_arg_index + 1; i < argc; i++) {
+        if (i > program_arg_index + 1) cmdline += " ";
         cmdline += argv[i];
         args.push_back(argv[i]);
     }
@@ -659,12 +659,12 @@ void CPMEmulator::setup_command_line(int argc, char** argv) {
         mem[DEFAULT_DMA + 1 + i] = toupper(cmdline[i]);
     }
 
-    if (argc >= 3) {
-        filename_to_fcb(argv[2], DEFAULT_FCB);
+    if (argc >= program_arg_index + 2) {
+        filename_to_fcb(argv[program_arg_index + 1], DEFAULT_FCB);
     }
 
-    if (argc >= 4) {
-        filename_to_fcb(argv[3], DEFAULT_FCB2);
+    if (argc >= program_arg_index + 3) {
+        filename_to_fcb(argv[program_arg_index + 2], DEFAULT_FCB2);
     }
 }
 
@@ -1058,20 +1058,45 @@ void CPMEmulator::bios_conout() {
 // Main program
 int main(int argc, char** argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <program.com|config.cfg> [args...]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--8080|--z80] <program.com|config.cfg> [args...]\n", argv[0]);
+        fprintf(stderr, "\n");
+        fprintf(stderr, "Options:\n");
+        fprintf(stderr, "  --8080              Run in 8080 mode (default: Z80)\n");
+        fprintf(stderr, "  --z80               Run in Z80 mode\n");
         fprintf(stderr, "\n");
         fprintf(stderr, "Examples:\n");
-        fprintf(stderr, "  %s mbasic.com                    # Run MBASIC directly\n", argv[0]);
+        fprintf(stderr, "  %s mbasic.com                    # Run MBASIC in Z80 mode\n", argv[0]);
+        fprintf(stderr, "  %s --8080 8080exer.com          # Run 8080 test in 8080 mode\n", argv[0]);
         fprintf(stderr, "  %s mbasic.com test.bas          # With argument\n", argv[0]);
         fprintf(stderr, "  %s mbasic_tests.cfg             # With config file\n", argv[0]);
         return 1;
     }
 
-    const char* arg1 = argv[1];
+    // Parse command line for CPU mode
+    int arg_offset = 1;
+    bool mode_8080 = false;
+
+    if (strcmp(argv[1], "--8080") == 0) {
+        mode_8080 = true;
+        arg_offset = 2;
+    } else if (strcmp(argv[1], "--z80") == 0) {
+        mode_8080 = false;
+        arg_offset = 2;
+    }
+
+    if (argc < arg_offset + 1) {
+        fprintf(stderr, "Error: No program specified\n");
+        fprintf(stderr, "Usage: %s [--8080|--z80] <program.com|config.cfg> [args...]\n", argv[0]);
+        return 1;
+    }
+
+    const char* arg1 = argv[arg_offset];
     bool is_config = (strstr(arg1, ".cfg") != nullptr);
     const char* program = nullptr;
 
     qkz80 cpu;
+    cpu.set_cpu_mode(mode_8080 ? qkz80::MODE_8080 : qkz80::MODE_Z80);
+    fprintf(stderr, "CPU mode: %s\n", mode_8080 ? "8080" : "Z80");
     CPMEmulator cpm(&cpu, false);
 
     if (is_config) {
@@ -1111,10 +1136,10 @@ int main(int argc, char** argv) {
     }
 
     cpm.setup_memory();
-    cpm.setup_command_line(argc, argv);
+    cpm.setup_command_line(argc, argv, arg_offset);
 
     // Setup file mappings from command line
-    for (int i = 2; i < argc; i++) {
+    for (int i = arg_offset + 1; i < argc; i++) {
         struct stat st;
         if (stat(argv[i], &st) == 0 && S_ISREG(st.st_mode)) {
             const char* base = strrchr(argv[i], '/');

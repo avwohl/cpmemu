@@ -52,7 +52,7 @@ qkz80_uint8 qkz80::compute_subtract_half_carry(qkz80_uint16 rega,
 
 void qkz80::debug_dump_regs(const char* label) {
   // Print compact register state on one line for tracing
-  qkz80_uint8 flags = regs.fix_flags(regs.get_flags());  // Apply fix_flags for display (matches PUSH PSW)
+  qkz80_uint8 flags = regs.get_flags();  // get_flags() now returns fixed flags
 
   fprintf(stderr, "%s PC=%04X AF=%02X%02X BC=%02X%02X DE=%02X%02X HL=%02X%02X SP=%04X IX=%04X IY=%04X [",
           label,
@@ -227,8 +227,8 @@ qkz80_uint16 qkz80::get_reg16(qkz80_uint8 rnum) {
   case regp_SP:
     return regs.SP.get_pair16();
   case regp_AF:
-    // Apply fix_flags() when returning AF for PUSH PSW - ensures bits 1,3,5 are correct in 8080 mode
-    return qkz80_MK_INT16(regs.fix_flags(regs.get_flags()),get_reg8(reg_A));
+    // get_flags() now returns already fixed flags in 8080 mode
+    return qkz80_MK_INT16(regs.get_flags(),get_reg8(reg_A));
   case regp_PC:
     return regs.PC.get_pair16();
   case regp_IX:
@@ -744,6 +744,8 @@ void qkz80::execute(void) {
 
   // Z80-specific instructions (not 8080)
   if (opcode == 0x08) { // EX AF,AF'
+    if (cpu_mode == MODE_8080)
+      return;
     qkz80_uint16 af = regs.AF.get_pair16();
     qkz80_uint16 af_prime = regs.AF_.get_pair16();
     regs.AF.set_pair16(af_prime);
@@ -753,6 +755,8 @@ void qkz80::execute(void) {
   }
 
   if (opcode == 0x10) { // DJNZ - Decrement B and Jump if Not Zero
+    if (cpu_mode == MODE_8080)
+      return;
     qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
     qkz80_uint8 b_val = get_reg8(reg_B);
     b_val--;
@@ -770,6 +774,8 @@ void qkz80::execute(void) {
   }
 
   if (opcode == 0x18) { // JR - Unconditional relative jump
+    if (cpu_mode == MODE_8080)
+      return;
     qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
     qkz80_uint16 pc = regs.PC.get_pair16();
     regs.PC.set_pair16(pc + offset);
@@ -778,6 +784,8 @@ void qkz80::execute(void) {
   }
 
   if (opcode == 0x20) { // JR NZ
+    if (cpu_mode == MODE_8080)
+      return;
     qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
     if (!regs.condition_code(1, regs.get_flags())) { // NZ condition (code 0 for NZ is inverted to 1 for Z check)
       qkz80_uint16 pc = regs.PC.get_pair16();
@@ -792,6 +800,8 @@ void qkz80::execute(void) {
   }
 
   if (opcode == 0x28) { // JR Z
+    if (cpu_mode == MODE_8080)
+      return;
     qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
     if (regs.condition_code(1, regs.get_flags())) { // Z condition
       qkz80_uint16 pc = regs.PC.get_pair16();
@@ -806,6 +816,8 @@ void qkz80::execute(void) {
   }
 
   if (opcode == 0x30) { // JR NC
+    if (cpu_mode == MODE_8080)
+      return;
     qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
     if (!regs.condition_code(3, regs.get_flags())) { // NC condition (code 2 for NC is inverted to 3 for C check)
       qkz80_uint16 pc = regs.PC.get_pair16();
@@ -820,6 +832,8 @@ void qkz80::execute(void) {
   }
 
   if (opcode == 0x38) { // JR C
+    if (cpu_mode == MODE_8080)
+      return;
     qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
     if (regs.condition_code(3, regs.get_flags())) { // C condition
       qkz80_uint16 pc = regs.PC.get_pair16();
@@ -1789,7 +1803,6 @@ void qkz80::execute(void) {
  if (opcode == 0xd3) { // OUT
     qkz80_uint8 port(pull_byte_from_opcode_stream());
     qkz80_uint8 rega(get_reg8(reg_A));
-    rega&=0x7f;
     if (port == 0x11) {
       char ch(rega);
       std::cout << ch << std::flush;

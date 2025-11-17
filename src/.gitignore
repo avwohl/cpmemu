@@ -10,5 +10,6 @@
 *.rel
 *.map
 qkz80
+cpm_emulator
 
 
