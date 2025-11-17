@@ -26,6 +26,39 @@
 #include <fcntl.h>
 #include <fstream>
 #include <sstream>
+#include <termios.h>
+
+// Terminal state management
+static struct termios original_termios;
+static bool termios_saved = false;
+
+static void disable_raw_mode() {
+    if (termios_saved) {
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios);
+        termios_saved = false;
+    }
+}
+
+static void enable_raw_mode() {
+    if (!isatty(STDIN_FILENO)) {
+        // Not a terminal, don't try to set raw mode
+        return;
+    }
+
+    if (!termios_saved) {
+        tcgetattr(STDIN_FILENO, &original_termios);
+        termios_saved = true;
+        atexit(disable_raw_mode);
+    }
+
+    struct termios raw = original_termios;
+    // Disable canonical mode (line buffering) and echo
+    raw.c_lflag &= ~(ICANON | ECHO);
+    // Set minimum characters to 1 and timeout to 0
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+}
 
 // CP/M Memory Layout Constants
 #define TPA_START      0x0100
@@ -162,7 +195,7 @@ public:
     }
 
     void setup_memory();
-    void setup_command_line(int argc, char** argv);
+    void setup_command_line(int argc, char** argv, int program_arg_index = 1);
     void add_file_mapping(const std::string& cpm_name, const std::string& unix_path);
     void add_file_mapping_ex(const std::string& cpm_pattern, const std::string& unix_pattern,
                             FileMode mode = MODE_AUTO, bool eol_convert = true);
@@ -288,10 +321,10 @@ void CPMEmulator::setup_memory() {
     cpu->regs.SP.set_pair16(0xFFF0);
 }
 
-void CPMEmulator::setup_command_line(int argc, char** argv) {
+void CPMEmulator::setup_command_line(int argc, char** argv, int program_arg_index) {
     char* mem = cpu->get_mem();
 
-    if (argc < 2) {
+    if (argc < program_arg_index + 1) {
         mem[DEFAULT_DMA] = 0;  // No command line
         return;
     }
@@ -300,7 +333,7 @@ void CPMEmulator::setup_command_line(int argc, char** argv) {
     // CP/M requires a leading space before the first argument
     // Also, filenames must be in 8.3 format (truncated if needed)
     std::string cmdline;
-    for (int i = 2; i < argc; i++) {  // Skip program name
+    for (int i = program_arg_index + 1; i < argc; i++) {  // Skip program name and any switches
         cmdline += " ";  // Space before each argument (CP/M convention)
 
         // Get basename and convert to 8.3 format
@@ -332,13 +365,13 @@ void CPMEmulator::setup_command_line(int argc, char** argv) {
 
 
     // Parse first filename into DEFAULT_FCB
-    if (argc >= 3) {
-        filename_to_fcb(argv[2], DEFAULT_FCB);
+    if (argc >= program_arg_index + 2) {
+        filename_to_fcb(argv[program_arg_index + 1], DEFAULT_FCB);
     }
 
     // Parse second filename into DEFAULT_FCB2
-    if (argc >= 4) {
-        filename_to_fcb(argv[3], DEFAULT_FCB2);
+    if (argc >= program_arg_index + 3) {
+        filename_to_fcb(argv[program_arg_index + 2], DEFAULT_FCB2);
     }
 }
 
@@ -1768,25 +1801,52 @@ void CPMEmulator::bios_listst() {
 // Main program
 int main(int argc, char** argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <program.com|config.cfg> [args...]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--8080|--z80] <program.com|config.cfg> [args...]\n", argv[0]);
+        fprintf(stderr, "\n");
+        fprintf(stderr, "Options:\n");
+        fprintf(stderr, "  --8080              Run in 8080 mode (default)\n");
+        fprintf(stderr, "  --z80               Run in Z80 mode\n");
         fprintf(stderr, "\n");
         fprintf(stderr, "Examples:\n");
-        fprintf(stderr, "  %s program.com              # Run CP/M program directly\n", argv[0]);
+        fprintf(stderr, "  %s program.com              # Run CP/M program in 8080 mode\n", argv[0]);
+        fprintf(stderr, "  %s --z80 program.com        # Run in Z80 mode\n", argv[0]);
         fprintf(stderr, "  %s program.com file.dat     # With file arguments\n", argv[0]);
         fprintf(stderr, "  %s config.cfg               # With config file\n", argv[0]);
         return 1;
     }
 
-    const char* arg1 = argv[1];
+    // Parse command line for CPU mode
+    int arg_offset = 1;
+    bool mode_8080 = true;  // Default to 8080 for CP/M compatibility
+
+    if (strcmp(argv[1], "--8080") == 0) {
+        mode_8080 = true;
+        arg_offset = 2;
+    } else if (strcmp(argv[1], "--z80") == 0) {
+        mode_8080 = false;
+        arg_offset = 2;
+    }
+
+    if (argc < arg_offset + 1) {
+        fprintf(stderr, "Error: No program specified\n");
+        fprintf(stderr, "Usage: %s [--8080|--z80] <program.com|config.cfg> [args...]\n", argv[0]);
+        return 1;
+    }
+
+    const char* arg1 = argv[arg_offset];
     bool is_config = (strstr(arg1, ".cfg") != nullptr);
     const char* program = nullptr;
 
-    // Create CPU and force 8080 mode for CP/M compatibility
+    // Create CPU and set mode
     qkz80 cpu;
-    cpu.set_cpu_mode(qkz80::MODE_8080);
+    cpu.set_cpu_mode(mode_8080 ? qkz80::MODE_8080 : qkz80::MODE_Z80);
+    fprintf(stderr, "CPU mode: %s\n", mode_8080 ? "8080" : "Z80");
 
     // Create emulator
     CPMEmulator cpm(&cpu, false);
+
+    // Enable raw mode for console input (no echo, no line buffering)
+    enable_raw_mode();
 
     // If config file, load it first
     if (is_config) {
@@ -1835,7 +1895,7 @@ int main(int argc, char** argv) {
     cpm.setup_memory();
 
     // Parse command line arguments
-    cpm.setup_command_line(argc, argv);
+    cpm.setup_command_line(argc, argv, arg_offset);
 
     // Check for config file settings in environment or command line
     const char* printer_file = getenv("CPM_PRINTER");
@@ -1905,7 +1965,7 @@ int main(int argc, char** argv) {
     }
 
     // If there are additional files on command line, set up mappings
-    for (int i = 2; i < argc; i++) {
+    for (int i = arg_offset + 1; i < argc; i++) {
         struct stat st;
         if (stat(argv[i], &st) == 0 && S_ISREG(st.st_mode)) {
             // Extract basename for CP/M name
