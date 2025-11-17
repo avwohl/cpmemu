@@ -29,6 +29,51 @@
 #include <termios.h>
 #include <sys/select.h>
 
+// Helper function to expand environment variables in strings
+// Supports both $VAR and ${VAR} syntax
+static std::string expand_env_vars(const std::string& str) {
+    std::string result;
+    size_t i = 0;
+
+    while (i < str.length()) {
+        if (str[i] == '$') {
+            // Found a variable reference
+            i++;  // Skip the $
+
+            std::string var_name;
+
+            // Check for ${VAR} syntax
+            if (i < str.length() && str[i] == '{') {
+                i++;  // Skip the {
+
+                // Read until }
+                while (i < str.length() && str[i] != '}') {
+                    var_name += str[i++];
+                }
+                if (i < str.length() && str[i] == '}') {
+                    i++;  // Skip the }
+                }
+            } else {
+                // $VAR syntax - read alphanumeric and underscore
+                while (i < str.length() && (isalnum(str[i]) || str[i] == '_')) {
+                    var_name += str[i++];
+                }
+            }
+
+            // Get environment variable value
+            const char* env_value = getenv(var_name.c_str());
+            if (env_value) {
+                result += env_value;
+            }
+            // If variable not found, leave it empty (or could keep original)
+        } else {
+            result += str[i++];
+        }
+    }
+
+    return result;
+}
+
 // Helper function to check if input is available
 static bool stdin_has_data() {
     if (!isatty(STDIN_FILENO)) {
@@ -197,6 +242,9 @@ private:
     qkz80_uint8 iobyte;      // IOBYTE for device mapping
 
 public:
+    // Program name from config file
+    std::string config_program;
+
     // Public debug settings for selective debugging
     std::set<int> debug_bdos_funcs;  // Which BDOS functions to debug
     std::set<int> debug_bios_offsets; // Which BIOS offsets to debug
@@ -699,9 +747,21 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
         value = value.substr(value.find_first_not_of(" \t"));
         value = value.substr(0, value.find_last_not_of(" \t") + 1);
 
+        // Expand environment variables in value
+        value = expand_env_vars(value);
+
         // Parse configuration directives
         if (key == "program") {
-            // Handled by caller (main())
+            // Store program name for retrieval by main()
+            config_program = value;
+        } else if (key == "cd" || key == "chdir") {
+            // Change working directory
+            if (chdir(value.c_str()) != 0) {
+                fprintf(stderr, "Config line %d: Cannot change directory to '%s': %s\n",
+                        line_num, value.c_str(), strerror(errno));
+            } else if (debug) {
+                fprintf(stderr, "Changed directory to: %s\n", value.c_str());
+            }
         } else if (key == "default_mode") {
             if (value == "text") default_mode = MODE_TEXT;
             else if (value == "binary") default_mode = MODE_BINARY;
@@ -1687,7 +1747,7 @@ void CPMEmulator::bdos_write_random_zero_fill() {
 }
 
 void CPMEmulator::bios_call(int offset) {
-    if (debug || debug_bios_offsets.count(offset)) {
+    if (xdebug || debug_bios_offsets.count(offset)) {
         fprintf(stderr, "BIOS call offset %d\n", offset);
     }
 
@@ -1883,39 +1943,12 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        // Find program directive in config
-        std::ifstream cfg(arg1);
-        std::string line;
-        while (std::getline(cfg, line)) {
-            size_t eq = line.find('=');
-            if (eq != std::string::npos) {
-                std::string key = line.substr(0, eq);
-                std::string value = line.substr(eq + 1);
-
-                // Trim
-                key = key.substr(key.find_first_not_of(" \t"));
-                key = key.substr(0, key.find_last_not_of(" \t") + 1);
-                value = value.substr(value.find_first_not_of(" \t"));
-                value = value.substr(0, value.find_last_not_of(" \t") + 1);
-
-                // Remove comments from value
-                size_t comment = value.find('#');
-                if (comment != std::string::npos) {
-                    value = value.substr(0, comment);
-                    value = value.substr(0, value.find_last_not_of(" \t") + 1);
-                }
-
-                if (key == "program") {
-                    program = strdup(value.c_str());
-                    break;
-                }
-            }
-        }
-
-        if (!program) {
+        // Get program name from config
+        if (cpm.config_program.empty()) {
             fprintf(stderr, "No 'program' directive in config file\n");
             return 1;
         }
+        program = cpm.config_program.c_str();
     } else {
         program = arg1;
     }
