@@ -1,7 +1,7 @@
 all: cpmemu
 
 CXXFLAGS = -std=c++11 -Wall -O2 -I.
-SOURCES = qkz80.cc  qkz80_errors.cc  qkz80_mem.cc  qkz80_reg_set.cc cpm_main.cc
+SOURCES = qkz80.cc  qkz80_errors.cc  qkz80_mem.cc  qkz80_reg_set.cc cpmemu.cc
 OBJECTS = $(SOURCES:.cc=.o)
 TARGET = cpmemu
 
