@@ -1747,7 +1747,7 @@ void CPMEmulator::bdos_write_random_zero_fill() {
 }
 
 void CPMEmulator::bios_call(int offset) {
-  if (xdebug || debug_bios_offsets.count(offset)) {
+  if (debug || debug_bios_offsets.count(offset)) {
     fprintf(stderr, "BIOS call offset %d\n", offset);
   }
 
@@ -2081,7 +2081,7 @@ int main(int argc, char** argv) {
   cpu.regs.PC.set_pair16(TPA_START);
 
   // Run
-  long long max_instructions = 5000000000LL;  // Safety limit (5B for Zexall/Zexdoc)
+  long long max_instructions = 9000000000LL;  // Safety limit (5B for Zexall/Zexdoc)
   long long instruction_count = 0;
   long long last_report = 0;
 

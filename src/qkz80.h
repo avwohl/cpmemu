@@ -77,6 +77,7 @@ class qkz80 {
   const char *name_reg8(qkz80_uint8 reg8);
   const char *name_reg16(qkz80_uint8 rpair);
 
+  qkz80_uint8 peek_byte_from_opcode_stream(void);
   qkz80_uint8 pull_byte_from_opcode_stream(void);
   qkz80_uint16 pull_word_from_opcode_stream(void);
   void setup_parity(void);
