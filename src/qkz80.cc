@@ -6,8 +6,7 @@ static qkz80_trace dummy_trace;
 qkz80::qkz80():
   trace(&dummy_trace),
   qkz80_debug(false),
-  cpu_mode(MODE_Z80)  // Default to Z80 mode
-{
+  cpu_mode(MODE_Z80) { // Default to Z80 mode
   regs.cpu_mode = qkz80_reg_set::MODE_Z80;
 }
 
@@ -19,7 +18,7 @@ void qkz80::cpm_setup_memory(void) {
   // starting stack
   regs.SP.set_pair16(0xfff0);
   // set ret for each restart
-  for(qkz80_uint16 i(1);i<8;i++) {
+  for(qkz80_uint16 i(1); i<8; i++) {
     qkz80_uint16 addr(i*20);
     qkz80_uint8 return_instruction(0xc9);
     mem.store_mem(addr,return_instruction);
@@ -27,8 +26,8 @@ void qkz80::cpm_setup_memory(void) {
 }
 
 qkz80_uint8 qkz80::compute_sum_half_carry(qkz80_uint16 rega,
-						      qkz80_uint16 dat,
-						      qkz80_uint16 carry) {
+    qkz80_uint16 dat,
+    qkz80_uint16 carry) {
   qkz80_uint16 rega_low(LOW_NIBBLE(rega));
   qkz80_uint16 dat_low(LOW_NIBBLE(dat));
   qkz80_uint16 sum_low(rega_low+dat_low+carry);
@@ -40,12 +39,12 @@ qkz80_uint8 qkz80::compute_sum_half_carry(qkz80_uint16 rega,
 }
 
 qkz80_uint8 qkz80::compute_subtract_half_carry(qkz80_uint16 rega,
-							   qkz80_uint16 diff,
-							   qkz80_uint16 dat,
-							   qkz80_uint16 carry) {
+    qkz80_uint16 diff,
+    qkz80_uint16 dat,
+    qkz80_uint16 carry) {
 
   if(( ~(rega ^ diff ^ dat ^ carry) & 0x10) != 0)
-      return 1;
+    return 1;
   return 0;
 }
 
@@ -89,14 +88,22 @@ void qkz80::halt(void) {
   std::cerr << "PC: " << (int)regs.PC.get_pair16() << std::endl;
 
   std::cerr << "Flags (0x" << std::hex << (int)flags << "): ";
-  if (flags & 0x80) std::cerr << "S "; else std::cerr << "- ";
-  if (flags & 0x40) std::cerr << "Z "; else std::cerr << "- ";
-  if (flags & 0x20) std::cerr << "Y "; else std::cerr << "- ";
-  if (flags & 0x10) std::cerr << "H "; else std::cerr << "- ";
-  if (flags & 0x08) std::cerr << "X "; else std::cerr << "- ";
-  if (flags & 0x04) std::cerr << "P "; else std::cerr << "- ";
-  if (flags & 0x02) std::cerr << "N "; else std::cerr << "- ";
-  if (flags & 0x01) std::cerr << "C"; else std::cerr << "-";
+  if (flags & 0x80) std::cerr << "S ";
+  else std::cerr << "- ";
+  if (flags & 0x40) std::cerr << "Z ";
+  else std::cerr << "- ";
+  if (flags & 0x20) std::cerr << "Y ";
+  else std::cerr << "- ";
+  if (flags & 0x10) std::cerr << "H ";
+  else std::cerr << "- ";
+  if (flags & 0x08) std::cerr << "X ";
+  else std::cerr << "- ";
+  if (flags & 0x04) std::cerr << "P ";
+  else std::cerr << "- ";
+  if (flags & 0x02) std::cerr << "N ";
+  else std::cerr << "- ";
+  if (flags & 0x01) std::cerr << "C";
+  else std::cerr << "-";
   std::cerr << std::endl;
 
   exit(1);
@@ -148,25 +155,38 @@ const char *qkz80::name_condition_code(qkz80_uint8 cond) {
 
 const char *qkz80::name_reg8(qkz80_uint8 reg8) {
   switch(reg8) {
-  case reg_B: return "b";
-  case reg_C: return "c";
-  case reg_D: return "d";
-  case reg_E: return "e";
-  case reg_H: return "h";
-  case reg_L: return "l";
-  case reg_M: return "m";
-  case reg_A: return "a";
+  case reg_B:
+    return "b";
+  case reg_C:
+    return "c";
+  case reg_D:
+    return "d";
+  case reg_E:
+    return "e";
+  case reg_H:
+    return "h";
+  case reg_L:
+    return "l";
+  case reg_M:
+    return "m";
+  case reg_A:
+    return "a";
   }
   return "?";
 }
 
 const char *qkz80::name_reg16(qkz80_uint8 rpair) {
   switch(rpair) {
-  case regp_BC: return "bc";
-  case regp_DE: return "de";
-  case regp_HL: return "hl";
-  case regp_SP: return "sp";
-  case regp_AF: return "psw";
+  case regp_BC:
+    return "bc";
+  case regp_DE:
+    return "de";
+  case regp_HL:
+    return "hl";
+  case regp_SP:
+    return "sp";
+  case regp_AF:
+    return "psw";
   }
   return "?";
 }
@@ -183,14 +203,13 @@ void qkz80::set_reg16(qkz80_uint16 a,qkz80_uint8 rp) {
   case regp_HL:
     regs.HL.set_pair16(a);
     break;
-  case regp_AF:
-    {
-      qkz80_uint8 low(qkz80_GET_CLEAN8(a));
-      qkz80_uint8 high(qkz80_GET_HIGH8(a));
-      set_reg8(high,reg_A);
-      regs.set_flags(low);
-    }
-    break;
+  case regp_AF: {
+    qkz80_uint8 low(qkz80_GET_CLEAN8(a));
+    qkz80_uint8 high(qkz80_GET_HIGH8(a));
+    set_reg8(high,reg_A);
+    regs.set_flags(low);
+  }
+  break;
   case regp_SP:
     regs.SP.set_pair16(a);
     break;
@@ -302,6 +321,13 @@ void qkz80::set_reg8(qkz80_uint8 dat,qkz80_uint8 rnum) {
   }
 }
 
+qkz80_uint8 qkz80::peek_byte_from_opcode_stream(void) {
+  qkz80_uint16 pc=regs.PC.get_pair16();
+  qkz80_uint8 opcode_byte(mem.fetch_mem(pc));
+  trace->fetch(opcode_byte,pc);
+  return opcode_byte;
+}
+
 qkz80_uint8 qkz80::pull_byte_from_opcode_stream(void) {
   qkz80_uint16 pc=regs.PC.get_pair16();
   qkz80_uint8 opcode_byte(mem.fetch_mem(pc));
@@ -319,7 +345,6 @@ qkz80_uint16 qkz80::pull_word_from_opcode_stream(void) {
 }
 
 void qkz80::execute(void) {
-  qkz80_uint8 opcode(pull_byte_from_opcode_stream());
 
   // Handle prefix bytes - Z80 processes these inline
   bool has_dd_prefix = false;  // IX operations
@@ -328,805 +353,834 @@ void qkz80::execute(void) {
   bool has_cb_prefix = false;  // Bit operations
   qkz80_int8 index_offset = 0; // For (IX+d) or (IY+d) addressing
 
-  // Process prefix bytes
-  if (opcode == 0xdd) {
-    // DD prefix (IX) is Z80-only, treat as NOP in 8080 mode
-    if (cpu_mode == MODE_8080) {
-      return;  // DD acts as single-byte NOP
-    }
-    has_dd_prefix = true;
-    opcode = pull_byte_from_opcode_stream();
-    if (opcode == 0xcb) {
-      has_cb_prefix = true;
-      index_offset = (qkz80_int8)pull_byte_from_opcode_stream();
-      opcode = pull_byte_from_opcode_stream();
-    }
-  } else if (opcode == 0xfd) {
-    // FD prefix (IY) is Z80-only, treat as NOP in 8080 mode
-    if (cpu_mode == MODE_8080) {
-      return;  // FD acts as single-byte NOP
-    }
-    has_fd_prefix = true;
-    opcode = pull_byte_from_opcode_stream();
-    if (opcode == 0xcb) {
-      has_cb_prefix = true;
-      index_offset = (qkz80_int8)pull_byte_from_opcode_stream();
-      opcode = pull_byte_from_opcode_stream();
-    }
-  } else if (opcode == 0xed) {
-    // ED prefix is Z80-only, treat as NOP NOP in 8080 mode
-    if (cpu_mode == MODE_8080) {
-      // In 8080, 0xED is just a 2-byte NOP (ED xx)
-      pull_byte_from_opcode_stream();  // consume next byte
-      return;
-    }
-    has_ed_prefix = true;
-    opcode = pull_byte_from_opcode_stream();
-  } else if (opcode == 0xcb) {
-    // CB prefix (bit operations) is Z80-only, treat as NOP NOP in 8080 mode
-    if (cpu_mode == MODE_8080) {
-      // In 8080, 0xCB is just a 2-byte NOP (CB xx)
-      pull_byte_from_opcode_stream();  // consume next byte
-      return;
-    }
-    has_cb_prefix = true;
-    opcode = pull_byte_from_opcode_stream();
-  }
+  while(true) {
 
-  // Select which register pair to use for HL operations (HL, IX, or IY)
-  qkz80_uint8 active_hl = has_dd_prefix ? regp_IX : (has_fd_prefix ? regp_IY : regp_HL);
+    qkz80_uint8 opcode(pull_byte_from_opcode_stream());
 
-  // Handle ED prefix instructions first (they're completely different)
-  if (has_ed_prefix) {
-    // Most ED opcodes are duplicates or NOPs
-    // We implement the documented and important undocumented ones
 
-    // 16-bit ADD/SUB with carry
-    if ((opcode & 0xcf) == 0x4a) { // ADC HL,ss
-      qkz80_uint8 rp = (opcode >> 4) & 0x03;
-      qkz80_big_uint hl_val = get_reg16(regp_HL);
-      qkz80_big_uint rp_val = get_reg16(rp);
-      qkz80_big_uint carry = fetch_carry_as_int();
-      qkz80_big_uint result = hl_val + rp_val + carry;
-      set_reg16(result, regp_HL);
-      // Z80: ADC HL is addition with carry, sets all flags
-      regs.set_flags_from_adc16(result, hl_val, rp_val, carry);
-      trace->asm_op("adc hl,%s", name_reg16(rp));
-      return;
-    }
-
-    if ((opcode & 0xcf) == 0x42) { // SBC HL,ss
-      qkz80_uint8 rp = (opcode >> 4) & 0x03;
-      qkz80_big_uint hl_val = get_reg16(regp_HL);
-      qkz80_big_uint rp_val = get_reg16(rp);
-      qkz80_big_uint carry = fetch_carry_as_int();
-      qkz80_big_uint result = hl_val - rp_val - carry;
-      set_reg16(result, regp_HL);
-      // Z80: SBC HL is subtraction with borrow, sets all flags
-      regs.set_flags_from_sbc16(result, hl_val, rp_val, carry);
-      trace->asm_op("sbc hl,%s", name_reg16(rp));
-      return;
-    }
-
-    // Extended LD instructions
-    if ((opcode & 0xcf) == 0x43) { // LD (nn),BC/DE/SP/HL
-      qkz80_uint8 rp = (opcode >> 4) & 0x03;
-      qkz80_uint16 addr = pull_word_from_opcode_stream();
-      qkz80_uint16 val = get_reg16(rp);
-      write_2_bytes(val, addr);
-      trace->asm_op("ld (0x%04x),%s", addr, name_reg16(rp));
-      return;
-    }
-
-    if ((opcode & 0xcf) == 0x4b) { // LD BC/DE/SP/HL,(nn)
-      qkz80_uint8 rp = (opcode >> 4) & 0x03;
-      qkz80_uint16 addr = pull_word_from_opcode_stream();
-      qkz80_uint16 val = read_word(addr);
-      set_reg16(val, rp);
-      trace->asm_op("ld %s,(0x%04x)", name_reg16(rp), addr);
-      return;
-    }
-
-    // NEG - negate accumulator
-    if ((opcode & 0xc7) == 0x44) {  // NEG (also duplicates at 4C,54,5C,64,6C,74,7C)
-      qkz80_uint8 a_val = get_reg8(reg_A);
-      qkz80_big_uint result = 0 - a_val;
-      regs.set_flags_from_diff8(result, 0, a_val, 0);
-      set_A(result);
-      trace->asm_op("neg");
-      return;
-    }
-
-    // Interrupt mode
-    if (opcode == 0x46 || opcode == 0x4e || opcode == 0x66 || opcode == 0x6e) { // IM 0
-      regs.IM = 0;
-      trace->asm_op("im 0");
-      return;
-    }
-    if (opcode == 0x56 || opcode == 0x76) { // IM 1
-      regs.IM = 1;
-      trace->asm_op("im 1");
-      return;
-    }
-    if (opcode == 0x5e || opcode == 0x7e) { // IM 2
-      regs.IM = 2;
-      trace->asm_op("im 2");
-      return;
-    }
-
-    // LD I,A / LD R,A / LD A,I / LD A,R
-    if (opcode == 0x47) { // LD I,A
-      regs.I = get_reg8(reg_A);
-      trace->asm_op("ld i,a");
-      return;
-    }
-    if (opcode == 0x4f) { // LD R,A
-      regs.R = get_reg8(reg_A);
-      trace->asm_op("ld r,a");
-      return;
-    }
-    if (opcode == 0x57) { // LD A,I
-      qkz80_uint8 val = regs.I;
-      set_A(val);
-      regs.set_flags_from_ld_a_ir(val);
-      trace->asm_op("ld a,i");
-      return;
-    }
-    if (opcode == 0x5f) { // LD A,R
-      qkz80_uint8 val = regs.R;
-      set_A(val);
-      regs.set_flags_from_ld_a_ir(val);
-      trace->asm_op("ld a,r");
-      return;
-    }
-
-    // RETI / RETN
-    if (opcode == 0x4d) { // RETI
-      qkz80_uint16 addr = pop_word();
-      regs.PC.set_pair16(addr);
-      trace->asm_op("reti");
-      return;
-    }
-    if ((opcode & 0xc7) == 0x45) { // RETN (also at 55,5D,65,6D,75,7D)
-      qkz80_uint16 addr = pop_word();
-      regs.PC.set_pair16(addr);
-      regs.IFF1 = regs.IFF2;  // Restore IFF1 from IFF2
-      trace->asm_op("retn");
-      return;
-    }
-
-    // RRD / RLD - decimal rotates
-    if (opcode == 0x67) { // RRD
-      qkz80_uint16 hl_addr = get_reg16(regp_HL);
-      qkz80_uint8 a_val = get_reg8(reg_A);
-      qkz80_uint8 mem_val = mem.fetch_mem(hl_addr);
-      qkz80_uint8 new_a = (a_val & 0xf0) | (mem_val & 0x0f);
-      qkz80_uint8 new_mem = (mem_val >> 4) | ((a_val & 0x0f) << 4);
-      set_A(new_a);
-      mem.store_mem(hl_addr, new_mem);
-      regs.set_flags_from_logic8(new_a, regs.get_carry_as_int(), 0);
-      trace->asm_op("rrd");
-      return;
-    }
-    if (opcode == 0x6f) { // RLD
-      qkz80_uint16 hl_addr = get_reg16(regp_HL);
-      qkz80_uint8 a_val = get_reg8(reg_A);
-      qkz80_uint8 mem_val = mem.fetch_mem(hl_addr);
-      qkz80_uint8 new_a = (a_val & 0xf0) | ((mem_val >> 4) & 0x0f);
-      qkz80_uint8 new_mem = (mem_val << 4) | (a_val & 0x0f);
-      set_A(new_a);
-      mem.store_mem(hl_addr, new_mem);
-      regs.set_flags_from_logic8(new_a, regs.get_carry_as_int(), 0);
-      trace->asm_op("rld");
-      return;
-    }
-
-    // Block load/compare/I/O instructions
-    if (opcode == 0xa0) { // LDI
-      qkz80_uint16 hl = get_reg16(regp_HL);
-      qkz80_uint16 de = get_reg16(regp_DE);
-      qkz80_uint16 bc = get_reg16(regp_BC);
-      qkz80_uint8 byte_val = mem.fetch_mem(hl);
-      mem.store_mem(de, byte_val);
-      set_reg16(hl + 1, regp_HL);
-      set_reg16(de + 1, regp_DE);
-      set_reg16(bc - 1, regp_BC);
-      regs.set_flags_from_block_ld(get_reg8(reg_A), byte_val, bc - 1);
-      trace->asm_op("ldi");
-      return;
-    }
-    if (opcode == 0xb0) { // LDIR
-      qkz80_uint16 hl = get_reg16(regp_HL);
-      qkz80_uint16 de = get_reg16(regp_DE);
-      qkz80_uint16 bc = get_reg16(regp_BC);
-      qkz80_uint8 byte_val = mem.fetch_mem(hl);
-      mem.store_mem(de, byte_val);
-      set_reg16(hl + 1, regp_HL);
-      set_reg16(de + 1, regp_DE);
-      set_reg16(bc - 1, regp_BC);
-      regs.set_flags_from_block_ld(get_reg8(reg_A), byte_val, bc - 1);
-      if (bc != 1) regs.PC.set_pair16(regs.PC.get_pair16() - 2);  // Repeat
-      trace->asm_op("ldir");
-      return;
-    }
-    if (opcode == 0xa8) { // LDD
-      qkz80_uint16 hl = get_reg16(regp_HL);
-      qkz80_uint16 de = get_reg16(regp_DE);
-      qkz80_uint16 bc = get_reg16(regp_BC);
-      qkz80_uint8 byte_val = mem.fetch_mem(hl);
-      mem.store_mem(de, byte_val);
-      set_reg16(hl - 1, regp_HL);
-      set_reg16(de - 1, regp_DE);
-      set_reg16(bc - 1, regp_BC);
-      regs.set_flags_from_block_ld(get_reg8(reg_A), byte_val, bc - 1);
-      trace->asm_op("ldd");
-      return;
-    }
-    if (opcode == 0xb8) { // LDDR
-      qkz80_uint16 hl = get_reg16(regp_HL);
-      qkz80_uint16 de = get_reg16(regp_DE);
-      qkz80_uint16 bc = get_reg16(regp_BC);
-      qkz80_uint8 byte_val = mem.fetch_mem(hl);
-      mem.store_mem(de, byte_val);
-      set_reg16(hl - 1, regp_HL);
-      set_reg16(de - 1, regp_DE);
-      set_reg16(bc - 1, regp_BC);
-      regs.set_flags_from_block_ld(get_reg8(reg_A), byte_val, bc - 1);
-      if (bc != 1) regs.PC.set_pair16(regs.PC.get_pair16() - 2);  // Repeat
-      trace->asm_op("lddr");
-      return;
-    }
-
-    if (opcode == 0xa1) { // CPI
-      qkz80_uint16 hl = get_reg16(regp_HL);
-      qkz80_uint16 bc = get_reg16(regp_BC);
-      qkz80_uint8 a_val = get_reg8(reg_A);
-      qkz80_uint8 mem_val = mem.fetch_mem(hl);
-      regs.set_flags_from_block_cp(a_val, mem_val, bc - 1);
-      set_reg16(hl + 1, regp_HL);
-      set_reg16(bc - 1, regp_BC);
-      trace->asm_op("cpi");
-      return;
-    }
-    if (opcode == 0xb1) { // CPIR
-      qkz80_uint16 hl = get_reg16(regp_HL);
-      qkz80_uint16 bc = get_reg16(regp_BC);
-      qkz80_uint8 a_val = get_reg8(reg_A);
-      qkz80_uint8 mem_val = mem.fetch_mem(hl);
-      qkz80_big_uint diff = a_val - mem_val;
-      regs.set_flags_from_block_cp(a_val, mem_val, bc - 1);
-      set_reg16(hl + 1, regp_HL);
-      set_reg16(bc - 1, regp_BC);
-      if (bc != 1 && diff != 0) regs.PC.set_pair16(regs.PC.get_pair16() - 2);  // Repeat if not found
-      trace->asm_op("cpir");
-      return;
-    }
-    if (opcode == 0xa9) { // CPD
-      qkz80_uint16 hl = get_reg16(regp_HL);
-      qkz80_uint16 bc = get_reg16(regp_BC);
-      qkz80_uint8 a_val = get_reg8(reg_A);
-      qkz80_uint8 mem_val = mem.fetch_mem(hl);
-      regs.set_flags_from_block_cp(a_val, mem_val, bc - 1);
-      set_reg16(hl - 1, regp_HL);
-      set_reg16(bc - 1, regp_BC);
-      trace->asm_op("cpd");
-      return;
-    }
-    if (opcode == 0xb9) { // CPDR
-      qkz80_uint16 hl = get_reg16(regp_HL);
-      qkz80_uint16 bc = get_reg16(regp_BC);
-      qkz80_uint8 a_val = get_reg8(reg_A);
-      qkz80_uint8 mem_val = mem.fetch_mem(hl);
-      qkz80_big_uint diff = a_val - mem_val;
-      regs.set_flags_from_block_cp(a_val, mem_val, bc - 1);
-      set_reg16(hl - 1, regp_HL);
-      set_reg16(bc - 1, regp_BC);
-      if (bc != 1 && diff != 0) regs.PC.set_pair16(regs.PC.get_pair16() - 2);  // Repeat if not found
-      trace->asm_op("cpdr");
-      return;
-    }
-
-    // Block I/O - simplified (real implementation would need I/O port system)
-    if (opcode == 0xa2 || opcode == 0xb2 || opcode == 0xaa || opcode == 0xba ||
-        opcode == 0xa3 || opcode == 0xb3 || opcode == 0xab || opcode == 0xbb) {
-      trace->asm_op("ED %02x (block I/O - not implemented)", opcode);
-      return;
-    }
-
-    // Many ED opcodes are just NOPs or duplicates
-    trace->asm_op("ED %02x (nop or duplicate)", opcode);
-    return;
-  }
-
-  // Handle CB prefix instructions (bit operations)
-  if (has_cb_prefix) {
-    qkz80_uint8 reg_sel = opcode & 0x07;  // Which register (B,C,D,E,H,L,(HL),A)
-    qkz80_uint16 addr = 0;
-    qkz80_uint8 val = 0;
-
-    // For DDCB/FDCB, address is already calculated
-    if (has_dd_prefix || has_fd_prefix) {
-      addr = get_reg16(active_hl) + index_offset;
-      val = mem.fetch_mem(addr);
-    } else if (reg_sel == reg_M) {
-      addr = get_reg16(regp_HL);
-      val = mem.fetch_mem(addr);
-    } else {
-      val = get_reg8(reg_sel);
-    }
-
-    qkz80_uint8 bit_num = (opcode >> 3) & 0x07;
-    qkz80_uint8 result = val;
-
-    // Decode CB instruction groups
-    if (opcode < 0x40) {
-      // Rotates and shifts (00-3F)
-      qkz80_uint8 op = (opcode >> 3) & 0x07;
-      switch(op) {
-        case 0: result = do_rlc(val); trace->asm_op("rlc %s", name_reg8(reg_sel)); break;
-        case 1: result = do_rrc(val); trace->asm_op("rrc %s", name_reg8(reg_sel)); break;
-        case 2: result = do_rl(val);  trace->asm_op("rl %s", name_reg8(reg_sel)); break;
-        case 3: result = do_rr(val);  trace->asm_op("rr %s", name_reg8(reg_sel)); break;
-        case 4: result = do_sla(val); trace->asm_op("sla %s", name_reg8(reg_sel)); break;
-        case 5: result = do_sra(val); trace->asm_op("sra %s", name_reg8(reg_sel)); break;
-        case 6: result = do_sll(val); trace->asm_op("sll %s", name_reg8(reg_sel)); break; // undocumented
-        case 7: result = do_srl(val); trace->asm_op("srl %s", name_reg8(reg_sel)); break;
+    // Process prefix bytes
+    if (opcode == 0xdd) {
+      // DD prefix (IX) is Z80-only, treat as NOP in 8080 mode
+      if (cpu_mode == MODE_8080) {
+        return;  // DD acts as single-byte NOP
       }
-      // Write result back
+      has_dd_prefix = true;
+      opcode = pull_byte_from_opcode_stream();
+      if (opcode == 0xcb) {
+        has_cb_prefix = true;
+        index_offset = (qkz80_int8)pull_byte_from_opcode_stream();
+        opcode = pull_byte_from_opcode_stream();
+      }
+    } else if (opcode == 0xfd) {
+      // FD prefix (IY) is Z80-only, treat as NOP in 8080 mode
+      if (cpu_mode == MODE_8080) {
+        return;  // FD acts as single-byte NOP
+      }
+      has_fd_prefix = true;
+      opcode = pull_byte_from_opcode_stream();
+      if (opcode == 0xcb) {
+        has_cb_prefix = true;
+        index_offset = (qkz80_int8)pull_byte_from_opcode_stream();
+        opcode = pull_byte_from_opcode_stream();
+      }
+    } else if (opcode == 0xed) {
+      // ED prefix is Z80-only, treat as NOP NOP in 8080 mode
+      if (cpu_mode == MODE_8080) {
+        // In 8080, 0xED is just a 2-byte NOP (ED xx)
+        pull_byte_from_opcode_stream();  // consume next byte
+        return;
+      }
+      has_ed_prefix = true;
+      opcode = pull_byte_from_opcode_stream();
+    } else if (opcode == 0xcb) {
+      // CB prefix (bit operations) is Z80-only, treat as NOP NOP in 8080 mode
+      if (cpu_mode == MODE_8080) {
+        // In 8080, 0xCB is just a 2-byte NOP (CB xx)
+        pull_byte_from_opcode_stream();  // consume next byte
+        return;
+      }
+      has_cb_prefix = true;
+      opcode = pull_byte_from_opcode_stream();
+    }
+
+    // Select which register pair to use for HL operations (HL, IX, or IY)
+    qkz80_uint8 active_hl = has_dd_prefix ? regp_IX : (has_fd_prefix ? regp_IY : regp_HL);
+
+    // Handle ED prefix instructions first (they're completely different)
+    if (has_ed_prefix) {
+      // Most ED opcodes are duplicates or NOPs
+      // We implement the documented and important undocumented ones
+
+      // 16-bit ADD/SUB with carry
+      if ((opcode & 0xcf) == 0x4a) { // ADC HL,ss
+        qkz80_uint8 rp = (opcode >> 4) & 0x03;
+        qkz80_big_uint hl_val = get_reg16(regp_HL);
+        qkz80_big_uint rp_val = get_reg16(rp);
+        qkz80_big_uint carry = fetch_carry_as_int();
+        qkz80_big_uint result = hl_val + rp_val + carry;
+        set_reg16(result, regp_HL);
+        // Z80: ADC HL is addition with carry, sets all flags
+        regs.set_flags_from_adc16(result, hl_val, rp_val, carry);
+        trace->asm_op("adc hl,%s", name_reg16(rp));
+        return;
+      }
+
+      if ((opcode & 0xcf) == 0x42) { // SBC HL,ss
+        qkz80_uint8 rp = (opcode >> 4) & 0x03;
+        qkz80_big_uint hl_val = get_reg16(regp_HL);
+        qkz80_big_uint rp_val = get_reg16(rp);
+        qkz80_big_uint carry = fetch_carry_as_int();
+        qkz80_big_uint result = hl_val - rp_val - carry;
+        set_reg16(result, regp_HL);
+        // Z80: SBC HL is subtraction with borrow, sets all flags
+        regs.set_flags_from_sbc16(result, hl_val, rp_val, carry);
+        trace->asm_op("sbc hl,%s", name_reg16(rp));
+        return;
+      }
+
+      // Extended LD instructions
+      if ((opcode & 0xcf) == 0x43) { // LD (nn),BC/DE/SP/HL
+        qkz80_uint8 rp = (opcode >> 4) & 0x03;
+        qkz80_uint16 addr = pull_word_from_opcode_stream();
+        qkz80_uint16 val = get_reg16(rp);
+        write_2_bytes(val, addr);
+        trace->asm_op("ld (0x%04x),%s", addr, name_reg16(rp));
+        return;
+      }
+
+      if ((opcode & 0xcf) == 0x4b) { // LD BC/DE/SP/HL,(nn)
+        qkz80_uint8 rp = (opcode >> 4) & 0x03;
+        qkz80_uint16 addr = pull_word_from_opcode_stream();
+        qkz80_uint16 val = read_word(addr);
+        set_reg16(val, rp);
+        trace->asm_op("ld %s,(0x%04x)", name_reg16(rp), addr);
+        return;
+      }
+
+      // NEG - negate accumulator
+      if ((opcode & 0xc7) == 0x44) {  // NEG (also duplicates at 4C,54,5C,64,6C,74,7C)
+        qkz80_uint8 a_val = get_reg8(reg_A);
+        qkz80_big_uint result = 0 - a_val;
+        regs.set_flags_from_diff8(result, 0, a_val, 0);
+        set_A(result);
+        trace->asm_op("neg");
+        return;
+      }
+
+      // Interrupt mode
+      if (opcode == 0x46 || opcode == 0x4e || opcode == 0x66 || opcode == 0x6e) { // IM 0
+        regs.IM = 0;
+        trace->asm_op("im 0");
+        return;
+      }
+      if (opcode == 0x56 || opcode == 0x76) { // IM 1
+        regs.IM = 1;
+        trace->asm_op("im 1");
+        return;
+      }
+      if (opcode == 0x5e || opcode == 0x7e) { // IM 2
+        regs.IM = 2;
+        trace->asm_op("im 2");
+        return;
+      }
+
+      // LD I,A / LD R,A / LD A,I / LD A,R
+      if (opcode == 0x47) { // LD I,A
+        regs.I = get_reg8(reg_A);
+        trace->asm_op("ld i,a");
+        return;
+      }
+      if (opcode == 0x4f) { // LD R,A
+        regs.R = get_reg8(reg_A);
+        trace->asm_op("ld r,a");
+        return;
+      }
+      if (opcode == 0x57) { // LD A,I
+        qkz80_uint8 val = regs.I;
+        set_A(val);
+        regs.set_flags_from_ld_a_ir(val);
+        trace->asm_op("ld a,i");
+        return;
+      }
+      if (opcode == 0x5f) { // LD A,R
+        qkz80_uint8 val = regs.R;
+        set_A(val);
+        regs.set_flags_from_ld_a_ir(val);
+        trace->asm_op("ld a,r");
+        return;
+      }
+
+      // RETI / RETN
+      if (opcode == 0x4d) { // RETI
+        qkz80_uint16 addr = pop_word();
+        regs.PC.set_pair16(addr);
+        trace->asm_op("reti");
+        return;
+      }
+      if ((opcode & 0xc7) == 0x45) { // RETN (also at 55,5D,65,6D,75,7D)
+        qkz80_uint16 addr = pop_word();
+        regs.PC.set_pair16(addr);
+        regs.IFF1 = regs.IFF2;  // Restore IFF1 from IFF2
+        trace->asm_op("retn");
+        return;
+      }
+
+      // RRD / RLD - decimal rotates
+      if (opcode == 0x67) { // RRD
+        qkz80_uint16 hl_addr = get_reg16(regp_HL);
+        qkz80_uint8 a_val = get_reg8(reg_A);
+        qkz80_uint8 mem_val = mem.fetch_mem(hl_addr);
+        qkz80_uint8 new_a = (a_val & 0xf0) | (mem_val & 0x0f);
+        qkz80_uint8 new_mem = (mem_val >> 4) | ((a_val & 0x0f) << 4);
+        set_A(new_a);
+        mem.store_mem(hl_addr, new_mem);
+        regs.set_flags_from_logic8(new_a, regs.get_carry_as_int(), 0);
+        trace->asm_op("rrd");
+        return;
+      }
+      if (opcode == 0x6f) { // RLD
+        qkz80_uint16 hl_addr = get_reg16(regp_HL);
+        qkz80_uint8 a_val = get_reg8(reg_A);
+        qkz80_uint8 mem_val = mem.fetch_mem(hl_addr);
+        qkz80_uint8 new_a = (a_val & 0xf0) | ((mem_val >> 4) & 0x0f);
+        qkz80_uint8 new_mem = (mem_val << 4) | (a_val & 0x0f);
+        set_A(new_a);
+        mem.store_mem(hl_addr, new_mem);
+        regs.set_flags_from_logic8(new_a, regs.get_carry_as_int(), 0);
+        trace->asm_op("rld");
+        return;
+      }
+
+      // Block load/compare/I/O instructions
+      if (opcode == 0xa0) { // LDI
+        qkz80_uint16 hl = get_reg16(regp_HL);
+        qkz80_uint16 de = get_reg16(regp_DE);
+        qkz80_uint16 bc = get_reg16(regp_BC);
+        qkz80_uint8 byte_val = mem.fetch_mem(hl);
+        mem.store_mem(de, byte_val);
+        set_reg16(hl + 1, regp_HL);
+        set_reg16(de + 1, regp_DE);
+        set_reg16(bc - 1, regp_BC);
+        regs.set_flags_from_block_ld(get_reg8(reg_A), byte_val, bc - 1);
+        trace->asm_op("ldi");
+        return;
+      }
+      if (opcode == 0xb0) { // LDIR
+        qkz80_uint16 hl = get_reg16(regp_HL);
+        qkz80_uint16 de = get_reg16(regp_DE);
+        qkz80_uint16 bc = get_reg16(regp_BC);
+        qkz80_uint8 byte_val = mem.fetch_mem(hl);
+        mem.store_mem(de, byte_val);
+        set_reg16(hl + 1, regp_HL);
+        set_reg16(de + 1, regp_DE);
+        set_reg16(bc - 1, regp_BC);
+        regs.set_flags_from_block_ld(get_reg8(reg_A), byte_val, bc - 1);
+        if (bc != 1) regs.PC.set_pair16(regs.PC.get_pair16() - 2);  // Repeat
+        trace->asm_op("ldir");
+        return;
+      }
+      if (opcode == 0xa8) { // LDD
+        qkz80_uint16 hl = get_reg16(regp_HL);
+        qkz80_uint16 de = get_reg16(regp_DE);
+        qkz80_uint16 bc = get_reg16(regp_BC);
+        qkz80_uint8 byte_val = mem.fetch_mem(hl);
+        mem.store_mem(de, byte_val);
+        set_reg16(hl - 1, regp_HL);
+        set_reg16(de - 1, regp_DE);
+        set_reg16(bc - 1, regp_BC);
+        regs.set_flags_from_block_ld(get_reg8(reg_A), byte_val, bc - 1);
+        trace->asm_op("ldd");
+        return;
+      }
+      if (opcode == 0xb8) { // LDDR
+        qkz80_uint16 hl = get_reg16(regp_HL);
+        qkz80_uint16 de = get_reg16(regp_DE);
+        qkz80_uint16 bc = get_reg16(regp_BC);
+        qkz80_uint8 byte_val = mem.fetch_mem(hl);
+        mem.store_mem(de, byte_val);
+        set_reg16(hl - 1, regp_HL);
+        set_reg16(de - 1, regp_DE);
+        set_reg16(bc - 1, regp_BC);
+        regs.set_flags_from_block_ld(get_reg8(reg_A), byte_val, bc - 1);
+        if (bc != 1) regs.PC.set_pair16(regs.PC.get_pair16() - 2);  // Repeat
+        trace->asm_op("lddr");
+        return;
+      }
+
+      if (opcode == 0xa1) { // CPI
+        qkz80_uint16 hl = get_reg16(regp_HL);
+        qkz80_uint16 bc = get_reg16(regp_BC);
+        qkz80_uint8 a_val = get_reg8(reg_A);
+        qkz80_uint8 mem_val = mem.fetch_mem(hl);
+        regs.set_flags_from_block_cp(a_val, mem_val, bc - 1);
+        set_reg16(hl + 1, regp_HL);
+        set_reg16(bc - 1, regp_BC);
+        trace->asm_op("cpi");
+        return;
+      }
+      if (opcode == 0xb1) { // CPIR
+        qkz80_uint16 hl = get_reg16(regp_HL);
+        qkz80_uint16 bc = get_reg16(regp_BC);
+        qkz80_uint8 a_val = get_reg8(reg_A);
+        qkz80_uint8 mem_val = mem.fetch_mem(hl);
+        qkz80_big_uint diff = a_val - mem_val;
+        regs.set_flags_from_block_cp(a_val, mem_val, bc - 1);
+        set_reg16(hl + 1, regp_HL);
+        set_reg16(bc - 1, regp_BC);
+        if (bc != 1 && diff != 0) regs.PC.set_pair16(regs.PC.get_pair16() - 2);  // Repeat if not found
+        trace->asm_op("cpir");
+        return;
+      }
+      if (opcode == 0xa9) { // CPD
+        qkz80_uint16 hl = get_reg16(regp_HL);
+        qkz80_uint16 bc = get_reg16(regp_BC);
+        qkz80_uint8 a_val = get_reg8(reg_A);
+        qkz80_uint8 mem_val = mem.fetch_mem(hl);
+        regs.set_flags_from_block_cp(a_val, mem_val, bc - 1);
+        set_reg16(hl - 1, regp_HL);
+        set_reg16(bc - 1, regp_BC);
+        trace->asm_op("cpd");
+        return;
+      }
+      if (opcode == 0xb9) { // CPDR
+        qkz80_uint16 hl = get_reg16(regp_HL);
+        qkz80_uint16 bc = get_reg16(regp_BC);
+        qkz80_uint8 a_val = get_reg8(reg_A);
+        qkz80_uint8 mem_val = mem.fetch_mem(hl);
+        qkz80_big_uint diff = a_val - mem_val;
+        regs.set_flags_from_block_cp(a_val, mem_val, bc - 1);
+        set_reg16(hl - 1, regp_HL);
+        set_reg16(bc - 1, regp_BC);
+        if (bc != 1 && diff != 0) regs.PC.set_pair16(regs.PC.get_pair16() - 2);  // Repeat if not found
+        trace->asm_op("cpdr");
+        return;
+      }
+
+      // Block I/O - simplified (real implementation would need I/O port system)
+      if (opcode == 0xa2 || opcode == 0xb2 || opcode == 0xaa || opcode == 0xba ||
+          opcode == 0xa3 || opcode == 0xb3 || opcode == 0xab || opcode == 0xbb) {
+        trace->asm_op("ED %02x (block I/O - not implemented)", opcode);
+        return;
+      }
+
+      // Many ED opcodes are just NOPs or duplicates
+      trace->asm_op("ED %02x (nop or duplicate)", opcode);
+      return;
+    }
+
+    // Handle CB prefix instructions (bit operations)
+    if (has_cb_prefix) {
+      qkz80_uint8 reg_sel = opcode & 0x07;  // Which register (B,C,D,E,H,L,(HL),A)
+      qkz80_uint16 addr = 0;
+      qkz80_uint8 val = 0;
+
+      // For DDCB/FDCB, address is already calculated
       if (has_dd_prefix || has_fd_prefix) {
-        mem.store_mem(addr, result);
-        // DDCB/FDCB undocumented: also store in register
-        if (reg_sel != reg_M) set_reg8(result, reg_sel);
+        addr = get_reg16(active_hl) + index_offset;
+        val = mem.fetch_mem(addr);
       } else if (reg_sel == reg_M) {
-        mem.store_mem(addr, result);
+        addr = get_reg16(regp_HL);
+        val = mem.fetch_mem(addr);
       } else {
-        set_reg8(result, reg_sel);
+        val = get_reg8(reg_sel);
       }
-    } else if (opcode < 0x80) {
-      // BIT b,r (40-7F) - test bit
-      qkz80_uint8 bit_mask = 1 << bit_num;
-      qkz80_uint8 bit_val = (val & bit_mask) ? 0 : 1;  // Z flag set if bit is 0
-      qkz80_uint8 flags = regs.get_flags();
-      flags = (flags & qkz80_cpu_flags::CY) | qkz80_cpu_flags::H;  // Keep carry, set H, clear N
-      if (bit_val) flags |= qkz80_cpu_flags::Z | qkz80_cpu_flags::P;  // Set Z and P/V if bit is 0
-      if ((val & 0x80) && bit_num == 7) flags |= qkz80_cpu_flags::S;  // Set S if bit 7 is set
 
-      // X and Y flags (Z80 only) - undocumented behavior
-      // Source depends on addressing mode:
-      if (regs.cpu_mode == qkz80_reg_set::MODE_Z80) {
-        qkz80_uint8 xy_source;
-        if (has_dd_prefix || has_fd_prefix) {
-          // BIT n,(IX+d) or BIT n,(IY+d): Use high byte of effective address
-          xy_source = (addr >> 8) & 0xFF;
-        } else if (reg_sel == reg_M) {
-          // BIT n,(HL): Use H register (high byte of HL)
-          xy_source = get_reg8(reg_H);
-        } else {
-          // BIT n,r: Use the register value
-          xy_source = val;
+      qkz80_uint8 bit_num = (opcode >> 3) & 0x07;
+      qkz80_uint8 result = val;
+
+      // Decode CB instruction groups
+      if (opcode < 0x40) {
+        // Rotates and shifts (00-3F)
+        qkz80_uint8 op = (opcode >> 3) & 0x07;
+        switch(op) {
+        case 0:
+          result = do_rlc(val);
+          trace->asm_op("rlc %s", name_reg8(reg_sel));
+          break;
+        case 1:
+          result = do_rrc(val);
+          trace->asm_op("rrc %s", name_reg8(reg_sel));
+          break;
+        case 2:
+          result = do_rl(val);
+          trace->asm_op("rl %s", name_reg8(reg_sel));
+          break;
+        case 3:
+          result = do_rr(val);
+          trace->asm_op("rr %s", name_reg8(reg_sel));
+          break;
+        case 4:
+          result = do_sla(val);
+          trace->asm_op("sla %s", name_reg8(reg_sel));
+          break;
+        case 5:
+          result = do_sra(val);
+          trace->asm_op("sra %s", name_reg8(reg_sel));
+          break;
+        case 6:
+          result = do_sll(val);
+          trace->asm_op("sll %s", name_reg8(reg_sel));
+          break; // undocumented
+        case 7:
+          result = do_srl(val);
+          trace->asm_op("srl %s", name_reg8(reg_sel));
+          break;
         }
-        if (xy_source & 0x08) flags |= qkz80_cpu_flags::X;
-        if (xy_source & 0x20) flags |= qkz80_cpu_flags::Y;
-      }
+        // Write result back
+        if (has_dd_prefix || has_fd_prefix) {
+          mem.store_mem(addr, result);
+          // DDCB/FDCB undocumented: also store in register
+          if (reg_sel != reg_M) set_reg8(result, reg_sel);
+        } else if (reg_sel == reg_M) {
+          mem.store_mem(addr, result);
+        } else {
+          set_reg8(result, reg_sel);
+        }
+      } else if (opcode < 0x80) {
+        // BIT b,r (40-7F) - test bit
+        qkz80_uint8 bit_mask = 1 << bit_num;
+        qkz80_uint8 bit_val = (val & bit_mask) ? 0 : 1;  // Z flag set if bit is 0
+        qkz80_uint8 flags = regs.get_flags();
+        flags = (flags & qkz80_cpu_flags::CY) | qkz80_cpu_flags::H;  // Keep carry, set H, clear N
+        if (bit_val) flags |= qkz80_cpu_flags::Z | qkz80_cpu_flags::P;  // Set Z and P/V if bit is 0
+        if ((val & 0x80) && bit_num == 7) flags |= qkz80_cpu_flags::S;  // Set S if bit 7 is set
 
-      regs.set_flags(flags);
-      trace->asm_op("bit %d,%s", bit_num, name_reg8(reg_sel));
-    } else if (opcode < 0xC0) {
-      // RES b,r (80-BF) - reset bit
-      qkz80_uint8 bit_mask = ~(1 << bit_num);
-      result = val & bit_mask;
-      if (has_dd_prefix || has_fd_prefix) {
-        mem.store_mem(addr, result);
-        if (reg_sel != reg_M) set_reg8(result, reg_sel);  // undocumented
-      } else if (reg_sel == reg_M) {
-        mem.store_mem(addr, result);
+        // X and Y flags (Z80 only) - undocumented behavior
+        // Source depends on addressing mode:
+        if (regs.cpu_mode == qkz80_reg_set::MODE_Z80) {
+          qkz80_uint8 xy_source;
+          if (has_dd_prefix || has_fd_prefix) {
+            // BIT n,(IX+d) or BIT n,(IY+d): Use high byte of effective address
+            xy_source = (addr >> 8) & 0xFF;
+          } else if (reg_sel == reg_M) {
+            // BIT n,(HL): Use H register (high byte of HL)
+            xy_source = get_reg8(reg_H);
+          } else {
+            // BIT n,r: Use the register value
+            xy_source = val;
+          }
+          if (xy_source & 0x08) flags |= qkz80_cpu_flags::X;
+          if (xy_source & 0x20) flags |= qkz80_cpu_flags::Y;
+        }
+
+        regs.set_flags(flags);
+        trace->asm_op("bit %d,%s", bit_num, name_reg8(reg_sel));
+      } else if (opcode < 0xC0) {
+        // RES b,r (80-BF) - reset bit
+        qkz80_uint8 bit_mask = ~(1 << bit_num);
+        result = val & bit_mask;
+        if (has_dd_prefix || has_fd_prefix) {
+          mem.store_mem(addr, result);
+          if (reg_sel != reg_M) set_reg8(result, reg_sel);  // undocumented
+        } else if (reg_sel == reg_M) {
+          mem.store_mem(addr, result);
+        } else {
+          set_reg8(result, reg_sel);
+        }
+        trace->asm_op("res %d,%s", bit_num, name_reg8(reg_sel));
       } else {
-        set_reg8(result, reg_sel);
+        // SET b,r (C0-FF) - set bit
+        qkz80_uint8 bit_mask = 1 << bit_num;
+        result = val | bit_mask;
+        if (has_dd_prefix || has_fd_prefix) {
+          mem.store_mem(addr, result);
+          if (reg_sel != reg_M) set_reg8(result, reg_sel);  // undocumented
+        } else if (reg_sel == reg_M) {
+          mem.store_mem(addr, result);
+        } else {
+          set_reg8(result, reg_sel);
+        }
+        trace->asm_op("set %d,%s", bit_num, name_reg8(reg_sel));
       }
-      trace->asm_op("res %d,%s", bit_num, name_reg8(reg_sel));
-    } else {
-      // SET b,r (C0-FF) - set bit
-      qkz80_uint8 bit_mask = 1 << bit_num;
-      result = val | bit_mask;
-      if (has_dd_prefix || has_fd_prefix) {
-        mem.store_mem(addr, result);
-        if (reg_sel != reg_M) set_reg8(result, reg_sel);  // undocumented
-      } else if (reg_sel == reg_M) {
-        mem.store_mem(addr, result);
+      return;
+    }
+
+    // Z80-specific instructions (not 8080)
+    if (opcode == 0x08) { // EX AF,AF'
+      if (cpu_mode == MODE_8080)
+        return;
+      qkz80_uint16 af = regs.AF.get_pair16();
+      qkz80_uint16 af_prime = regs.AF_.get_pair16();
+      regs.AF.set_pair16(af_prime);
+      regs.AF_.set_pair16(af);
+      trace->asm_op("ex af,af'");
+      return;
+    }
+
+    if (opcode == 0x10) { // DJNZ - Decrement B and Jump if Not Zero
+      if (cpu_mode == MODE_8080)
+        return;
+      qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+      qkz80_uint8 b_val = get_reg8(reg_B);
+      b_val--;
+      set_reg8(b_val, reg_B);
+      if (b_val != 0) {
+        qkz80_uint16 pc = regs.PC.get_pair16();
+        regs.PC.set_pair16(pc + offset);
+        trace->asm_op("djnz $%+d", offset);
+        trace->comment("taken, B=%02x", b_val);
       } else {
-        set_reg8(result, reg_sel);
+        trace->asm_op("djnz $%+d", offset);
+        trace->comment("not taken, B=0");
       }
-      trace->asm_op("set %d,%s", bit_num, name_reg8(reg_sel));
+      return;
     }
-    return;
-  }
 
-  // Z80-specific instructions (not 8080)
-  if (opcode == 0x08) { // EX AF,AF'
-    if (cpu_mode == MODE_8080)
-      return;
-    qkz80_uint16 af = regs.AF.get_pair16();
-    qkz80_uint16 af_prime = regs.AF_.get_pair16();
-    regs.AF.set_pair16(af_prime);
-    regs.AF_.set_pair16(af);
-    trace->asm_op("ex af,af'");
-    return;
-  }
-
-  if (opcode == 0x10) { // DJNZ - Decrement B and Jump if Not Zero
-    if (cpu_mode == MODE_8080)
-      return;
-    qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
-    qkz80_uint8 b_val = get_reg8(reg_B);
-    b_val--;
-    set_reg8(b_val, reg_B);
-    if (b_val != 0) {
+    if (opcode == 0x18) { // JR - Unconditional relative jump
+      if (cpu_mode == MODE_8080)
+        return;
+      qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
       qkz80_uint16 pc = regs.PC.get_pair16();
       regs.PC.set_pair16(pc + offset);
-      trace->asm_op("djnz $%+d", offset);
-      trace->comment("taken, B=%02x", b_val);
-    } else {
-      trace->asm_op("djnz $%+d", offset);
-      trace->comment("not taken, B=0");
-    }
-    return;
-  }
-
-  if (opcode == 0x18) { // JR - Unconditional relative jump
-    if (cpu_mode == MODE_8080)
+      trace->asm_op("jr $%+d", offset);
       return;
-    qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
-    qkz80_uint16 pc = regs.PC.get_pair16();
-    regs.PC.set_pair16(pc + offset);
-    trace->asm_op("jr $%+d", offset);
-    return;
-  }
-
-  if (opcode == 0x20) { // JR NZ
-    if (cpu_mode == MODE_8080)
-      return;
-    qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
-    if (!regs.condition_code(1, regs.get_flags())) { // NZ condition (code 0 for NZ is inverted to 1 for Z check)
-      qkz80_uint16 pc = regs.PC.get_pair16();
-      regs.PC.set_pair16(pc + offset);
-      trace->asm_op("jr nz,$%+d", offset);
-      trace->comment("taken");
-    } else {
-      trace->asm_op("jr nz,$%+d", offset);
-      trace->comment("not taken");
     }
-    return;
-  }
 
-  if (opcode == 0x28) { // JR Z
-    if (cpu_mode == MODE_8080)
+    if (opcode == 0x20) { // JR NZ
+      if (cpu_mode == MODE_8080)
+        return;
+      qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+      if (!regs.condition_code(1, regs.get_flags())) { // NZ condition (code 0 for NZ is inverted to 1 for Z check)
+        qkz80_uint16 pc = regs.PC.get_pair16();
+        regs.PC.set_pair16(pc + offset);
+        trace->asm_op("jr nz,$%+d", offset);
+        trace->comment("taken");
+      } else {
+        trace->asm_op("jr nz,$%+d", offset);
+        trace->comment("not taken");
+      }
       return;
-    qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
-    if (regs.condition_code(1, regs.get_flags())) { // Z condition
-      qkz80_uint16 pc = regs.PC.get_pair16();
-      regs.PC.set_pair16(pc + offset);
-      trace->asm_op("jr z,$%+d", offset);
-      trace->comment("taken");
-    } else {
-      trace->asm_op("jr z,$%+d", offset);
-      trace->comment("not taken");
     }
-    return;
-  }
 
-  if (opcode == 0x30) { // JR NC
-    if (cpu_mode == MODE_8080)
+    if (opcode == 0x28) { // JR Z
+      if (cpu_mode == MODE_8080)
+        return;
+      qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+      if (regs.condition_code(1, regs.get_flags())) { // Z condition
+        qkz80_uint16 pc = regs.PC.get_pair16();
+        regs.PC.set_pair16(pc + offset);
+        trace->asm_op("jr z,$%+d", offset);
+        trace->comment("taken");
+      } else {
+        trace->asm_op("jr z,$%+d", offset);
+        trace->comment("not taken");
+      }
       return;
-    qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
-    if (!regs.condition_code(3, regs.get_flags())) { // NC condition (code 2 for NC is inverted to 3 for C check)
-      qkz80_uint16 pc = regs.PC.get_pair16();
-      regs.PC.set_pair16(pc + offset);
-      trace->asm_op("jr nc,$%+d", offset);
-      trace->comment("taken");
-    } else {
-      trace->asm_op("jr nc,$%+d", offset);
-      trace->comment("not taken");
     }
-    return;
-  }
 
-  if (opcode == 0x38) { // JR C
-    if (cpu_mode == MODE_8080)
+    if (opcode == 0x30) { // JR NC
+      if (cpu_mode == MODE_8080)
+        return;
+      qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+      if (!regs.condition_code(3, regs.get_flags())) { // NC condition (code 2 for NC is inverted to 3 for C check)
+        qkz80_uint16 pc = regs.PC.get_pair16();
+        regs.PC.set_pair16(pc + offset);
+        trace->asm_op("jr nc,$%+d", offset);
+        trace->comment("taken");
+      } else {
+        trace->asm_op("jr nc,$%+d", offset);
+        trace->comment("not taken");
+      }
       return;
-    qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
-    if (regs.condition_code(3, regs.get_flags())) { // C condition
-      qkz80_uint16 pc = regs.PC.get_pair16();
-      regs.PC.set_pair16(pc + offset);
-      trace->asm_op("jr c,$%+d", offset);
-      trace->comment("taken");
-    } else {
-      trace->asm_op("jr c,$%+d", offset);
-      trace->comment("not taken");
     }
-    return;
-  }
 
-  if (opcode == 0xd9) { // EXX - exchange BC,DE,HL with alternates
-    qkz80_uint16 bc = regs.BC.get_pair16();
-    qkz80_uint16 de = regs.DE.get_pair16();
-    qkz80_uint16 hl = regs.HL.get_pair16();
-    regs.BC.set_pair16(regs.BC_.get_pair16());
-    regs.DE.set_pair16(regs.DE_.get_pair16());
-    regs.HL.set_pair16(regs.HL_.get_pair16());
-    regs.BC_.set_pair16(bc);
-    regs.DE_.set_pair16(de);
-    regs.HL_.set_pair16(hl);
-    trace->asm_op("exx");
-    return;
-  }
+    if (opcode == 0x38) { // JR C
+      if (cpu_mode == MODE_8080)
+        return;
+      qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+      if (regs.condition_code(3, regs.get_flags())) { // C condition
+        qkz80_uint16 pc = regs.PC.get_pair16();
+        regs.PC.set_pair16(pc + offset);
+        trace->asm_op("jr c,$%+d", offset);
+        trace->comment("taken");
+      } else {
+        trace->asm_op("jr c,$%+d", offset);
+        trace->comment("not taken");
+      }
+      return;
+    }
 
-  // DD/FD prefix handling notes:
-  // Most HL instructions will use active_hl which is set above based on prefix
-  // The actual instruction handlers below will check has_dd_prefix/has_fd_prefix for trace messages
+    if (opcode == 0xd9) { // EXX - exchange BC,DE,HL with alternates
+      qkz80_uint16 bc = regs.BC.get_pair16();
+      qkz80_uint16 de = regs.DE.get_pair16();
+      qkz80_uint16 hl = regs.HL.get_pair16();
+      regs.BC.set_pair16(regs.BC_.get_pair16());
+      regs.DE.set_pair16(regs.DE_.get_pair16());
+      regs.HL.set_pair16(regs.HL_.get_pair16());
+      regs.BC_.set_pair16(bc);
+      regs.DE_.set_pair16(de);
+      regs.HL_.set_pair16(hl);
+      trace->asm_op("exx");
+      return;
+    }
 
-  // halt opcoded is coded as mov m,m
-  // so check for hlt before mov
-  if (opcode == 0x76) { // HLT
-    halt();
-  }
+    // DD/FD prefix handling notes:
+    // Most HL instructions will use active_hl which is set above based on prefix
+    // The actual instruction handlers below will check has_dd_prefix/has_fd_prefix for trace messages
 
- if (opcode == 0xcd) { // CALL
-    qkz80_uint16 addr(pull_word_from_opcode_stream());
-    const qkz80_uint16 pc=regs.PC.get_pair16();
-    push_word(pc);
-    regs.PC.set_pair16(addr);
-    trace->asm_op("call %0x",addr);
-    return;
- }
+    // halt opcoded is coded as mov m,m
+    // so check for hlt before mov
+    if (opcode == 0x76) { // HLT
+      halt();
+    }
 
- if ((opcode & 0xc7) == 0xc4) { // Cccc conditional call
-    qkz80_uint16 addr(pull_word_from_opcode_stream());
-    qkz80_uint8 cc_active((opcode >> 3) & 0x7);
-    trace->asm_op("c%s 0x%x",name_condition_code(cc_active),addr);
-    if(regs.condition_code(cc_active,regs.get_flags())) {
+    if (opcode == 0xcd) { // CALL
+      qkz80_uint16 addr(pull_word_from_opcode_stream());
       const qkz80_uint16 pc=regs.PC.get_pair16();
       push_word(pc);
       regs.PC.set_pair16(addr);
-      trace->comment("conditional call taken");
-    } else {
-      trace->comment("conditional call not taken");
+      trace->asm_op("call %0x",addr);
+      return;
     }
-    return;
- }
 
-  if (opcode == 0x2a) { // LHLD (LD HL/IX/IY,(nn))
-    qkz80_uint16 addr(pull_word_from_opcode_stream());
-    qkz80_uint16 pair_val(read_word(addr));
-    set_reg16(pair_val,active_hl);
-    if (has_dd_prefix) trace->asm_op("ld ix,(0x%0x)",addr);
-    else if (has_fd_prefix) trace->asm_op("ld iy,(0x%0x)",addr);
-    else trace->asm_op("lhld 0x%0x",addr);
-    return;
-  }
-
-  if ((opcode & 0xcf) == 0x01) { // LXI
-    qkz80_uint16 addr(pull_word_from_opcode_stream());
-    qkz80_uint8 rpair = ((opcode >> 4) & 0x03);
-    // If DD/FD prefix and register pair is HL (2), use IX/IY instead
-    if ((has_dd_prefix || has_fd_prefix) && rpair == regp_HL) {
-      rpair = active_hl;
-    }
-    set_reg16(addr,rpair);
-    trace->asm_op("lxi %s,0x%0x",name_reg16(rpair),addr);
-    trace->add_reg16(rpair);
-    return;
-  }
-
-  if ((opcode & 0xc0) == 0x40) { // MOV
-    qkz80_uint8 src(opcode & 0x07);
-    qkz80_uint8 dst((opcode >> 3) & 0x07);
-
-    // Special handling for indexed memory operations (IX+d) or (IY+d)
-    if ((has_dd_prefix || has_fd_prefix) && (src == reg_M || dst == reg_M)) {
-      qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
-      qkz80_uint16 addr = get_reg16(active_hl) + offset;
-
-      if (src == reg_M && dst == reg_M) {
-        // LD (IX+d),(IX+d) is illegal - shouldn't happen
-        qkz80_global_fatal("illegal MOV (IX+d),(IX+d)");
-      } else if (src == reg_M) {
-        // LD r,(IX+d) or LD r,(IY+d)
-        qkz80_uint8 dat = mem.fetch_mem(addr);
-        set_reg8(dat, dst);
-        if (has_dd_prefix)
-          trace->asm_op("ld %s,(ix%+d)", name_reg8(dst), offset);
-        else
-          trace->asm_op("ld %s,(iy%+d)", name_reg8(dst), offset);
+    if ((opcode & 0xc7) == 0xc4) { // Cccc conditional call
+      qkz80_uint16 addr(pull_word_from_opcode_stream());
+      qkz80_uint8 cc_active((opcode >> 3) & 0x7);
+      trace->asm_op("c%s 0x%x",name_condition_code(cc_active),addr);
+      if(regs.condition_code(cc_active,regs.get_flags())) {
+        const qkz80_uint16 pc=regs.PC.get_pair16();
+        push_word(pc);
+        regs.PC.set_pair16(addr);
+        trace->comment("conditional call taken");
       } else {
-        // LD (IX+d),r or LD (IY+d),r
-        qkz80_uint8 dat = get_reg8(src);
+        trace->comment("conditional call not taken");
+      }
+      return;
+    }
+
+    if (opcode == 0x2a) { // LHLD (LD HL/IX/IY,(nn))
+      qkz80_uint16 addr(pull_word_from_opcode_stream());
+      qkz80_uint16 pair_val(read_word(addr));
+      set_reg16(pair_val,active_hl);
+      if (has_dd_prefix) trace->asm_op("ld ix,(0x%0x)",addr);
+      else if (has_fd_prefix) trace->asm_op("ld iy,(0x%0x)",addr);
+      else trace->asm_op("lhld 0x%0x",addr);
+      return;
+    }
+
+    if ((opcode & 0xcf) == 0x01) { // LXI
+      qkz80_uint16 addr(pull_word_from_opcode_stream());
+      qkz80_uint8 rpair = ((opcode >> 4) & 0x03);
+      // If DD/FD prefix and register pair is HL (2), use IX/IY instead
+      if ((has_dd_prefix || has_fd_prefix) && rpair == regp_HL) {
+        rpair = active_hl;
+      }
+      set_reg16(addr,rpair);
+      trace->asm_op("lxi %s,0x%0x",name_reg16(rpair),addr);
+      trace->add_reg16(rpair);
+      return;
+    }
+
+    if ((opcode & 0xc0) == 0x40) { // MOV
+      qkz80_uint8 src(opcode & 0x07);
+      qkz80_uint8 dst((opcode >> 3) & 0x07);
+
+      // Special handling for indexed memory operations (IX+d) or (IY+d)
+      if ((has_dd_prefix || has_fd_prefix) && (src == reg_M || dst == reg_M)) {
+        qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+        qkz80_uint16 addr = get_reg16(active_hl) + offset;
+
+        if (src == reg_M && dst == reg_M) {
+          // LD (IX+d),(IX+d) is illegal - shouldn't happen
+          qkz80_global_fatal("illegal MOV (IX+d),(IX+d)");
+        } else if (src == reg_M) {
+          // LD r,(IX+d) or LD r,(IY+d)
+          qkz80_uint8 dat = mem.fetch_mem(addr);
+          set_reg8(dat, dst);
+          if (has_dd_prefix)
+            trace->asm_op("ld %s,(ix%+d)", name_reg8(dst), offset);
+          else
+            trace->asm_op("ld %s,(iy%+d)", name_reg8(dst), offset);
+        } else {
+          // LD (IX+d),r or LD (IY+d),r
+          qkz80_uint8 dat = get_reg8(src);
+          mem.store_mem(addr, dat);
+          if (has_dd_prefix)
+            trace->asm_op("ld (ix%+d),%s", offset, name_reg8(src));
+          else
+            trace->asm_op("ld (iy%+d),%s", offset, name_reg8(src));
+        }
+        return;
+      }
+
+      // Special handling for IXH, IXL, IYH, IYL (undocumented Z80 instructions)
+      if ((has_dd_prefix || has_fd_prefix) && (src == reg_H || src == reg_L || dst == reg_H || dst == reg_L)) {
+        qkz80_uint8 dat;
+
+        // Get source value
+        if (src == reg_H) {
+          dat = has_dd_prefix ? regs.IX.get_high() : regs.IY.get_high();
+        } else if (src == reg_L) {
+          dat = has_dd_prefix ? regs.IX.get_low() : regs.IY.get_low();
+        } else {
+          dat = get_reg8(src);
+        }
+
+        // Set destination value
+        if (dst == reg_H) {
+          if (has_dd_prefix) {
+            regs.IX.set_high(dat);
+            trace->asm_op("ld ixh,%s", src == reg_H ? "ixh" : (src == reg_L ? "ixl" : name_reg8(src)));
+          } else {
+            regs.IY.set_high(dat);
+            trace->asm_op("ld iyh,%s", src == reg_H ? "iyh" : (src == reg_L ? "iyl" : name_reg8(src)));
+          }
+        } else if (dst == reg_L) {
+          if (has_dd_prefix) {
+            regs.IX.set_low(dat);
+            trace->asm_op("ld ixl,%s", src == reg_H ? "ixh" : (src == reg_L ? "ixl" : name_reg8(src)));
+          } else {
+            regs.IY.set_low(dat);
+            trace->asm_op("ld iyl,%s", src == reg_H ? "iyh" : (src == reg_L ? "iyl" : name_reg8(src)));
+          }
+        } else {
+          set_reg8(dat, dst);
+          if (src == reg_H) {
+            trace->asm_op("ld %s,%s", name_reg8(dst), has_dd_prefix ? "ixh" : "iyh");
+          } else {
+            trace->asm_op("ld %s,%s", name_reg8(dst), has_dd_prefix ? "ixl" : "iyl");
+          }
+        }
+        return;
+      }
+
+      qkz80_uint8 dat(get_reg8(src));
+      set_reg8(dat,dst);
+      trace->asm_op("mov %s,%s",name_reg8(dst),name_reg8(src));
+      trace->add_reg8(src);
+      return;
+    }
+
+    if ((opcode & 0xc7) == 0x06) { // MVI
+      qkz80_uint8 dst((opcode >> 3) & 0x07);
+
+      // Special handling for LD (IX+d),n and LD (IY+d),n
+      if ((has_dd_prefix || has_fd_prefix) && dst == reg_M) {
+        qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+        qkz80_uint8 dat = pull_byte_from_opcode_stream();
+        qkz80_uint16 addr = get_reg16(active_hl) + offset;
         mem.store_mem(addr, dat);
         if (has_dd_prefix)
-          trace->asm_op("ld (ix%+d),%s", offset, name_reg8(src));
+          trace->asm_op("ld (ix%+d),0x%02x", offset, dat);
         else
-          trace->asm_op("ld (iy%+d),%s", offset, name_reg8(src));
+          trace->asm_op("ld (iy%+d),0x%02x", offset, dat);
+        return;
       }
+
+      // Special handling for IXH, IXL, IYH, IYL (undocumented Z80 instructions)
+      if ((has_dd_prefix || has_fd_prefix) && (dst == reg_H || dst == reg_L)) {
+        qkz80_uint8 dat = pull_byte_from_opcode_stream();
+        if (dst == reg_H) {
+          if (has_dd_prefix) {
+            regs.IX.set_high(dat);
+            trace->asm_op("ld ixh,0x%02x", dat);
+          } else {
+            regs.IY.set_high(dat);
+            trace->asm_op("ld iyh,0x%02x", dat);
+          }
+        } else { // reg_L
+          if (has_dd_prefix) {
+            regs.IX.set_low(dat);
+            trace->asm_op("ld ixl,0x%02x", dat);
+          } else {
+            regs.IY.set_low(dat);
+            trace->asm_op("ld iyl,0x%02x", dat);
+          }
+        }
+        return;
+      }
+
+      qkz80_uint8 dat(pull_byte_from_opcode_stream());
+      set_reg8(dat,dst);
+      trace->asm_op("mvi %s,0x%0x",name_reg8(dst),dat);
+      trace->add_reg8(dst);
       return;
     }
 
-    // Special handling for IXH, IXL, IYH, IYL (undocumented Z80 instructions)
-    if ((has_dd_prefix || has_fd_prefix) && (src == reg_H || src == reg_L || dst == reg_H || dst == reg_L)) {
-      qkz80_uint8 dat;
-
-      // Get source value
-      if (src == reg_H) {
-        dat = has_dd_prefix ? regs.IX.get_high() : regs.IY.get_high();
-      } else if (src == reg_L) {
-        dat = has_dd_prefix ? regs.IX.get_low() : regs.IY.get_low();
-      } else {
-        dat = get_reg8(src);
-      }
-
-      // Set destination value
-      if (dst == reg_H) {
-        if (has_dd_prefix) {
-          regs.IX.set_high(dat);
-          trace->asm_op("ld ixh,%s", src == reg_H ? "ixh" : (src == reg_L ? "ixl" : name_reg8(src)));
-        } else {
-          regs.IY.set_high(dat);
-          trace->asm_op("ld iyh,%s", src == reg_H ? "iyh" : (src == reg_L ? "iyl" : name_reg8(src)));
-        }
-      } else if (dst == reg_L) {
-        if (has_dd_prefix) {
-          regs.IX.set_low(dat);
-          trace->asm_op("ld ixl,%s", src == reg_H ? "ixh" : (src == reg_L ? "ixl" : name_reg8(src)));
-        } else {
-          regs.IY.set_low(dat);
-          trace->asm_op("ld iyl,%s", src == reg_H ? "iyh" : (src == reg_L ? "iyl" : name_reg8(src)));
-        }
-      } else {
-        set_reg8(dat, dst);
-        if (src == reg_H) {
-          trace->asm_op("ld %s,%s", name_reg8(dst), has_dd_prefix ? "ixh" : "iyh");
-        } else {
-          trace->asm_op("ld %s,%s", name_reg8(dst), has_dd_prefix ? "ixl" : "iyl");
-        }
-      }
+    if (opcode == 0x3a) { // LDA
+      qkz80_uint16 addr(pull_word_from_opcode_stream());
+      qkz80_uint8 dat(mem.fetch_mem(addr));
+      trace->asm_op("lda 0x%0x",addr);
+      set_reg8(dat,reg_A);
       return;
     }
 
-    qkz80_uint8 dat(get_reg8(src));
-    set_reg8(dat,dst);
-    trace->asm_op("mov %s,%s",name_reg8(dst),name_reg8(src));
-    trace->add_reg8(src);
-    return;
-  }
-
-  if ((opcode & 0xc7) == 0x06) { // MVI
-    qkz80_uint8 dst((opcode >> 3) & 0x07);
-
-    // Special handling for LD (IX+d),n and LD (IY+d),n
-    if ((has_dd_prefix || has_fd_prefix) && dst == reg_M) {
-      qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
-      qkz80_uint8 dat = pull_byte_from_opcode_stream();
-      qkz80_uint16 addr = get_reg16(active_hl) + offset;
-      mem.store_mem(addr, dat);
-      if (has_dd_prefix)
-        trace->asm_op("ld (ix%+d),0x%02x", offset, dat);
-      else
-        trace->asm_op("ld (iy%+d),0x%02x", offset, dat);
+    if (opcode == 0x32) { // STA
+      qkz80_uint16 addr(pull_word_from_opcode_stream());
+      qkz80_uint8 rega(get_reg8(reg_A));
+      mem.store_mem(addr,rega);
+      trace->asm_op("sta 0x%0x",addr);
       return;
     }
 
-    // Special handling for IXH, IXL, IYH, IYL (undocumented Z80 instructions)
-    if ((has_dd_prefix || has_fd_prefix) && (dst == reg_H || dst == reg_L)) {
-      qkz80_uint8 dat = pull_byte_from_opcode_stream();
-      if (dst == reg_H) {
-        if (has_dd_prefix) {
-          regs.IX.set_high(dat);
-          trace->asm_op("ld ixh,0x%02x", dat);
-        } else {
-          regs.IY.set_high(dat);
-          trace->asm_op("ld iyh,0x%02x", dat);
-        }
-      } else { // reg_L
-        if (has_dd_prefix) {
-          regs.IX.set_low(dat);
-          trace->asm_op("ld ixl,0x%02x", dat);
-        } else {
-          regs.IY.set_low(dat);
-          trace->asm_op("ld iyl,0x%02x", dat);
-        }
-      }
+    if (opcode == 0x22) { // SHLD (LD (nn),HL/IX/IY)
+      qkz80_uint16 addr(pull_word_from_opcode_stream());
+      qkz80_uint16 aword(get_reg16(active_hl));
+      write_2_bytes(aword,addr);
+      if (has_dd_prefix) trace->asm_op("ld (0x%0x),ix",addr);
+      else if (has_fd_prefix) trace->asm_op("ld (0x%0x),iy",addr);
+      else trace->asm_op("shld 0x%0x",addr);
+      trace->add_reg16(active_hl);
       return;
     }
 
-    qkz80_uint8 dat(pull_byte_from_opcode_stream());
-    set_reg8(dat,dst);
-    trace->asm_op("mvi %s,0x%0x",name_reg8(dst),dat);
-    trace->add_reg8(dst);
-    return;
-  }
+    if ((opcode & 0xcf) == 0x0a) { // LDAX
+      qkz80_uint8 rp((opcode >> 4) & 0x03);
+      qkz80_uint16 pair(get_reg16(rp));
+      qkz80_uint8 dat(mem.fetch_mem(pair));
+      trace->add_reg16(rp);
+      set_reg8(dat,reg_A);
+      trace->asm_op("ldax %s",name_reg16(rp));
+      return;
+    }
 
-  if (opcode == 0x3a) { // LDA
-    qkz80_uint16 addr(pull_word_from_opcode_stream());
-    qkz80_uint8 dat(mem.fetch_mem(addr));
-    trace->asm_op("lda 0x%0x",addr);
-    set_reg8(dat,reg_A);
-    return;
-  }
+    if ((opcode & 0xcf) == 0x02) { // STAX
+      qkz80_uint8 rp((opcode >> 4) & 0x03);
+      qkz80_uint16 pair(get_reg16(rp));
+      qkz80_uint8 rega(get_reg8(reg_A));
+      trace->add_reg16(rp);
+      mem.store_mem(pair,rega);
+      trace->asm_op("stax %s",name_reg16(rp));
+      return;
+    }
 
-  if (opcode == 0x32) { // STA
-    qkz80_uint16 addr(pull_word_from_opcode_stream());
-    qkz80_uint8 rega(get_reg8(reg_A));
-    mem.store_mem(addr,rega);
-    trace->asm_op("sta 0x%0x",addr);
-    return;
-  } 
+    if (opcode == 0xeb) { //XCHG (EX DE,HL/IX/IY)
+      qkz80_uint16 a(get_reg16(regp_DE));
+      qkz80_uint16 b(get_reg16(active_hl));
+      set_reg16(a,active_hl);
+      set_reg16(b,regp_DE);
+      if (has_dd_prefix) trace->asm_op("ex de,ix");
+      else if (has_fd_prefix) trace->asm_op("ex de,iy");
+      else trace->asm_op("xchg");
+      return;
+    }
 
-  if (opcode == 0x22) { // SHLD (LD (nn),HL/IX/IY)
-    qkz80_uint16 addr(pull_word_from_opcode_stream());
-    qkz80_uint16 aword(get_reg16(active_hl));
-    write_2_bytes(aword,addr);
-    if (has_dd_prefix) trace->asm_op("ld (0x%0x),ix",addr);
-    else if (has_fd_prefix) trace->asm_op("ld (0x%0x),iy",addr);
-    else trace->asm_op("shld 0x%0x",addr);
-    trace->add_reg16(active_hl);
-    return;
-  }
+    // Special handling for ALU operations with IXH/IXL/IYH/IYL (undocumented Z80 instructions)
+    // and indexed addressing (IX+d)/(IY+d)
+    // Check if this is an ALU operation (opcodes 0x80-0xBF) with DD/FD prefix
+    if ((has_dd_prefix || has_fd_prefix) && (opcode >= 0x80 && opcode <= 0xBF)) {
+      qkz80_uint8 reg_num = opcode & 0x7;
+      if (reg_num == reg_H || reg_num == reg_L || reg_num == reg_M) {
+        // Get the operand value
+        qkz80_uint8 regb;
+        if (reg_num == reg_M) {
+          // Indexed addressing: (IX+d) or (IY+d)
+          qkz80_int8 displacement = static_cast<qkz80_int8>(pull_byte_from_opcode_stream());
+          qkz80_uint16 base_addr = has_dd_prefix ? regs.IX.get_pair16() : regs.IY.get_pair16();
+          qkz80_uint16 addr = base_addr + displacement;
+          regb = mem.fetch_mem(addr);
+        } else {
+          // IXH/IXL/IYH/IYL (undocumented half-register operations)
+          regb = (reg_num == reg_H) ?
+                 (has_dd_prefix ? regs.IX.get_high() : regs.IY.get_high()) :
+                 (has_dd_prefix ? regs.IX.get_low() : regs.IY.get_low());
+        }
 
-  if ((opcode & 0xcf) == 0x0a) { // LDAX
-    qkz80_uint8 rp((opcode >> 4) & 0x03);
-    qkz80_uint16 pair(get_reg16(rp));
-    qkz80_uint8 dat(mem.fetch_mem(pair));
-    trace->add_reg16(rp);
-    set_reg8(dat,reg_A);
-    trace->asm_op("ldax %s",name_reg16(rp));
-    return;
-  }
+        qkz80_uint16 rega = get_reg8(reg_A);
 
-  if ((opcode & 0xcf) == 0x02) { // STAX
-    qkz80_uint8 rp((opcode >> 4) & 0x03);
-    qkz80_uint16 pair(get_reg16(rp));
-    qkz80_uint8 rega(get_reg8(reg_A));
-    trace->add_reg16(rp);
-    mem.store_mem(pair,rega);
-    trace->asm_op("stax %s",name_reg16(rp));
-    return;
-  }
-
-  if (opcode == 0xeb) { //XCHG (EX DE,HL/IX/IY)
-    qkz80_uint16 a(get_reg16(regp_DE));
-    qkz80_uint16 b(get_reg16(active_hl));
-    set_reg16(a,active_hl);
-    set_reg16(b,regp_DE);
-    if (has_dd_prefix) trace->asm_op("ex de,ix");
-    else if (has_fd_prefix) trace->asm_op("ex de,iy");
-    else trace->asm_op("xchg");
-    return;
-  }
-
-  // Special handling for ALU operations with IXH/IXL/IYH/IYL (undocumented Z80 instructions)
-  // and indexed addressing (IX+d)/(IY+d)
-  // Check if this is an ALU operation (opcodes 0x80-0xBF) with DD/FD prefix
-  if ((has_dd_prefix || has_fd_prefix) && (opcode >= 0x80 && opcode <= 0xBF)) {
-    qkz80_uint8 reg_num = opcode & 0x7;
-    if (reg_num == reg_H || reg_num == reg_L || reg_num == reg_M) {
-      // Get the operand value
-      qkz80_uint8 regb;
-      if (reg_num == reg_M) {
-        // Indexed addressing: (IX+d) or (IY+d)
-        qkz80_int8 displacement = static_cast<qkz80_int8>(pull_byte_from_opcode_stream());
-        qkz80_uint16 base_addr = has_dd_prefix ? regs.IX.get_pair16() : regs.IY.get_pair16();
-        qkz80_uint16 addr = base_addr + displacement;
-        regb = mem.fetch_mem(addr);
-      } else {
-        // IXH/IXL/IYH/IYL (undocumented half-register operations)
-        regb = (reg_num == reg_H) ?
-          (has_dd_prefix ? regs.IX.get_high() : regs.IY.get_high()) :
-          (has_dd_prefix ? regs.IX.get_low() : regs.IY.get_low());
-      }
-
-      qkz80_uint16 rega = get_reg8(reg_A);
-
-      // Determine which ALU operation
-      qkz80_uint8 alu_op = (opcode >> 3) & 0x7;
-      switch(alu_op) {
+        // Determine which ALU operation
+        qkz80_uint8 alu_op = (opcode >> 3) & 0x7;
+        switch(alu_op) {
         case 0: { // ADD
           qkz80_big_uint sum(rega + regb);
           regs.set_flags_from_sum8(sum, rega, regb, 0);
@@ -1224,202 +1278,251 @@ void qkz80::execute(void) {
           }
           break;
         }
+        }
+        return;
       }
+    }
+
+    if ((opcode & 0xf8) == 0x88 ) { // ADC
+      qkz80_uint8 reg_num(opcode & 0x7);
+      qkz80_uint16 rega(get_reg8(reg_A));
+      qkz80_uint16 regb(get_reg8(reg_num));
+      qkz80_uint16 carry(fetch_carry_as_int());
+      qkz80_big_uint sum(rega+regb+carry);
+      regs.set_flags_from_sum8(sum, rega, regb, carry);
+      set_A(sum);
+      trace->add_reg8(reg_num);
+      trace->asm_op("add %s",name_reg8(reg_num));
       return;
     }
-  }
 
-  if ((opcode & 0xf8) == 0x88 ) { // ADC
-    qkz80_uint8 reg_num(opcode & 0x7);
-    qkz80_uint16 rega(get_reg8(reg_A));
-    qkz80_uint16 regb(get_reg8(reg_num));
-    qkz80_uint16 carry(fetch_carry_as_int());
-    qkz80_big_uint sum(rega+regb+carry);
-    regs.set_flags_from_sum8(sum, rega, regb, carry);
-    set_A(sum);
-    trace->add_reg8(reg_num);
-    trace->asm_op("add %s",name_reg8(reg_num));
-    return;
-  }
+    if ((opcode & 0xf8) == 0x80 ) { // ADD
+      qkz80_uint8 reg_num(opcode & 0x7);
+      qkz80_uint16 rega(get_reg8(reg_A));
+      qkz80_uint16 regb(get_reg8(reg_num));
+      qkz80_big_uint sum(rega+regb);
+      regs.set_flags_from_sum8(sum, rega, regb, 0);
+      set_A(sum);
+      trace->asm_op("add %s",name_reg8(reg_num));
+      trace->add_reg8(reg_num);
+      return;
+    }
 
-  if ((opcode & 0xf8) == 0x80 ) { // ADD
-    qkz80_uint8 reg_num(opcode & 0x7);
-    qkz80_uint16 rega(get_reg8(reg_A));
-    qkz80_uint16 regb(get_reg8(reg_num));
-    qkz80_big_uint sum(rega+regb);
-    regs.set_flags_from_sum8(sum, rega, regb, 0);
-    set_A(sum);
-    trace->asm_op("add %s",name_reg8(reg_num));
-    trace->add_reg8(reg_num);
-    return;
-  }
+    if (opcode == 0xc6 ) { // ADI
+      qkz80_uint16 rega(get_reg8(reg_A));
+      qkz80_uint16 dat(pull_byte_from_opcode_stream());
+      qkz80_big_uint sum(dat+rega);
+      regs.set_flags_from_sum8(sum, rega, dat, 0);
+      set_A(sum);
+      trace->asm_op("adi 0x%0x",dat);
+      return;
+    }
 
-  if (opcode == 0xc6 ) { // ADI
-    qkz80_uint16 rega(get_reg8(reg_A));
-    qkz80_uint16 dat(pull_byte_from_opcode_stream());
-    qkz80_big_uint sum(dat+rega);
-    regs.set_flags_from_sum8(sum, rega, dat, 0);
-    set_A(sum);
-    trace->asm_op("adi 0x%0x",dat);
-    return;
-  }
+    if (opcode == 0xce ) { // ACI
+      qkz80_uint16 rega(get_reg8(reg_A));
+      qkz80_uint16 dat(pull_byte_from_opcode_stream());
+      qkz80_uint16 cy(fetch_carry_as_int());
+      qkz80_big_uint sum(dat+rega+cy);
+      regs.set_flags_from_sum8(sum, rega, dat, cy);
+      set_A(sum);
+      trace->asm_op("aci 0x%0x",dat);
+      return;
+    }
 
-  if (opcode == 0xce ) { // ACI
-    qkz80_uint16 rega(get_reg8(reg_A));
-    qkz80_uint16 dat(pull_byte_from_opcode_stream());
-    qkz80_uint16 cy(fetch_carry_as_int());
-    qkz80_big_uint sum(dat+rega+cy);
-    regs.set_flags_from_sum8(sum, rega, dat, cy);
-    set_A(sum);
-    trace->asm_op("aci 0x%0x",dat);
-    return;
-  }
+    if ((opcode & 0xf8) == 0x90 ) { // SUB
+      qkz80_uint8 reg_num(opcode & 0x7);
+      qkz80_uint16 rega(get_reg8(reg_A));
+      qkz80_uint16 regb(get_reg8(reg_num));
+      qkz80_big_uint diff(rega-regb);
+      regs.set_flags_from_diff8(diff, rega, regb, 0);
+      set_A(diff);
+      trace->asm_op("sub %s",name_reg8(reg_num));
+      trace->add_reg8(reg_num);
+      return;
+    }
 
-  if ((opcode & 0xf8) == 0x90 ) { // SUB
-    qkz80_uint8 reg_num(opcode & 0x7);
-    qkz80_uint16 rega(get_reg8(reg_A));
-    qkz80_uint16 regb(get_reg8(reg_num));
-    qkz80_big_uint diff(rega-regb);
-    regs.set_flags_from_diff8(diff, rega, regb, 0);
-    set_A(diff);
-    trace->asm_op("sub %s",name_reg8(reg_num));
-    trace->add_reg8(reg_num);
-    return;
-  }
+    if ((opcode & 0xf8) == 0xb8 ) { // CMP
+      qkz80_uint8 reg_num(opcode & 0x7);
+      qkz80_uint8 rega(get_reg8(reg_A));
+      qkz80_uint8 regb(get_reg8(reg_num));
+      qkz80_big_uint diff(rega-regb);
+      regs.set_flags_from_diff8(diff, rega, regb, 0);
+      // CP is special: X and Y flags come from the operand, not the result
+      qkz80_uint8 flags = regs.get_flags();
+      flags &= ~(qkz80_cpu_flags::X | qkz80_cpu_flags::Y);  // Clear X and Y
+      if (regb & 0x08) flags |= qkz80_cpu_flags::X;          // Set X from bit 3 of operand
+      if (regb & 0x20) flags |= qkz80_cpu_flags::Y;          // Set Y from bit 5 of operand
+      regs.set_flags(flags);
+      trace->asm_op("cmp %s",name_reg8(reg_num));
+      trace->add_reg8(reg_num);
+      return;
+    }
 
-  if ((opcode & 0xf8) == 0xb8 ) { // CMP
-    qkz80_uint8 reg_num(opcode & 0x7);
-    qkz80_uint8 rega(get_reg8(reg_A));
-    qkz80_uint8 regb(get_reg8(reg_num));
-    qkz80_big_uint diff(rega-regb);
-    regs.set_flags_from_diff8(diff, rega, regb, 0);
-    // CP is special: X and Y flags come from the operand, not the result
-    qkz80_uint8 flags = regs.get_flags();
-    flags &= ~(qkz80_cpu_flags::X | qkz80_cpu_flags::Y);  // Clear X and Y
-    if (regb & 0x08) flags |= qkz80_cpu_flags::X;          // Set X from bit 3 of operand
-    if (regb & 0x20) flags |= qkz80_cpu_flags::Y;          // Set Y from bit 5 of operand
-    regs.set_flags(flags);
-    trace->asm_op("cmp %s",name_reg8(reg_num));
-    trace->add_reg8(reg_num);
-    return;
-  }
+    if (opcode == 0xfe ) { // CP n
+      qkz80_uint16 dat(pull_byte_from_opcode_stream());
+      qkz80_uint16 rega(get_reg8(reg_A));
+      qkz80_big_uint diff(rega-dat);
+      regs.set_flags_from_diff8(diff, rega, dat, 0);
+      // CP is special: X and Y flags come from the operand, not the result
+      qkz80_uint8 flags = regs.get_flags();
+      flags &= ~(qkz80_cpu_flags::X | qkz80_cpu_flags::Y);  // Clear X and Y
+      if (dat & 0x08) flags |= qkz80_cpu_flags::X;           // Set X from bit 3 of operand
+      if (dat & 0x20) flags |= qkz80_cpu_flags::Y;           // Set Y from bit 5 of operand
+      regs.set_flags(flags);
+      trace->asm_op("cp 0x%0x",dat);
+      trace->add_reg8(reg_A);
+      return;
+    }
 
-  if (opcode == 0xfe ) { // CP n
-    qkz80_uint16 dat(pull_byte_from_opcode_stream());
-    qkz80_uint16 rega(get_reg8(reg_A));
-    qkz80_big_uint diff(rega-dat);
-    regs.set_flags_from_diff8(diff, rega, dat, 0);
-    // CP is special: X and Y flags come from the operand, not the result
-    qkz80_uint8 flags = regs.get_flags();
-    flags &= ~(qkz80_cpu_flags::X | qkz80_cpu_flags::Y);  // Clear X and Y
-    if (dat & 0x08) flags |= qkz80_cpu_flags::X;           // Set X from bit 3 of operand
-    if (dat & 0x20) flags |= qkz80_cpu_flags::Y;           // Set Y from bit 5 of operand
-    regs.set_flags(flags);
-    trace->asm_op("cp 0x%0x",dat);
-    trace->add_reg8(reg_A);
-    return;
-  }
+    if (opcode == 0xd6 ) { // SUI
+      qkz80_uint16 dat(pull_byte_from_opcode_stream());
+      qkz80_uint16 rega(get_reg8(reg_A));
+      qkz80_big_uint diff(rega-dat);
+      regs.set_flags_from_diff8(diff, rega, dat, 0);
+      set_A(diff);
+      trace->asm_op("cpi 0x%0x",dat);
+      return;
+    }
+    if ((opcode & 0xf8) == 0x98 ) { // SBB
+      qkz80_uint8 reg_num(opcode & 0x7);
+      qkz80_uint16 rega(get_reg8(reg_A));
+      qkz80_uint16 regb(get_reg8(reg_num));
+      qkz80_uint16 carry(fetch_carry_as_int());
+      qkz80_big_uint diff(rega-regb-carry);
+      regs.set_flags_from_diff8(diff, rega, regb, carry);
+      set_A(diff);
+      trace->asm_op("sbb %s",name_reg8(reg_num));
+      trace->add_reg8(reg_num);
+      return;
+    }
 
-  if (opcode == 0xd6 ) { // SUI
-    qkz80_uint16 dat(pull_byte_from_opcode_stream());
-    qkz80_uint16 rega(get_reg8(reg_A));
-    qkz80_big_uint diff(rega-dat);
-    regs.set_flags_from_diff8(diff, rega, dat, 0);
-    set_A(diff);
-    trace->asm_op("cpi 0x%0x",dat);
-    return;
-  }
- if ((opcode & 0xf8) == 0x98 ) { // SBB
-    qkz80_uint8 reg_num(opcode & 0x7);
-    qkz80_uint16 rega(get_reg8(reg_A));
-    qkz80_uint16 regb(get_reg8(reg_num));
-    qkz80_uint16 carry(fetch_carry_as_int());
-    qkz80_big_uint diff(rega-regb-carry);
-    regs.set_flags_from_diff8(diff, rega, regb, carry);
-    set_A(diff);
-    trace->asm_op("sbb %s",name_reg8(reg_num));
-    trace->add_reg8(reg_num);
-    return;
- }
+    if (opcode == 0xde ) { // SBI
+      qkz80_uint16 dat(pull_byte_from_opcode_stream());
+      qkz80_uint16 rega(get_reg8(reg_A));
+      qkz80_uint16 carry(fetch_carry_as_int());
+      qkz80_big_uint diff(rega-dat-carry);
+      regs.set_flags_from_diff8(diff, rega, dat, carry);
+      set_A(diff);
+      trace->asm_op("sbi 0x%0x",dat);
+      return;
+    }
 
- if (opcode == 0xde ) { // SBI
-    qkz80_uint16 dat(pull_byte_from_opcode_stream());
-    qkz80_uint16 rega(get_reg8(reg_A));
-    qkz80_uint16 carry(fetch_carry_as_int());
-    qkz80_big_uint diff(rega-dat-carry);
-    regs.set_flags_from_diff8(diff, rega, dat, carry);
-    set_A(diff);
-    trace->asm_op("sbi 0x%0x",dat);
-    return;
- }
- 
- if ((opcode & 0xc7) == 0x04 ) { // INR
-    qkz80_uint8 reg_num((opcode>>3) & 0x7);
+    if ((opcode & 0xc7) == 0x04 ) { // INR
+      qkz80_uint8 reg_num((opcode>>3) & 0x7);
 
-    // Special handling for indexed memory (IX+d) or (IY+d)
-    if ((has_dd_prefix || has_fd_prefix) && reg_num == reg_M) {
-      qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
-      qkz80_uint16 addr = get_reg16(active_hl) + offset;
-      qkz80_uint8 num = mem.fetch_mem(addr);
+      // Special handling for indexed memory (IX+d) or (IY+d)
+      if ((has_dd_prefix || has_fd_prefix) && reg_num == reg_M) {
+        qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+        qkz80_uint16 addr = get_reg16(active_hl) + offset;
+        qkz80_uint8 num = mem.fetch_mem(addr);
+        num++;
+        mem.store_mem(addr, num);
+        qkz80_uint8 hc((num & 0xf) == 0);
+        regs.set_zspa_from_inr(num,hc);
+        if (has_dd_prefix)
+          trace->asm_op("inc (ix%+d)", offset);
+        else
+          trace->asm_op("inc (iy%+d)", offset);
+        return;
+      }
+
+      // Special handling for IXH, IXL, IYH, IYL (undocumented Z80 instructions)
+      if ((has_dd_prefix || has_fd_prefix) && (reg_num == reg_H || reg_num == reg_L)) {
+        qkz80_uint8 num;
+        if (reg_num == reg_H) {
+          num = has_dd_prefix ? regs.IX.get_high() : regs.IY.get_high();
+          num++;
+          if (has_dd_prefix) {
+            regs.IX.set_high(num);
+            trace->asm_op("inc ixh");
+          } else {
+            regs.IY.set_high(num);
+            trace->asm_op("inc iyh");
+          }
+        } else { // reg_L
+          num = has_dd_prefix ? regs.IX.get_low() : regs.IY.get_low();
+          num++;
+          if (has_dd_prefix) {
+            regs.IX.set_low(num);
+            trace->asm_op("inc ixl");
+          } else {
+            regs.IY.set_low(num);
+            trace->asm_op("inc iyl");
+          }
+        }
+        qkz80_uint8 hc((num & 0xf) == 0);
+        regs.set_zspa_from_inr(num,hc);
+        return;
+      }
+
+      qkz80_uint8 num(get_reg8(reg_num));
       num++;
-      mem.store_mem(addr, num);
+      set_reg8(num,reg_num);
       qkz80_uint8 hc((num & 0xf) == 0);
       regs.set_zspa_from_inr(num,hc);
-      if (has_dd_prefix)
-        trace->asm_op("inc (ix%+d)", offset);
-      else
-        trace->asm_op("inc (iy%+d)", offset);
+      trace->asm_op("inr %s",name_reg8(reg_num));
       return;
     }
 
-    // Special handling for IXH, IXL, IYH, IYL (undocumented Z80 instructions)
-    if ((has_dd_prefix || has_fd_prefix) && (reg_num == reg_H || reg_num == reg_L)) {
-      qkz80_uint8 num;
-      if (reg_num == reg_H) {
-        num = has_dd_prefix ? regs.IX.get_high() : regs.IY.get_high();
-        num++;
-        if (has_dd_prefix) {
-          regs.IX.set_high(num);
-          trace->asm_op("inc ixh");
+    if ((opcode & 0xc7) == 0x05 ) { // DCR
+      qkz80_uint8 reg_num((opcode>>3) & 0x7);
+
+      // Special handling for indexed memory (IX+d) or (IY+d)
+      if ((has_dd_prefix || has_fd_prefix) && reg_num == reg_M) {
+        qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
+        qkz80_uint16 addr = get_reg16(active_hl) + offset;
+        qkz80_uint8 num = mem.fetch_mem(addr);
+        num--;
+        mem.store_mem(addr, num);
+        // Half-carry calculation differs between Z80 and 8080 for DCR
+        qkz80_uint8 hc;
+        if (cpu_mode == MODE_8080) {
+          // 8080: HF=1 unless lower nibble is 0xF
+          hc = ((num & 0xf) != 0xf);
         } else {
-          regs.IY.set_high(num);
-          trace->asm_op("inc iyh");
+          // Z80: HF=1 when lower nibble is 0xF (borrow from bit 4)
+          hc = ((num & 0xf) == 0xf);
         }
-      } else { // reg_L
-        num = has_dd_prefix ? regs.IX.get_low() : regs.IY.get_low();
-        num++;
-        if (has_dd_prefix) {
-          regs.IX.set_low(num);
-          trace->asm_op("inc ixl");
-        } else {
-          regs.IY.set_low(num);
-          trace->asm_op("inc iyl");
-        }
+        regs.set_zspa_from_inr(num,hc,false);  // false = decrement
+        if (has_dd_prefix)
+          trace->asm_op("dec (ix%+d)", offset);
+        else
+          trace->asm_op("dec (iy%+d)", offset);
+        return;
       }
-      qkz80_uint8 hc((num & 0xf) == 0);
-      regs.set_zspa_from_inr(num,hc);
-      return;
-    }
 
-    qkz80_uint8 num(get_reg8(reg_num));
-    num++;
-    set_reg8(num,reg_num);
-    qkz80_uint8 hc((num & 0xf) == 0);
-    regs.set_zspa_from_inr(num,hc);
-    trace->asm_op("inr %s",name_reg8(reg_num));
-    return;
- }
- 
- if ((opcode & 0xc7) == 0x05 ) { // DCR
-    qkz80_uint8 reg_num((opcode>>3) & 0x7);
+      // Special handling for IXH, IXL, IYH, IYL (undocumented Z80 instructions)
+      if ((has_dd_prefix || has_fd_prefix) && (reg_num == reg_H || reg_num == reg_L)) {
+        qkz80_uint8 num;
+        if (reg_num == reg_H) {
+          num = has_dd_prefix ? regs.IX.get_high() : regs.IY.get_high();
+          num--;
+          if (has_dd_prefix) {
+            regs.IX.set_high(num);
+            trace->asm_op("dec ixh");
+          } else {
+            regs.IY.set_high(num);
+            trace->asm_op("dec iyh");
+          }
+        } else { // reg_L
+          num = has_dd_prefix ? regs.IX.get_low() : regs.IY.get_low();
+          num--;
+          if (has_dd_prefix) {
+            regs.IX.set_low(num);
+            trace->asm_op("dec ixl");
+          } else {
+            regs.IY.set_low(num);
+            trace->asm_op("dec iyl");
+          }
+        }
+        qkz80_uint8 hc((num & 0xf) == 0xf);
+        regs.set_zspa_from_inr(num,hc,false);  // false = decrement
+        return;
+      }
 
-    // Special handling for indexed memory (IX+d) or (IY+d)
-    if ((has_dd_prefix || has_fd_prefix) && reg_num == reg_M) {
-      qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
-      qkz80_uint16 addr = get_reg16(active_hl) + offset;
-      qkz80_uint8 num = mem.fetch_mem(addr);
+      qkz80_uint8 num(get_reg8(reg_num));
       num--;
-      mem.store_mem(addr, num);
+      set_reg8(num,reg_num);
       // Half-carry calculation differs between Z80 and 8080 for DCR
       qkz80_uint8 hc;
       if (cpu_mode == MODE_8080) {
@@ -1430,488 +1533,440 @@ void qkz80::execute(void) {
         hc = ((num & 0xf) == 0xf);
       }
       regs.set_zspa_from_inr(num,hc,false);  // false = decrement
-      if (has_dd_prefix)
-        trace->asm_op("dec (ix%+d)", offset);
-      else
-        trace->asm_op("dec (iy%+d)", offset);
+      trace->asm_op("dcr %s",name_reg8(reg_num));
       return;
     }
 
-    // Special handling for IXH, IXL, IYH, IYL (undocumented Z80 instructions)
-    if ((has_dd_prefix || has_fd_prefix) && (reg_num == reg_H || reg_num == reg_L)) {
-      qkz80_uint8 num;
-      if (reg_num == reg_H) {
-        num = has_dd_prefix ? regs.IX.get_high() : regs.IY.get_high();
-        num--;
-        if (has_dd_prefix) {
-          regs.IX.set_high(num);
-          trace->asm_op("dec ixh");
-        } else {
-          regs.IY.set_high(num);
-          trace->asm_op("dec iyh");
-        }
-      } else { // reg_L
-        num = has_dd_prefix ? regs.IX.get_low() : regs.IY.get_low();
-        num--;
-        if (has_dd_prefix) {
-          regs.IX.set_low(num);
-          trace->asm_op("dec ixl");
-        } else {
-          regs.IY.set_low(num);
-          trace->asm_op("dec iyl");
-        }
+    if ((opcode & 0xcf) == 0x03 ) { // INX
+      qkz80_uint8 rp((opcode >> 4) & 0x03);
+      // If DD/FD prefix and register pair is HL (2), use IX/IY instead
+      if ((has_dd_prefix || has_fd_prefix) && rp == regp_HL) {
+        rp = active_hl;
       }
-      qkz80_uint8 hc((num & 0xf) == 0xf);
-      regs.set_zspa_from_inr(num,hc,false);  // false = decrement
+      qkz80_uint16 pair_val(get_reg16(rp));
+      pair_val++;
+      set_reg16(pair_val,rp);
+      trace->asm_op("inx %s",name_reg16(rp));
       return;
     }
 
-    qkz80_uint8 num(get_reg8(reg_num));
-    num--;
-    set_reg8(num,reg_num);
-    // Half-carry calculation differs between Z80 and 8080 for DCR
-    qkz80_uint8 hc;
-    if (cpu_mode == MODE_8080) {
-      // 8080: HF=1 unless lower nibble is 0xF
-      hc = ((num & 0xf) != 0xf);
-    } else {
-      // Z80: HF=1 when lower nibble is 0xF (borrow from bit 4)
-      hc = ((num & 0xf) == 0xf);
-    }
-    regs.set_zspa_from_inr(num,hc,false);  // false = decrement
-    trace->asm_op("dcr %s",name_reg8(reg_num));
-    return;
-  }
-
- if ((opcode & 0xcf) == 0x03 ) { // INX
-    qkz80_uint8 rp((opcode >> 4) & 0x03);
-    // If DD/FD prefix and register pair is HL (2), use IX/IY instead
-    if ((has_dd_prefix || has_fd_prefix) && rp == regp_HL) {
-      rp = active_hl;
-    }
-    qkz80_uint16 pair_val(get_reg16(rp));
-    pair_val++;
-    set_reg16(pair_val,rp);
-    trace->asm_op("inx %s",name_reg16(rp));
-    return;
-  }
-
- if ((opcode & 0xcf) == 0x0b ) { // DCX
-    qkz80_uint8 rp((opcode >> 4) & 0x03);
-    // If DD/FD prefix and register pair is HL (2), use IX/IY instead
-    if ((has_dd_prefix || has_fd_prefix) && rp == regp_HL) {
-      rp = active_hl;
-    }
-    qkz80_uint16 pair_val(get_reg16(rp));
-    pair_val--;
-    set_reg16(pair_val,rp);
-    trace->asm_op("dcx %s",name_reg16(rp));
-    return;
- }
-
- if ((opcode & 0xcf) == 0x09 ) { //DAD RP (ADD HL/IX/IY,rp)
-    qkz80_uint8 rp((opcode >> 4) & 0x03);
-    // If DD/FD prefix and register pair is HL (2), use IX/IY instead
-    if ((has_dd_prefix || has_fd_prefix) && rp == regp_HL) {
-      rp = active_hl;
-    }
-    qkz80_big_uint pair1(get_reg16(rp));
-    qkz80_big_uint pair2(get_reg16(active_hl));
-    qkz80_big_uint sum(pair1+pair2);
-    set_reg16(sum,active_hl);
-
-    // Use Z80-specific flag handling if in Z80 mode
-    if (cpu_mode == MODE_Z80) {
-      regs.set_flags_from_add16(sum, pair2, pair1);
-    } else {
-      // 8080: Only sets carry flag
-      regs.set_carry_from_int((sum& ~0x0ffff)!=0);
+    if ((opcode & 0xcf) == 0x0b ) { // DCX
+      qkz80_uint8 rp((opcode >> 4) & 0x03);
+      // If DD/FD prefix and register pair is HL (2), use IX/IY instead
+      if ((has_dd_prefix || has_fd_prefix) && rp == regp_HL) {
+        rp = active_hl;
+      }
+      qkz80_uint16 pair_val(get_reg16(rp));
+      pair_val--;
+      set_reg16(pair_val,rp);
+      trace->asm_op("dcx %s",name_reg16(rp));
+      return;
     }
 
-    if (has_dd_prefix) trace->asm_op("add ix,%s",name_reg16(rp));
-    else if (has_fd_prefix) trace->asm_op("add iy,%s",name_reg16(rp));
-    else trace->asm_op("dad %s",name_reg16(rp));
-    trace->add_reg16(rp);
-    return;
- }
+    if ((opcode & 0xcf) == 0x09 ) { //DAD RP (ADD HL/IX/IY,rp)
+      qkz80_uint8 rp((opcode >> 4) & 0x03);
+      // If DD/FD prefix and register pair is HL (2), use IX/IY instead
+      if ((has_dd_prefix || has_fd_prefix) && rp == regp_HL) {
+        rp = active_hl;
+      }
+      qkz80_big_uint pair1(get_reg16(rp));
+      qkz80_big_uint pair2(get_reg16(active_hl));
+      qkz80_big_uint sum(pair1+pair2);
+      set_reg16(sum,active_hl);
 
- if ((opcode & 0xf8) == 0xa0 ) { // ANA S
-    qkz80_uint8 src_reg(opcode & 0x07);
-    qkz80_uint8 dat1(get_reg8(src_reg));
-    qkz80_uint8 dat2(get_reg8(reg_A));
-    qkz80_uint8 result(dat1 & dat2);
-    set_reg8(result,reg_A);
-    // Z80: H always 1, 8080: H = bit 3 of (op1 | op2)
-    qkz80_uint8 hc = (cpu_mode == MODE_Z80) ? 1 : (((dat1 | dat2) & 0x08) != 0);
-    regs.set_flags_from_logic8(result,0,hc);
-    trace->asm_op("ana %s",name_reg8(src_reg));
-    trace->add_reg8(src_reg);
-    return;
-  } 
+      // Use Z80-specific flag handling if in Z80 mode
+      if (cpu_mode == MODE_Z80) {
+        regs.set_flags_from_add16(sum, pair2, pair1);
+      } else {
+        // 8080: Only sets carry flag
+        regs.set_carry_from_int((sum& ~0x0ffff)!=0);
+      }
 
- if (opcode == 0xe6) { // ANI
-    qkz80_uint8 dat1(get_reg8(reg_A));
-    qkz80_uint8 dat2(pull_byte_from_opcode_stream());
-    qkz80_uint8 result(dat1 & dat2);
-    set_reg8(result,reg_A);
-    // Z80: H always 1, 8080: H = bit 3 of (op1 | op2)
-    qkz80_uint8 hc = (cpu_mode == MODE_Z80) ? 1 : (((dat1 | dat2) & 0x08) != 0);
-    regs.set_flags_from_logic8(result,0,hc);
-    trace->asm_op("ani 0x%0x",dat2);
-    return;
-  }
+      if (has_dd_prefix) trace->asm_op("add ix,%s",name_reg16(rp));
+      else if (has_fd_prefix) trace->asm_op("add iy,%s",name_reg16(rp));
+      else trace->asm_op("dad %s",name_reg16(rp));
+      trace->add_reg16(rp);
+      return;
+    }
 
- if ((opcode & 0xf8) == 0xb0 ) { // ORA S
-    qkz80_uint8 src_reg(opcode & 0x07);
-    qkz80_uint8 dat1(get_reg8(src_reg));
-    qkz80_uint8 dat2(get_reg8(reg_A));
-    qkz80_uint8 result(dat1 | dat2);
-    set_reg8(result,reg_A);
-    regs.set_flags_from_logic8(result,0,0);
-    trace->asm_op("ora %s",name_reg8(src_reg));
-    trace->add_reg8(src_reg);
-    return;
- }
+    if ((opcode & 0xf8) == 0xa0 ) { // ANA S
+      qkz80_uint8 src_reg(opcode & 0x07);
+      qkz80_uint8 dat1(get_reg8(src_reg));
+      qkz80_uint8 dat2(get_reg8(reg_A));
+      qkz80_uint8 result(dat1 & dat2);
+      set_reg8(result,reg_A);
+      // Z80: H always 1, 8080: H = bit 3 of (op1 | op2)
+      qkz80_uint8 hc = (cpu_mode == MODE_Z80) ? 1 : (((dat1 | dat2) & 0x08) != 0);
+      regs.set_flags_from_logic8(result,0,hc);
+      trace->asm_op("ana %s",name_reg8(src_reg));
+      trace->add_reg8(src_reg);
+      return;
+    }
 
- if (opcode == 0xf6) { // ORI
-    qkz80_uint8 dat1(get_reg8(reg_A));
-    qkz80_uint8 dat2(pull_byte_from_opcode_stream());
-    qkz80_uint8 result(dat1 | dat2);
-    set_reg8(result,reg_A);
-    regs.set_flags_from_logic8(result,0,0);
-    trace->asm_op("ori 0x%0x",dat2);
-    return;
-  }
+    if (opcode == 0xe6) { // ANI
+      qkz80_uint8 dat1(get_reg8(reg_A));
+      qkz80_uint8 dat2(pull_byte_from_opcode_stream());
+      qkz80_uint8 result(dat1 & dat2);
+      set_reg8(result,reg_A);
+      // Z80: H always 1, 8080: H = bit 3 of (op1 | op2)
+      qkz80_uint8 hc = (cpu_mode == MODE_Z80) ? 1 : (((dat1 | dat2) & 0x08) != 0);
+      regs.set_flags_from_logic8(result,0,hc);
+      trace->asm_op("ani 0x%0x",dat2);
+      return;
+    }
 
- if ((opcode & 0xf8) == 0xA8 ) { //XRA S
-    qkz80_uint8 src_reg(opcode & 0x07);
-    qkz80_uint8 dat1(get_reg8(src_reg));
-    qkz80_uint8 dat2(get_reg8(reg_A));
-    qkz80_uint8 result(dat1 ^ dat2);
-    set_reg8(result,reg_A);
-    regs.set_flags_from_logic8(result,0,0);
-    trace->asm_op("xra %s",name_reg8(src_reg));
-    trace->add_reg8(src_reg);
-    return;
- }
+    if ((opcode & 0xf8) == 0xb0 ) { // ORA S
+      qkz80_uint8 src_reg(opcode & 0x07);
+      qkz80_uint8 dat1(get_reg8(src_reg));
+      qkz80_uint8 dat2(get_reg8(reg_A));
+      qkz80_uint8 result(dat1 | dat2);
+      set_reg8(result,reg_A);
+      regs.set_flags_from_logic8(result,0,0);
+      trace->asm_op("ora %s",name_reg8(src_reg));
+      trace->add_reg8(src_reg);
+      return;
+    }
 
- if (opcode == 0xee) { // XRI
-    qkz80_uint8 dat1(get_reg8(reg_A));
-    qkz80_uint8 dat2(pull_byte_from_opcode_stream());
-    qkz80_uint8 result(dat1 ^ dat2);
-    set_reg8(result,reg_A);
-    regs.set_flags_from_logic8(result,0,0);
-    trace->asm_op("xri 0x%0x",dat2);
-    return;
- }
+    if (opcode == 0xf6) { // ORI
+      qkz80_uint8 dat1(get_reg8(reg_A));
+      qkz80_uint8 dat2(pull_byte_from_opcode_stream());
+      qkz80_uint8 result(dat1 | dat2);
+      set_reg8(result,reg_A);
+      regs.set_flags_from_logic8(result,0,0);
+      trace->asm_op("ori 0x%0x",dat2);
+      return;
+    }
 
- if (opcode == 0x2f) { // CPL
-    qkz80_uint8 result(get_reg8(reg_A));
-    result=result ^ -1;
-    set_reg8(result,reg_A);
-    regs.set_flags_from_cpl(result);
-    trace->asm_op("cpl");
-    return;
- }
+    if ((opcode & 0xf8) == 0xA8 ) { //XRA S
+      qkz80_uint8 src_reg(opcode & 0x07);
+      qkz80_uint8 dat1(get_reg8(src_reg));
+      qkz80_uint8 dat2(get_reg8(reg_A));
+      qkz80_uint8 result(dat1 ^ dat2);
+      set_reg8(result,reg_A);
+      regs.set_flags_from_logic8(result,0,0);
+      trace->asm_op("xra %s",name_reg8(src_reg));
+      trace->add_reg8(src_reg);
+      return;
+    }
 
- if (opcode == 0x3f) { // CCF
-   qkz80_uint8 a_val = get_reg8(reg_A);
-   regs.set_flags_from_ccf(a_val);
-   trace->asm_op("ccf");
-   return;
- }
+    if (opcode == 0xee) { // XRI
+      qkz80_uint8 dat1(get_reg8(reg_A));
+      qkz80_uint8 dat2(pull_byte_from_opcode_stream());
+      qkz80_uint8 result(dat1 ^ dat2);
+      set_reg8(result,reg_A);
+      regs.set_flags_from_logic8(result,0,0);
+      trace->asm_op("xri 0x%0x",dat2);
+      return;
+    }
 
- if (opcode == 0x37) { // SCF
-   qkz80_uint8 a_val = get_reg8(reg_A);
-   regs.set_flags_from_scf(a_val);
-   trace->asm_op("scf");
-   return;
-  }
+    if (opcode == 0x2f) { // CPL
+      qkz80_uint8 result(get_reg8(reg_A));
+      result=result ^ -1;
+      set_reg8(result,reg_A);
+      regs.set_flags_from_cpl(result);
+      trace->asm_op("cpl");
+      return;
+    }
 
- if (opcode == 0xc3) { // JMP
-    qkz80_uint16 addr(pull_word_from_opcode_stream());
-    regs.PC.set_pair16(addr);
-    trace->asm_op("jmp 0x%0x",addr);
-    return;
-  }
+    if (opcode == 0x3f) { // CCF
+      qkz80_uint8 a_val = get_reg8(reg_A);
+      regs.set_flags_from_ccf(a_val);
+      trace->asm_op("ccf");
+      return;
+    }
 
- if ((opcode & 0xc7) == 0xc2) { // Jccc conditional jump
-    qkz80_uint16 addr(pull_word_from_opcode_stream());
-    qkz80_uint8 cc_active((opcode >> 3) & 0x7);
-    trace->asm_op("j%s 0x%x",name_condition_code(cc_active),addr);
-    if(regs.condition_code(cc_active,regs.get_flags())) {
+    if (opcode == 0x37) { // SCF
+      qkz80_uint8 a_val = get_reg8(reg_A);
+      regs.set_flags_from_scf(a_val);
+      trace->asm_op("scf");
+      return;
+    }
+
+    if (opcode == 0xc3) { // JMP
+      qkz80_uint16 addr(pull_word_from_opcode_stream());
       regs.PC.set_pair16(addr);
-      trace->comment("jump taken");
-    } else {
-      trace->comment("jump not taken");
+      trace->asm_op("jmp 0x%0x",addr);
+      return;
     }
-    return;
-  }
+
+    if ((opcode & 0xc7) == 0xc2) { // Jccc conditional jump
+      qkz80_uint16 addr(pull_word_from_opcode_stream());
+      qkz80_uint8 cc_active((opcode >> 3) & 0x7);
+      trace->asm_op("j%s 0x%x",name_condition_code(cc_active),addr);
+      if(regs.condition_code(cc_active,regs.get_flags())) {
+        regs.PC.set_pair16(addr);
+        trace->comment("jump taken");
+      } else {
+        trace->comment("jump not taken");
+      }
+      return;
+    }
 
 
- if (opcode == 0) { // NOP
-    trace->asm_op("nop");
-    return;
- }
+    if (opcode == 0) { // NOP
+      trace->asm_op("nop");
+      return;
+    }
 
- if (opcode == 0xfb) { // EI
-    trace->asm_op("ei");
-    return;
- }
+    if (opcode == 0xfb) { // EI
+      trace->asm_op("ei");
+      return;
+    }
 
- if (opcode == 0xf3) { // DI
-    trace->asm_op("di");
-    return;
- }
+    if (opcode == 0xf3) { // DI
+      trace->asm_op("di");
+      return;
+    }
 
- if (opcode == 0xc9) { // RET
-    qkz80_uint16 addr(pop_word());
-    regs.PC.set_pair16(addr);
-    trace->asm_op("ret");
-    return;
- }
-
- if ((opcode & 0xc7) == 0xc0) { // Rxx
-    qkz80_big_uint fl_code=(opcode>>3) & 0x7;
-    trace->asm_op("r%s",name_condition_code(fl_code));
-    if(regs.condition_code(fl_code,regs.get_flags())) {
+    if (opcode == 0xc9) { // RET
       qkz80_uint16 addr(pop_word());
       regs.PC.set_pair16(addr);
-      trace->comment("conditional ret taken");
-    } else {
-      trace->comment("conditional ret not taken");
+      trace->asm_op("ret");
+      return;
     }
-    return;
- }
 
- if (opcode == 0xe9) { // JP (HL/IX/IY) - pchl
-    qkz80_uint16 addr(get_reg16(active_hl));
-    regs.PC.set_pair16(addr);
-    if (has_dd_prefix) trace->asm_op("jp (ix)");
-    else if (has_fd_prefix) trace->asm_op("jp (iy)");
-    else trace->asm_op("pchl");
-    return;
- }
-
- if (opcode == 0xf9) { // LD SP,HL/IX/IY - sphl
-    qkz80_uint16 addr(get_reg16(active_hl));
-    set_reg16(addr,regp_SP);
-    if (has_dd_prefix) trace->asm_op("ld sp,ix");
-    else if (has_fd_prefix) trace->asm_op("ld sp,iy");
-    else trace->asm_op("sphl");
-    return;
-  }
-
- if (opcode == 0xe3) { // EX (SP),HL/IX/IY - xthl
-    qkz80_uint16 addr(get_reg16(regp_SP));
-    qkz80_uint16 dat(mem.fetch_mem16(addr));
-    qkz80_uint16 hl(get_reg16(active_hl));
-    set_reg16(dat,active_hl);
-    mem.store_mem16(addr,hl);
-    if (has_dd_prefix) trace->asm_op("ex (sp),ix");
-    else if (has_fd_prefix) trace->asm_op("ex (sp),iy");
-    else trace->asm_op("xthl");
-    return;
-  }
-
- if (opcode == 0x07) { // RLCA
-    qkz80_big_uint dat1(get_reg8(reg_A));
-    qkz80_big_uint cy(0);
-    if((dat1 & 0x080)!=0) {
-      cy=1;
-    }
-    dat1=(dat1<<1) | cy;
-    set_reg8(dat1,reg_A);
-    regs.set_flags_from_rotate_acc(dat1, cy);
-    trace->asm_op("rlca");
-    return;
- }
- if (opcode == 0x0f) { // RRCA
-    qkz80_big_uint dat1(get_reg8(reg_A));
-    qkz80_uint8 high_bit(0);
-    qkz80_uint8 low_bit(dat1 & 0x1);
-    if(low_bit!=0) {
-      high_bit=0x80;
-    }
-    dat1=(dat1>>1) | high_bit;
-    set_reg8(dat1,reg_A);
-    regs.set_flags_from_rotate_acc(dat1, low_bit);
-    trace->asm_op("rrca");
-    return;
- }
-
- if (opcode == 0x17) { // RLA
-    qkz80_big_uint a_val(get_reg8(reg_A));
-    qkz80_uint8 new_carry(0);
-    if((a_val&0x80)!=0)
-      new_carry=1;
-    qkz80_uint8 old_carry(regs.get_carry_as_int());
-    a_val=(a_val<<1) | old_carry;
-    set_reg8(a_val,reg_A);
-    regs.set_flags_from_rotate_acc(a_val, new_carry);
-    trace->asm_op("rla");
-    return;
- }
-
- if (opcode == 0x1f) { // RRA
-    qkz80_big_uint a_val(get_reg8(reg_A));
-    qkz80_uint8 new_carry(a_val&1);
-    qkz80_uint8 old_carry(regs.get_carry_as_int());
-    a_val=a_val>>1;
-    if(old_carry)
-      a_val|=0x80;
-    else
-      a_val&=0x7f;
-    set_reg8(a_val,reg_A);
-    regs.set_flags_from_rotate_acc(a_val, new_carry);
-    trace->asm_op("rra");
-    return;
-  }
-
- if ((opcode & 0xcf) == 0xc1) { // POP
-    qkz80_uint8 rpair((opcode >> 4) & 0x3);
-    // SP illegal for push, that code 3 means AF
-    if(rpair==regp_SP) {
-      rpair=regp_AF;
-    }
-    // If DD/FD prefix and register pair is HL (2), use IX/IY instead
-    if ((has_dd_prefix || has_fd_prefix) && rpair == regp_HL) {
-      rpair = active_hl;
-    }
-    qkz80_uint16 pair_val(pop_word());
-    set_reg16(pair_val,rpair);
-    trace->asm_op("pop %s",name_reg16(rpair));
-    trace->add_reg16(rpair);
-    return;
-  }
-
- if ((opcode & 0xcf) == 0xc5) { // PUSH
-    qkz80_uint8 rpair((opcode >> 4) & 0x3);
-    // SP illegal for push, that code 3 means AF
-    if(rpair==regp_SP) {
-      rpair=regp_AF;
-    }
-    // If DD/FD prefix and register pair is HL (2), use IX/IY instead
-    if ((has_dd_prefix || has_fd_prefix) && rpair == regp_HL) {
-      rpair = active_hl;
-    }
-    qkz80_uint16 val(get_reg16(rpair));
-    push_word(val);
-    trace->asm_op("push %s",name_reg16(rpair));
-    trace->add_reg16(rpair);
-    return;
-  }
-
- if (opcode == 0xdb) { // IN
-    qkz80_uint8 port(pull_byte_from_opcode_stream());
-    // std::cout << "input from port=" << std::hex << int(port) << std::endl;
-    //    std::cout << "input from port=" << std::dec << int(port) << std::endl;
-    trace->asm_op("in 0x%0x",port);
-    // find input byte for 2sio
-    qkz80_uint8 dat(0);
-    if(port == 0x10)
-      dat=2; // transmit buffer empty
-    set_reg8(dat,reg_A);    
-    return;
-  }
-
- if (opcode == 0xd3) { // OUT
-    qkz80_uint8 port(pull_byte_from_opcode_stream());
-    qkz80_uint8 rega(get_reg8(reg_A));
-    if (port == 0x11) {
-      char ch(rega);
-      std::cout << ch << std::flush;
-    } else {
-      std::cout << "output to port=" << std::hex << int(port) << " data= " << std::hex << int(rega) << std::endl;
-    }
-    //    std::cout << "output to port=" << std::dec << int(port) << " data= " << std::hex << int(rega) << std::endl;
-    trace->asm_op("port 0x%0x",port);
-    trace->add_reg8(reg_A);
-    return;
-  } 
-
- if (opcode == 0x27) { // DAA - Based on tnylpo implementation
-    qkz80_uint8 rega = get_reg8(reg_A);
-    qkz80_uint8 flags = regs.get_flags();
-    qkz80_uint8 low = rega & 0x0f;
-    qkz80_uint8 high = (rega >> 4) & 0x0f;
-    qkz80_uint8 flag_c = fetch_carry_as_int();
-    qkz80_uint8 flag_h = (flags & qkz80_cpu_flags::AC) != 0;
-    qkz80_uint8 flag_n = (flags & qkz80_cpu_flags::N) != 0;
-    qkz80_uint8 diff;
-    qkz80_uint8 new_c, new_h;
-
-    // Calculate adjustment byte for A (tnylpo logic)
-    if (flag_c) {
-      if (low < 0xa) {
-        diff = flag_h ? 0x66 : 0x60;
+    if ((opcode & 0xc7) == 0xc0) { // Rxx
+      qkz80_big_uint fl_code=(opcode>>3) & 0x7;
+      trace->asm_op("r%s",name_condition_code(fl_code));
+      if(regs.condition_code(fl_code,regs.get_flags())) {
+        qkz80_uint16 addr(pop_word());
+        regs.PC.set_pair16(addr);
+        trace->comment("conditional ret taken");
       } else {
-        diff = 0x66;
+        trace->comment("conditional ret not taken");
       }
-    } else {
-      if (low < 0xa) {
-        if (high < 0xa) {
-          diff = flag_h ? 0x06 : 0x00;
-        } else {
+      return;
+    }
+
+    if (opcode == 0xe9) { // JP (HL/IX/IY) - pchl
+      qkz80_uint16 addr(get_reg16(active_hl));
+      regs.PC.set_pair16(addr);
+      if (has_dd_prefix) trace->asm_op("jp (ix)");
+      else if (has_fd_prefix) trace->asm_op("jp (iy)");
+      else trace->asm_op("pchl");
+      return;
+    }
+
+    if (opcode == 0xf9) { // LD SP,HL/IX/IY - sphl
+      qkz80_uint16 addr(get_reg16(active_hl));
+      set_reg16(addr,regp_SP);
+      if (has_dd_prefix) trace->asm_op("ld sp,ix");
+      else if (has_fd_prefix) trace->asm_op("ld sp,iy");
+      else trace->asm_op("sphl");
+      return;
+    }
+
+    if (opcode == 0xe3) { // EX (SP),HL/IX/IY - xthl
+      qkz80_uint16 addr(get_reg16(regp_SP));
+      qkz80_uint16 dat(mem.fetch_mem16(addr));
+      qkz80_uint16 hl(get_reg16(active_hl));
+      set_reg16(dat,active_hl);
+      mem.store_mem16(addr,hl);
+      if (has_dd_prefix) trace->asm_op("ex (sp),ix");
+      else if (has_fd_prefix) trace->asm_op("ex (sp),iy");
+      else trace->asm_op("xthl");
+      return;
+    }
+
+    if (opcode == 0x07) { // RLCA
+      qkz80_big_uint dat1(get_reg8(reg_A));
+      qkz80_big_uint cy(0);
+      if((dat1 & 0x080)!=0) {
+        cy=1;
+      }
+      dat1=(dat1<<1) | cy;
+      set_reg8(dat1,reg_A);
+      regs.set_flags_from_rotate_acc(dat1, cy);
+      trace->asm_op("rlca");
+      return;
+    }
+    if (opcode == 0x0f) { // RRCA
+      qkz80_big_uint dat1(get_reg8(reg_A));
+      qkz80_uint8 high_bit(0);
+      qkz80_uint8 low_bit(dat1 & 0x1);
+      if(low_bit!=0) {
+        high_bit=0x80;
+      }
+      dat1=(dat1>>1) | high_bit;
+      set_reg8(dat1,reg_A);
+      regs.set_flags_from_rotate_acc(dat1, low_bit);
+      trace->asm_op("rrca");
+      return;
+    }
+
+    if (opcode == 0x17) { // RLA
+      qkz80_big_uint a_val(get_reg8(reg_A));
+      qkz80_uint8 new_carry(0);
+      if((a_val&0x80)!=0)
+        new_carry=1;
+      qkz80_uint8 old_carry(regs.get_carry_as_int());
+      a_val=(a_val<<1) | old_carry;
+      set_reg8(a_val,reg_A);
+      regs.set_flags_from_rotate_acc(a_val, new_carry);
+      trace->asm_op("rla");
+      return;
+    }
+
+    if (opcode == 0x1f) { // RRA
+      qkz80_big_uint a_val(get_reg8(reg_A));
+      qkz80_uint8 new_carry(a_val&1);
+      qkz80_uint8 old_carry(regs.get_carry_as_int());
+      a_val=a_val>>1;
+      if(old_carry)
+        a_val|=0x80;
+      else
+        a_val&=0x7f;
+      set_reg8(a_val,reg_A);
+      regs.set_flags_from_rotate_acc(a_val, new_carry);
+      trace->asm_op("rra");
+      return;
+    }
+
+    if ((opcode & 0xcf) == 0xc1) { // POP
+      qkz80_uint8 rpair((opcode >> 4) & 0x3);
+      // SP illegal for push, that code 3 means AF
+      if(rpair==regp_SP) {
+        rpair=regp_AF;
+      }
+      // If DD/FD prefix and register pair is HL (2), use IX/IY instead
+      if ((has_dd_prefix || has_fd_prefix) && rpair == regp_HL) {
+        rpair = active_hl;
+      }
+      qkz80_uint16 pair_val(pop_word());
+      set_reg16(pair_val,rpair);
+      trace->asm_op("pop %s",name_reg16(rpair));
+      trace->add_reg16(rpair);
+      return;
+    }
+
+    if ((opcode & 0xcf) == 0xc5) { // PUSH
+      qkz80_uint8 rpair((opcode >> 4) & 0x3);
+      // SP illegal for push, that code 3 means AF
+      if(rpair==regp_SP) {
+        rpair=regp_AF;
+      }
+      // If DD/FD prefix and register pair is HL (2), use IX/IY instead
+      if ((has_dd_prefix || has_fd_prefix) && rpair == regp_HL) {
+        rpair = active_hl;
+      }
+      qkz80_uint16 val(get_reg16(rpair));
+      push_word(val);
+      trace->asm_op("push %s",name_reg16(rpair));
+      trace->add_reg16(rpair);
+      return;
+    }
+
+    if (opcode == 0xdb) { // IN
+      qkz80_uint8 port(pull_byte_from_opcode_stream());
+      // std::cout << "input from port=" << std::hex << int(port) << std::endl;
+      //    std::cout << "input from port=" << std::dec << int(port) << std::endl;
+      trace->asm_op("in 0x%0x",port);
+      // find input byte for 2sio
+      qkz80_uint8 dat(0);
+      if(port == 0x10)
+        dat=2; // transmit buffer empty
+      set_reg8(dat,reg_A);
+      return;
+    }
+
+    if (opcode == 0xd3) { // OUT
+      qkz80_uint8 port(pull_byte_from_opcode_stream());
+      qkz80_uint8 rega(get_reg8(reg_A));
+      if (port == 0x11) {
+        char ch(rega);
+        std::cout << ch << std::flush;
+      } else {
+        std::cout << "output to port=" << std::hex << int(port) << " data= " << std::hex << int(rega) << std::endl;
+      }
+      //    std::cout << "output to port=" << std::dec << int(port) << " data= " << std::hex << int(rega) << std::endl;
+      trace->asm_op("port 0x%0x",port);
+      trace->add_reg8(reg_A);
+      return;
+    }
+
+    if (opcode == 0x27) { // DAA - Based on tnylpo implementation
+      qkz80_uint8 rega = get_reg8(reg_A);
+      qkz80_uint8 flags = regs.get_flags();
+      qkz80_uint8 low = rega & 0x0f;
+      qkz80_uint8 high = (rega >> 4) & 0x0f;
+      qkz80_uint8 flag_c = fetch_carry_as_int();
+      qkz80_uint8 flag_h = (flags & qkz80_cpu_flags::AC) != 0;
+      qkz80_uint8 flag_n = (flags & qkz80_cpu_flags::N) != 0;
+      qkz80_uint8 diff;
+      qkz80_uint8 new_c, new_h;
+
+      // Calculate adjustment byte for A (tnylpo logic)
+      if (flag_c) {
+        if (low < 0xa) {
           diff = flag_h ? 0x66 : 0x60;
+        } else {
+          diff = 0x66;
         }
       } else {
-        diff = (high < 0x9) ? 0x06 : 0x66;
+        if (low < 0xa) {
+          if (high < 0xa) {
+            diff = flag_h ? 0x06 : 0x00;
+          } else {
+            diff = flag_h ? 0x66 : 0x60;
+          }
+        } else {
+          diff = (high < 0x9) ? 0x06 : 0x66;
+        }
       }
-    }
 
-    // Calculate new C flag (tnylpo logic)
-    if (flag_c) {
-      new_c = 1;
-    } else {
-      if (low < 0xa) {
-        new_c = (high < 0xa) ? 0 : 1;
+      // Calculate new C flag (tnylpo logic)
+      if (flag_c) {
+        new_c = 1;
       } else {
-        new_c = (high < 0x9) ? 0 : 1;
+        if (low < 0xa) {
+          new_c = (high < 0xa) ? 0 : 1;
+        } else {
+          new_c = (high < 0x9) ? 0 : 1;
+        }
       }
-    }
 
-    // Calculate new H flag (tnylpo logic)
-    if (flag_n) {
-      if (flag_h) {
-        new_h = (low < 0x6) ? 1 : 0;
+      // Calculate new H flag (tnylpo logic)
+      if (flag_n) {
+        if (flag_h) {
+          new_h = (low < 0x6) ? 1 : 0;
+        } else {
+          new_h = 0;
+        }
       } else {
-        new_h = 0;
+        new_h = (low < 0xa) ? 0 : 1;
       }
-    } else {
-      new_h = (low < 0xa) ? 0 : 1;
+
+      // Apply correction and set result
+      qkz80_uint8 result;
+      if (flag_n) {
+        result = rega - diff;
+      } else {
+        result = rega + diff;
+      }
+
+      set_reg8(result, reg_A);
+      regs.set_flags_from_daa(result, flag_n, new_h, new_c);
+      trace->asm_op("daa");
+      return;
     }
 
-    // Apply correction and set result
-    qkz80_uint8 result;
-    if (flag_n) {
-      result = rega - diff;
-    } else {
-      result = rega + diff;
+    if((opcode&0xc7)==0xc7) { // RST x
+      qkz80_uint16 rst_num((opcode>>3)&0x7);
+      const qkz80_uint16 pc=regs.PC.get_pair16();
+      push_word(pc);
+      qkz80_uint16 addr(rst_num*8);
+      regs.PC.set_pair16(addr);
+      trace->asm_op("rst %d",rst_num);
+      return;
     }
 
-    set_reg8(result, reg_A);
-    regs.set_flags_from_daa(result, flag_n, new_h, new_c);
-    trace->asm_op("daa");
+    {
+      const qkz80_uint16 pc=regs.PC.get_pair16();
+      printf("unimplemented opcode opcode=%#02x pc=%#04x\n",opcode,pc);
+      exit(1);
+    }
     return;
   }
-
- if((opcode&0xc7)==0xc7) { // RST x
-   qkz80_uint16 rst_num((opcode>>3)&0x7);
-   const qkz80_uint16 pc=regs.PC.get_pair16();
-   push_word(pc);
-   qkz80_uint16 addr(rst_num*8);
-   regs.PC.set_pair16(addr);
-   trace->asm_op("rst %d",rst_num);
-   return;
- }
-
- {
-     const qkz80_uint16 pc=regs.PC.get_pair16();
-     printf("unimplemented opcode opcode=%#02x pc=%#04x\n",opcode,pc);
-     exit(1);
- }
- return;
 }
 
 // Z80 rotate/shift helper functions

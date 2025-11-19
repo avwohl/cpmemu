@@ -4,28 +4,28 @@
 
 class parity_info_type {
 private:
-  qkz80_uint8 parity[256];  
+  qkz80_uint8 parity[256];
 
   qkz80_uint8 even_parity(unsigned int i) const {
     i&=0x0ff;
     int bits_on(0);
     while(i!=0) {
       if((i&1) !=0)
-	bits_on++;
+        bits_on++;
       i=i>>1;
-    }    
+    }
     if ((bits_on & 1) ==0)
       return 1;
     return 0;
   }
 
 public:
-   qkz80_uint8 get_parity_of_byte(qkz80_uint8 abyte) {
+  qkz80_uint8 get_parity_of_byte(qkz80_uint8 abyte) {
     return parity[0x0ff & abyte];
-   }
+  }
 
   parity_info_type() {
-    for(unsigned int i=0;i<256;i++) {
+    for(unsigned int i=0; i<256; i++) {
       parity[i]=even_parity(i);
     }
   }
@@ -35,13 +35,13 @@ static parity_info_type parity_info;
 
 // Forward declarations of helper functions for bit-by-bit flag simulation
 static qkz80_uint8 add8_bitwise(qkz80_uint8 s1, qkz80_uint8 s2, int carry_in,
-                                 qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
-                                 qkz80_uint8& flag_x, qkz80_uint8& flag_y,
-                                 qkz80_uint8& flag_z, qkz80_uint8& flag_s);
+                                qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
+                                qkz80_uint8& flag_x, qkz80_uint8& flag_y,
+                                qkz80_uint8& flag_z, qkz80_uint8& flag_s);
 static qkz80_uint8 sub8_bitwise(qkz80_uint8 minuend, qkz80_uint8 subtrahend, int borrow_in,
-                                 qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
-                                 qkz80_uint8& flag_x, qkz80_uint8& flag_y,
-                                 qkz80_uint8& flag_z, qkz80_uint8& flag_s);
+                                qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
+                                qkz80_uint8& flag_x, qkz80_uint8& flag_y,
+                                qkz80_uint8& flag_z, qkz80_uint8& flag_s);
 
 // Note: This is now a member function (const), not static, so it can access cpu_mode
 qkz80_uint8 qkz80_reg_set::fix_flags(qkz80_uint8 new_flags) const {
@@ -63,9 +63,8 @@ void qkz80_reg_set::set_flags(qkz80_uint8 new_flags) {
 }
 
 void qkz80_reg_set::set_flags_from_logic8(qkz80_big_uint a,
-					    qkz80_uint8 new_carry,
-					    qkz80_uint8 new_half_carry)
-{
+    qkz80_uint8 new_carry,
+    qkz80_uint8 new_half_carry) {
   qkz80_uint8 sum8bit(a & 0x0ff);
   qkz80_uint8 new_flags=fix_flags(0);
 
@@ -605,9 +604,9 @@ void qkz80_reg_set::set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry, bool
 // Helper: Bit-by-bit 8-bit addition with carry (based on tnylpo)
 // Returns result and sets all flags via bit-simulation
 static qkz80_uint8 add8_bitwise(qkz80_uint8 s1, qkz80_uint8 s2, int carry_in,
-                                 qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
-                                 qkz80_uint8& flag_x, qkz80_uint8& flag_y,
-                                 qkz80_uint8& flag_z, qkz80_uint8& flag_s) {
+                                qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
+                                qkz80_uint8& flag_x, qkz80_uint8& flag_y,
+                                qkz80_uint8& flag_z, qkz80_uint8& flag_s) {
   qkz80_uint8 result = 0;
   qkz80_uint16 cy = carry_in ? 1 : 0;
   qkz80_uint16 ma = 1;
@@ -644,9 +643,9 @@ static qkz80_uint8 add8_bitwise(qkz80_uint8 s1, qkz80_uint8 s2, int carry_in,
 
 // Helper: Bit-by-bit 8-bit subtraction with borrow (based on tnylpo)
 static qkz80_uint8 sub8_bitwise(qkz80_uint8 minuend, qkz80_uint8 subtrahend, int borrow_in,
-                                 qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
-                                 qkz80_uint8& flag_x, qkz80_uint8& flag_y,
-                                 qkz80_uint8& flag_z, qkz80_uint8& flag_s) {
+                                qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
+                                qkz80_uint8& flag_x, qkz80_uint8& flag_y,
+                                qkz80_uint8& flag_z, qkz80_uint8& flag_s) {
   qkz80_uint8 result = 0;
   qkz80_uint16 cy = borrow_in ? 1 : 0;
   qkz80_uint16 ma = 1;
@@ -683,9 +682,9 @@ static qkz80_uint8 sub8_bitwise(qkz80_uint8 minuend, qkz80_uint8 subtrahend, int
 // Helper: Bit-by-bit 16-bit addition with carry (based on tnylpo)
 // Returns result and sets all flags via bit-simulation
 static qkz80_uint16 add16_bitwise(qkz80_uint16 s1, qkz80_uint16 s2, int carry_in,
-                                   qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
-                                   qkz80_uint8& flag_x, qkz80_uint8& flag_y,
-                                   qkz80_uint8& flag_z, qkz80_uint8& flag_s) {
+                                  qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
+                                  qkz80_uint8& flag_x, qkz80_uint8& flag_y,
+                                  qkz80_uint8& flag_z, qkz80_uint8& flag_s) {
   qkz80_uint16 result = 0;
   qkz80_big_uint cy = carry_in ? 1 : 0;
   qkz80_big_uint ma = 1;
@@ -721,9 +720,9 @@ static qkz80_uint16 add16_bitwise(qkz80_uint16 s1, qkz80_uint16 s2, int carry_in
 
 // Helper: Bit-by-bit 16-bit subtraction with borrow (based on tnylpo)
 static qkz80_uint16 sub16_bitwise(qkz80_uint16 minuend, qkz80_uint16 subtrahend, int borrow_in,
-                                   qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
-                                   qkz80_uint8& flag_x, qkz80_uint8& flag_y,
-                                   qkz80_uint8& flag_z, qkz80_uint8& flag_s) {
+                                  qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
+                                  qkz80_uint8& flag_x, qkz80_uint8& flag_y,
+                                  qkz80_uint8& flag_z, qkz80_uint8& flag_s) {
   qkz80_uint16 result = 0;
   qkz80_big_uint cy = borrow_in ? 1 : 0;
   qkz80_big_uint ma = 1;
