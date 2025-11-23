@@ -1,9 +1,0 @@
-Loaded 8704 bytes from tests/zexdoc.com
-Z80 instruction exerciser
-<adc,sbc> hl,<bc,de,hl,sp>....  OK
-add hl,<bc,de,hl,sp>..........  OK
-add ix,<bc,de,ix,sp>..........  OK
-add iy,<bc,de,iy,sp>..........  OK
-aluop a,nn....................  ERROR **** crc expected:48799360 found:83c95cf7
-aluop a,<b,c,d,e,h,l,(hl),a>..  ERROR **** crc expected:fe43b016 found:762972f2
-aluop a,<ixh,ixl,iyh,iyl>.....
