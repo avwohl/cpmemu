@@ -1,7 +1,23 @@
 # CP/M Emulator
 
-A CP/M 2.2 operating system emulator that runs legacy 8-bit CP/M applications on modern Linux systems. Features both Intel 8080 and Zilog Z80 CPU emulation with comprehensive BDOS/BIOS support.
+A CP/M 2.2 operating system emulator that runs legacy 8-bit CP/M applications on modern Linux systems. Features both Intel 8080 and Zilog Z80 CPU emulation with  comprehensive BDOS/BIOS support.
 
+cpmemu emulates BIOS and BDOs calls and translates them to Unix.  Most emulators
+have a file on the OS containing a native CP/M file system.  Then, when
+testing a compiler, it is necessary to import programs to the CP/M disk and export
+test run results.  With cpmemu, all the files can be stored in the linux
+file system, which is more convenient to manage.
+
+This translated file io emulator idea is not new. The tnylpo
+package https://github.com/SvenMb/gbrein_tnylpo has been doing it since 2018.
+However, tnylpo only works well with filenames that fit the 8.3 format.
+Also, tnylpo comes with a conversion program to handle the EOL conversions.
+
+cpmemu allows mapping files anywhere in the linux file system
+of any length with any characters into a fake 8.3 CP/M name.  This allows
+better naming of compiler test suite programs.  Also, a config file can
+be supplied for the file name mapping and type (text vs binary) for
+each file.
 ## Features
 
 - **Dual CPU modes**: Intel 8080 (default) and Zilog Z80 instruction sets
