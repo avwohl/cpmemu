@@ -21,7 +21,7 @@ each file.
 ## Features
 
 - **Dual CPU modes**: Intel 8080 (default) and Zilog Z80 instruction sets
-- **Complete CP/M environment**: BDOS and BIOS function emulation
+- **CP/M environment**: BDOS file/console functions and BIOS character I/O
 - **File I/O translation**: Maps CP/M file operations to Unix filesystem
 - **Text/binary mode**: Automatic EOL conversion between CP/M and Unix
 - **Device redirection**: Printer and auxiliary I/O device support
@@ -52,7 +52,7 @@ make
 |--------|-------------|
 | `--8080` | Run in 8080 mode (default) |
 | `--z80` | Run in Z80 mode with full instruction set |
-| `--progress[=N]` | Report progress every N million instructions (default: 100) |
+| `--progress[=N]` | Report progress every N million instructions (default: disabled; 100 if flag used without N) |
 
 ### Examples
 
@@ -122,7 +122,7 @@ Run with: `./src/cpmemu config.cfg`
 | 6 | Direct Console I/O | Supported |
 | 7-8 | Get/Set IOBYTE | Supported |
 | 9 | Print String | Supported |
-| 10 | Read Console Buffer | Not implemented |
+| 10 | Read Console Buffer | Stub (returns 0) |
 | 11 | Console Status | Supported |
 | 12 | Get Version | Supported |
 | 13-14 | Reset/Select Disk | Supported |
@@ -141,9 +141,9 @@ Run with: `./src/cpmemu config.cfg`
 
 ### BIOS Functions
 
-- Console I/O: CONST, CONIN, CONOUT
-- Device I/O: LIST, PUNCH, READER, LISTST
-- Disk Operations: SELDSK, SETTRK, SETSEC, SETDMA, READ, WRITE
+- Console I/O: CONST, CONIN, CONOUT (implemented)
+- Device I/O: LIST, PUNCH, READER, LISTST (implemented)
+- Disk Operations: Stubs only (return success/fail per CPM_BIOS_DISK setting)
 
 ## CP/M Memory Layout
 

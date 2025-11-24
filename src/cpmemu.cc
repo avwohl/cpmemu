@@ -1190,6 +1190,15 @@ void CPMEmulator::bdos_call(qkz80_uint8 func) {
     bdos_reset_drive();
     break;
 
+  case 38: // Access Free Space
+    // Return A=0 indicating success
+    cpu->set_reg8(0, qkz80::reg_A);
+    break;
+
+  case 39: // Free Space
+    // No operation - just return
+    break;
+
   case 40: // Write Random with Zero Fill
     bdos_write_random_zero_fill();
     break;
