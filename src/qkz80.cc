@@ -407,9 +407,10 @@ void qkz80::execute(void) {
   if (has_ed_prefix) {
     // Most ED opcodes are duplicates or NOPs
     // We implement the documented and important undocumented ones
-
+    switch (opcode) {
     // 16-bit ADD/SUB with carry
-    if ((opcode & 0xcf) == 0x4a) { // ADC HL,ss
+    // ADC HL,ss: (opcode & 0xcf) == 0x4a
+    case 0x4a: case 0x5a: case 0x6a: case 0x7a: {
       qkz80_uint8 rp = (opcode >> 4) & 0x03;
       qkz80_big_uint hl_val = get_reg16(regp_HL);
       qkz80_big_uint rp_val = get_reg16(rp);
@@ -422,7 +423,8 @@ void qkz80::execute(void) {
       return;
     }
 
-    if ((opcode & 0xcf) == 0x42) { // SBC HL,ss
+    // SBC HL,ss: (opcode & 0xcf) == 0x42
+    case 0x42: case 0x52: case 0x62: case 0x72: {
       qkz80_uint8 rp = (opcode >> 4) & 0x03;
       qkz80_big_uint hl_val = get_reg16(regp_HL);
       qkz80_big_uint rp_val = get_reg16(rp);
@@ -436,7 +438,8 @@ void qkz80::execute(void) {
     }
 
     // Extended LD instructions
-    if ((opcode & 0xcf) == 0x43) { // LD (nn),BC/DE/SP/HL
+    // LD (nn),BC/DE/SP/HL: (opcode & 0xcf) == 0x43
+    case 0x43: case 0x53: case 0x63: case 0x73: {
       qkz80_uint8 rp = (opcode >> 4) & 0x03;
       qkz80_uint16 addr = pull_word_from_opcode_stream();
       qkz80_uint16 val = get_reg16(rp);
@@ -445,7 +448,8 @@ void qkz80::execute(void) {
       return;
     }
 
-    if ((opcode & 0xcf) == 0x4b) { // LD BC/DE/SP/HL,(nn)
+    // LD BC/DE/SP/HL,(nn): (opcode & 0xcf) == 0x4b
+    case 0x4b: case 0x5b: case 0x6b: case 0x7b: {
       qkz80_uint8 rp = (opcode >> 4) & 0x03;
       qkz80_uint16 addr = pull_word_from_opcode_stream();
       qkz80_uint16 val = read_word(addr);
@@ -454,8 +458,10 @@ void qkz80::execute(void) {
       return;
     }
 
-    // NEG - negate accumulator
-    if ((opcode & 0xc7) == 0x44) {  // NEG (also duplicates at 4C,54,5C,64,6C,74,7C)
+    // NEG - negate accumulator: (opcode & 0xc7) == 0x44
+    // (also duplicates at 4C,54,5C,64,6C,74,7C)
+    case 0x44: case 0x4c: case 0x54: case 0x5c:
+    case 0x64: case 0x6c: case 0x74: case 0x7c: {
       qkz80_uint8 a_val = get_reg8(reg_A);
       qkz80_big_uint result = 0 - a_val;
       regs.set_flags_from_diff8(result, 0, a_val, 0);
@@ -465,41 +471,44 @@ void qkz80::execute(void) {
     }
 
     // Interrupt mode
-    if (opcode == 0x46 || opcode == 0x4e || opcode == 0x66 || opcode == 0x6e) { // IM 0
+    // IM 0
+    case 0x46: case 0x4e: case 0x66: case 0x6e:
       regs.IM = 0;
       trace->asm_op("im 0");
       return;
-    }
-    if (opcode == 0x56 || opcode == 0x76) { // IM 1
+
+    // IM 1
+    case 0x56: case 0x76:
       regs.IM = 1;
       trace->asm_op("im 1");
       return;
-    }
-    if (opcode == 0x5e || opcode == 0x7e) { // IM 2
+
+    // IM 2
+    case 0x5e: case 0x7e:
       regs.IM = 2;
       trace->asm_op("im 2");
       return;
-    }
 
     // LD I,A / LD R,A / LD A,I / LD A,R
-    if (opcode == 0x47) { // LD I,A
+    case 0x47: // LD I,A
       regs.I = get_reg8(reg_A);
       trace->asm_op("ld i,a");
       return;
-    }
-    if (opcode == 0x4f) { // LD R,A
+
+    case 0x4f: // LD R,A
       regs.R = get_reg8(reg_A);
       trace->asm_op("ld r,a");
       return;
-    }
-    if (opcode == 0x57) { // LD A,I
+
+    case 0x57: { // LD A,I
       qkz80_uint8 val = regs.I;
       set_A(val);
       regs.set_flags_from_ld_a_ir(val);
       trace->asm_op("ld a,i");
       return;
     }
-    if (opcode == 0x5f) { // LD A,R
+
+    case 0x5f: { // LD A,R
       qkz80_uint8 val = regs.R;
       set_A(val);
       regs.set_flags_from_ld_a_ir(val);
@@ -508,13 +517,17 @@ void qkz80::execute(void) {
     }
 
     // RETI / RETN
-    if (opcode == 0x4d) { // RETI
+    case 0x4d: { // RETI
       qkz80_uint16 addr = pop_word();
       regs.PC.set_pair16(addr);
       trace->asm_op("reti");
       return;
     }
-    if ((opcode & 0xc7) == 0x45) { // RETN (also at 55,5D,65,6D,75,7D)
+
+    // RETN: (opcode & 0xc7) == 0x45 (also at 55,5D,65,6D,75,7D)
+    // Note: 0x4d is RETI, handled above
+    case 0x45: case 0x55: case 0x5d: case 0x65:
+    case 0x6d: case 0x75: case 0x7d: {
       qkz80_uint16 addr = pop_word();
       regs.PC.set_pair16(addr);
       regs.IFF1 = regs.IFF2;  // Restore IFF1 from IFF2
@@ -523,7 +536,7 @@ void qkz80::execute(void) {
     }
 
     // RRD / RLD - decimal rotates
-    if (opcode == 0x67) { // RRD
+    case 0x67: { // RRD
       qkz80_uint16 hl_addr = get_reg16(regp_HL);
       qkz80_uint8 a_val = get_reg8(reg_A);
       qkz80_uint8 mem_val = mem.fetch_mem(hl_addr);
@@ -535,7 +548,8 @@ void qkz80::execute(void) {
       trace->asm_op("rrd");
       return;
     }
-    if (opcode == 0x6f) { // RLD
+
+    case 0x6f: { // RLD
       qkz80_uint16 hl_addr = get_reg16(regp_HL);
       qkz80_uint8 a_val = get_reg8(reg_A);
       qkz80_uint8 mem_val = mem.fetch_mem(hl_addr);
@@ -549,7 +563,7 @@ void qkz80::execute(void) {
     }
 
     // Block load/compare/I/O instructions
-    if (opcode == 0xa0) { // LDI
+    case 0xa0: { // LDI
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 de = get_reg16(regp_DE);
       qkz80_uint16 bc = get_reg16(regp_BC);
@@ -562,7 +576,8 @@ void qkz80::execute(void) {
       trace->asm_op("ldi");
       return;
     }
-    if (opcode == 0xb0) { // LDIR
+
+    case 0xb0: { // LDIR
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 de = get_reg16(regp_DE);
       qkz80_uint16 bc = get_reg16(regp_BC);
@@ -576,7 +591,8 @@ void qkz80::execute(void) {
       trace->asm_op("ldir");
       return;
     }
-    if (opcode == 0xa8) { // LDD
+
+    case 0xa8: { // LDD
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 de = get_reg16(regp_DE);
       qkz80_uint16 bc = get_reg16(regp_BC);
@@ -589,7 +605,8 @@ void qkz80::execute(void) {
       trace->asm_op("ldd");
       return;
     }
-    if (opcode == 0xb8) { // LDDR
+
+    case 0xb8: { // LDDR
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 de = get_reg16(regp_DE);
       qkz80_uint16 bc = get_reg16(regp_BC);
@@ -604,7 +621,7 @@ void qkz80::execute(void) {
       return;
     }
 
-    if (opcode == 0xa1) { // CPI
+    case 0xa1: { // CPI
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 bc = get_reg16(regp_BC);
       qkz80_uint8 a_val = get_reg8(reg_A);
@@ -615,7 +632,8 @@ void qkz80::execute(void) {
       trace->asm_op("cpi");
       return;
     }
-    if (opcode == 0xb1) { // CPIR
+
+    case 0xb1: { // CPIR
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 bc = get_reg16(regp_BC);
       qkz80_uint8 a_val = get_reg8(reg_A);
@@ -628,7 +646,8 @@ void qkz80::execute(void) {
       trace->asm_op("cpir");
       return;
     }
-    if (opcode == 0xa9) { // CPD
+
+    case 0xa9: { // CPD
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 bc = get_reg16(regp_BC);
       qkz80_uint8 a_val = get_reg8(reg_A);
@@ -639,7 +658,8 @@ void qkz80::execute(void) {
       trace->asm_op("cpd");
       return;
     }
-    if (opcode == 0xb9) { // CPDR
+
+    case 0xb9: { // CPDR
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 bc = get_reg16(regp_BC);
       qkz80_uint8 a_val = get_reg8(reg_A);
@@ -654,15 +674,16 @@ void qkz80::execute(void) {
     }
 
     // Block I/O - simplified (real implementation would need I/O port system)
-    if (opcode == 0xa2 || opcode == 0xb2 || opcode == 0xaa || opcode == 0xba ||
-        opcode == 0xa3 || opcode == 0xb3 || opcode == 0xab || opcode == 0xbb) {
+    case 0xa2: case 0xb2: case 0xaa: case 0xba:
+    case 0xa3: case 0xb3: case 0xab: case 0xbb:
       trace->asm_op("ED %02x (block I/O - not implemented)", opcode);
       return;
-    }
 
     // Many ED opcodes are just NOPs or duplicates
-    trace->asm_op("ED %02x (nop or duplicate)", opcode);
-    return;
+    default:
+      trace->asm_op("ED %02x (nop or duplicate)", opcode);
+      return;
+    }
   }
 
   // Handle CB prefix instructions (bit operations)
