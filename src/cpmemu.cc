@@ -1921,8 +1921,8 @@ int main(int argc, char** argv) {
     fprintf(stderr, "Usage: %s [options] <program.com|config.cfg> [args...]\n", argv[0]);
     fprintf(stderr, "\n");
     fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  --8080              Run in 8080 mode (default)\n");
-    fprintf(stderr, "  --z80               Run in Z80 mode\n");
+    fprintf(stderr, "  --8080              Run in 8080 mode\n");
+    fprintf(stderr, "  --z80               Run in Z80 mode (default)\n");
     fprintf(stderr, "  --progress[=N]      Enable progress reporting every N million instructions\n");
     fprintf(stderr, "                      (default N=100 if not specified, off by default)\n");
     fprintf(stderr, "\n");
@@ -1941,7 +1941,7 @@ int main(int argc, char** argv) {
 
   // Parse command line for CPU mode and options
   int arg_offset = 1;
-  bool mode_8080 = true;  // Default to 8080 for CP/M compatibility
+  bool mode_8080 = false;  // Default to Z80
   long long cli_progress_interval = 0;  // 0 = not set via CLI
 
   while (arg_offset < argc && argv[arg_offset][0] == '-') {
