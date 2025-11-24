@@ -137,6 +137,8 @@ Run with: `./src/cpmemu config.cfg`
 | 35 | Compute File Size | Supported |
 | 36 | Set Random Record | Supported |
 | 37 | Reset Drive | Supported |
+| 38 | Access Free Space | Stub (returns success) |
+| 39 | Free Space | Stub (no-op) |
 | 40 | Write Random Zero Fill | Supported |
 
 ### BIOS Functions
