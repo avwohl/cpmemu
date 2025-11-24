@@ -101,6 +101,30 @@ static bool stdin_has_data() {
 static struct termios original_termios;
 static bool termios_saved = false;
 
+// Forward declaration
+static void disable_raw_mode();
+
+// ^C exit handling - 5 consecutive ^C characters exit the emulator
+static int consecutive_ctrl_c = 0;
+static const int CTRL_C_EXIT_COUNT = 5;
+
+// Check for ^C and handle exit logic
+// Returns true if we should exit, false if character should be passed through
+static bool check_ctrl_c_exit(int ch) {
+  if (ch == 0x03) {  // ^C
+    consecutive_ctrl_c++;
+    if (consecutive_ctrl_c >= CTRL_C_EXIT_COUNT) {
+      fprintf(stderr, "\n[Exiting: %d consecutive ^C received]\n", CTRL_C_EXIT_COUNT);
+      disable_raw_mode();
+      exit(0);
+    }
+    return false;  // Pass ^C through to CP/M program
+  } else {
+    consecutive_ctrl_c = 0;  // Reset counter on any other input
+    return false;
+  }
+}
+
 static void disable_raw_mode() {
   if (termios_saved) {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios);
@@ -121,8 +145,9 @@ static void enable_raw_mode() {
   }
 
   struct termios raw = original_termios;
-  // Disable canonical mode (line buffering) and echo
-  raw.c_lflag &= ~(ICANON | ECHO);
+  // Disable canonical mode (line buffering), echo, and signal generation
+  // ISIG disabled so ^C passes through to CP/M program instead of killing emulator
+  raw.c_lflag &= ~(ICANON | ECHO | ISIG);
   // Set minimum characters to 1 and timeout to 0
   raw.c_cc[VMIN] = 1;
   raw.c_cc[VTIME] = 0;
@@ -1195,6 +1220,7 @@ void CPMEmulator::bdos_write_string() {
 void CPMEmulator::bdos_read_console() {
   int ch = getchar();
   if (ch == EOF) ch = 0x1A;  // EOF becomes ^Z
+  check_ctrl_c_exit(ch);  // Track ^C for exit, pass through to program
   if (ch == '\n') ch = '\r';  // Convert LF to CR for CP/M
   cpu->set_reg8(ch & 0x7F, qkz80::reg_A);
 }
@@ -1647,6 +1673,7 @@ void CPMEmulator::bdos_direct_console_io() {
     if (stdin_has_data()) {
       int ch = getchar();
       if (ch == EOF) ch = 0;
+      check_ctrl_c_exit(ch);  // Track ^C for exit, pass through to program
       if (ch == '\n') ch = '\r';  // Convert LF to CR for CP/M
       cpu->set_reg8(ch & 0x7F, qkz80::reg_A);
     } else {
@@ -1832,6 +1859,7 @@ void CPMEmulator::bios_conin() {
   // Console input
   int ch = getchar();
   if (ch == EOF) ch = 0x1A;
+  check_ctrl_c_exit(ch);  // Track ^C for exit, pass through to program
   if (ch == '\n') ch = '\r';  // Convert LF to CR for CP/M
   cpu->set_reg8(ch & 0x7F, qkz80::reg_A);
 }

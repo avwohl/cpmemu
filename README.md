@@ -10,6 +10,7 @@ A CP/M 2.2 operating system emulator that runs legacy 8-bit CP/M applications on
 - **Text/binary mode**: Automatic EOL conversion between CP/M and Unix
 - **Device redirection**: Printer and auxiliary I/O device support
 - **Configuration files**: Support for complex setups and file mappings
+- **^C handling**: Ctrl+C passes through to CP/M programs (e.g., to interrupt BASIC); press 5 times consecutively to exit emulator
 
 ## Building
 
