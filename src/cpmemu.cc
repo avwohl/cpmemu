@@ -323,6 +323,7 @@ private:
   void bdos_write_console(qkz80_uint8 ch);
   void bdos_write_string();
   void bdos_read_console();
+  void bdos_read_console_buffer();
   void bdos_aux_input();
   void bdos_aux_output();
   void bdos_list_output();
@@ -1078,8 +1079,7 @@ void CPMEmulator::bdos_call(qkz80_uint8 func) {
     break;
 
   case 10: // Read Console Buffer
-    // TODO: Implement
-    cpu->set_reg8(0, qkz80::reg_A);
+    bdos_read_console_buffer();
     break;
 
   case 11: // Console Status
@@ -1232,6 +1232,89 @@ void CPMEmulator::bdos_read_console() {
   check_ctrl_c_exit(ch);  // Track ^C for exit, pass through to program
   if (ch == '\n') ch = '\r';  // Convert LF to CR for CP/M
   cpu->set_reg8(ch & 0x7F, qkz80::reg_A);
+}
+
+void CPMEmulator::bdos_read_console_buffer() {
+  // BDOS function 10: Read Console Buffer
+  // DE points to buffer:
+  //   Byte 0: Maximum characters to read (1-255, but typically <=127)
+  //   Byte 1: Actual characters read (filled by this function)
+  //   Bytes 2+: Characters read (up to max)
+  //
+  // Line editing supported:
+  //   Backspace/DEL: Delete last character
+  //   CR or LF: End input
+  //   ^C: Passed through (tracked for 5x exit)
+  //   ^U: Cancel line (clear buffer)
+  //   ^H: Backspace (same as DEL)
+
+  qkz80_uint16 buf_addr = cpu->get_reg16(qkz80::regp_DE);
+  char* mem = cpu->get_mem();
+
+  qkz80_uint8 max_chars = mem[buf_addr] & 0xFF;
+  if (max_chars == 0) {
+    mem[buf_addr + 1] = 0;
+    cpu->set_reg8(0, qkz80::reg_A);
+    return;
+  }
+
+  // Buffer for characters (bytes 2+)
+  int count = 0;
+
+  while (count < max_chars) {
+    int ch = getchar();
+    if (ch == EOF) {
+      ch = 0x1A;  // ^Z
+    }
+
+    check_ctrl_c_exit(ch);  // Track ^C for exit
+
+    // Handle control characters
+    if (ch == '\n' || ch == '\r') {
+      // End of line - echo CR/LF and finish
+      putchar('\r');
+      putchar('\n');
+      fflush(stdout);
+      break;
+    } else if (ch == 0x7F || ch == 0x08) {  // DEL or Backspace
+      if (count > 0) {
+        count--;
+        // Erase character on screen: backspace, space, backspace
+        putchar('\b');
+        putchar(' ');
+        putchar('\b');
+        fflush(stdout);
+      }
+    } else if (ch == 0x15) {  // ^U - cancel line
+      // Erase all characters on screen
+      while (count > 0) {
+        putchar('\b');
+        putchar(' ');
+        putchar('\b');
+        count--;
+      }
+      fflush(stdout);
+    } else if (ch == 0x03) {  // ^C - pass through to buffer
+      mem[buf_addr + 2 + count] = ch;
+      count++;
+      putchar('^');
+      putchar('C');
+      fflush(stdout);
+    } else if (ch >= 0x20 && ch < 0x7F) {  // Printable characters
+      mem[buf_addr + 2 + count] = ch;
+      count++;
+      putchar(ch);
+      fflush(stdout);
+    } else if (ch == 0x1A) {  // ^Z - end of file marker
+      // Treat ^Z as end of input
+      break;
+    }
+    // Ignore other control characters
+  }
+
+  // Store actual count
+  mem[buf_addr + 1] = count;
+  cpu->set_reg8(0, qkz80::reg_A);
 }
 
 void CPMEmulator::bdos_aux_input() {
