@@ -1890,35 +1890,53 @@ void CPMEmulator::bios_listst() {
 // Main program
 int main(int argc, char** argv) {
   if (argc < 2) {
-    fprintf(stderr, "Usage: %s [--8080|--z80] <program.com|config.cfg> [args...]\n", argv[0]);
+    fprintf(stderr, "Usage: %s [options] <program.com|config.cfg> [args...]\n", argv[0]);
     fprintf(stderr, "\n");
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "  --8080              Run in 8080 mode (default)\n");
     fprintf(stderr, "  --z80               Run in Z80 mode\n");
+    fprintf(stderr, "  --progress[=N]      Enable progress reporting every N million instructions\n");
+    fprintf(stderr, "                      (default N=100 if not specified, off by default)\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "Environment variables:\n");
+    fprintf(stderr, "  CPM_PROGRESS=N      Enable progress reporting every N million instructions\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Examples:\n");
     fprintf(stderr, "  %s program.com              # Run CP/M program in 8080 mode\n", argv[0]);
     fprintf(stderr, "  %s --z80 program.com        # Run in Z80 mode\n", argv[0]);
+    fprintf(stderr, "  %s --progress program.com   # With progress reporting (every 100M)\n", argv[0]);
+    fprintf(stderr, "  %s --progress=50 prog.com   # Report every 50M instructions\n", argv[0]);
     fprintf(stderr, "  %s program.com file.dat     # With file arguments\n", argv[0]);
     fprintf(stderr, "  %s config.cfg               # With config file\n", argv[0]);
     return 1;
   }
 
-  // Parse command line for CPU mode
+  // Parse command line for CPU mode and options
   int arg_offset = 1;
   bool mode_8080 = true;  // Default to 8080 for CP/M compatibility
+  long long cli_progress_interval = 0;  // 0 = not set via CLI
 
-  if (strcmp(argv[1], "--8080") == 0) {
-    mode_8080 = true;
-    arg_offset = 2;
-  } else if (strcmp(argv[1], "--z80") == 0) {
-    mode_8080 = false;
-    arg_offset = 2;
+  while (arg_offset < argc && argv[arg_offset][0] == '-') {
+    if (strcmp(argv[arg_offset], "--8080") == 0) {
+      mode_8080 = true;
+      arg_offset++;
+    } else if (strcmp(argv[arg_offset], "--z80") == 0) {
+      mode_8080 = false;
+      arg_offset++;
+    } else if (strncmp(argv[arg_offset], "--progress=", 11) == 0) {
+      cli_progress_interval = atoll(argv[arg_offset] + 11) * 1000000LL;
+      arg_offset++;
+    } else if (strcmp(argv[arg_offset], "--progress") == 0) {
+      cli_progress_interval = 100 * 1000000LL;  // Default to 100M if no value specified
+      arg_offset++;
+    } else {
+      break;  // Unknown option, assume it's the program
+    }
   }
 
   if (argc < arg_offset + 1) {
     fprintf(stderr, "Error: No program specified\n");
-    fprintf(stderr, "Usage: %s [--8080|--z80] <program.com|config.cfg> [args...]\n", argv[0]);
+    fprintf(stderr, "Usage: %s [options] <program.com|config.cfg> [args...]\n", argv[0]);
     return 1;
   }
 
@@ -2080,6 +2098,21 @@ int main(int argc, char** argv) {
   // Set PC to start of TPA
   cpu.regs.PC.set_pair16(TPA_START);
 
+  // Parse progress reporting setting (default: off)
+  // CLI option takes precedence over environment variable
+  long long progress_interval = 0;  // 0 = disabled
+  if (cli_progress_interval > 0) {
+    progress_interval = cli_progress_interval;
+  } else {
+    const char* progress_env = getenv("CPM_PROGRESS");
+    if (progress_env) {
+      progress_interval = atoll(progress_env) * 1000000LL;  // Convert millions to actual count
+    }
+  }
+  if (progress_interval > 0) {
+    fprintf(stderr, "Progress reporting enabled every %lldM instructions\n", progress_interval / 1000000);
+  }
+
   // Run
   long long max_instructions = 9000000000LL;  // Safety limit (5B for Zexall/Zexdoc)
   long long instruction_count = 0;
@@ -2098,8 +2131,8 @@ int main(int argc, char** argv) {
 
     instruction_count++;
 
-    // Progress report every 100M instructions
-    if (instruction_count - last_report >= 100000000) {
+    // Progress report (if enabled)
+    if (progress_interval > 0 && instruction_count - last_report >= progress_interval) {
       fprintf(stderr, "Progress: %lldM instructions\n", instruction_count / 1000000);
       last_report = instruction_count;
     }
