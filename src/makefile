@@ -30,5 +30,15 @@ test: cpmemu
 	@echo ""
 	@echo "All tests completed!"
 
-clean:	.
+clean:
 	@rm -f qkz80 cpm_emulator cpmemu *.o *.lst *.ihx *.com *.cdb *.rel *.map *~
+
+PREFIX ?= /usr/local
+BINDIR ?= $(PREFIX)/bin
+
+install: $(TARGET)
+	install -d $(DESTDIR)$(BINDIR)
+	install -m 755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
+
+uninstall:
+	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
