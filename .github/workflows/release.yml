@@ -72,7 +72,6 @@ jobs:
             --maintainer "Aaron Wohl" \
             -C staging \
             .
-          mv *.deb cpmemu_${{ steps.version.outputs.version }}_${{ matrix.arch }}.deb
 
       - name: Build RPM package
         run: |
@@ -86,7 +85,6 @@ jobs:
             --maintainer "Aaron Wohl" \
             -C staging \
             .
-          mv *.rpm cpmemu-${{ steps.version.outputs.version }}-1.${{ matrix.rpm_arch }}.rpm
 
       - name: Upload DEB artifact
         uses: actions/upload-artifact@v4
