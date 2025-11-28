@@ -1,13 +1,13 @@
 /*
- * Altair 8800 Hardware Emulator for 4K/8K BASIC
+ * Altair 8800 Emulator with CP/M 2.2 Support
  *
- * This emulator operates at the hardware level, handling IN/OUT instructions
- * to emulate:
+ * This emulator operates at the hardware level for BASIC, and at the
+ * BIOS level for CP/M. Supports:
  * - 88-2SIO serial ports (ports 0x00-0x01 or 0x10-0x11)
  * - Sense switches (port 0xFF) for memory size configuration
- * - ROM protection for memory size detection
+ * - CP/M 2.2 with BIOS trapping at F600
  *
- * Target: Run MITS 4K and 8K BASIC
+ * CP/M mode: Loads cpm22.sys at E000 and traps BIOS calls at F600-F630
  */
 
 #include "qkz80.h"
@@ -20,22 +20,65 @@
 #include <unistd.h>
 #include <termios.h>
 #include <sys/select.h>
+#include <sys/stat.h>
+#include <dirent.h>
 #include <map>
 #include <set>
+#include <vector>
 #include <string>
 
-// Memory subclass with ROM protection for Altair BASIC memory detection
-class altair_mem : public qkz80_cpu_mem {
-  qkz80_uint16 rom_start = 0;
-public:
-  void set_rom_start(qkz80_uint16 addr) { rom_start = addr; }
-  qkz80_uint16 get_rom_start() const { return rom_start; }
+// CP/M constants
+constexpr uint16_t CPM_LOAD_ADDR = 0xE000;   // Where CP/M CCP/BDOS loads
+constexpr uint16_t BIOS_BASE = 0xF600;       // BIOS entry points
+constexpr uint16_t TPA_START = 0x0100;       // Transient Program Area
+constexpr uint16_t DMA_DEFAULT = 0x0080;     // Default DMA address
 
-  void store_mem(qkz80_uint16 addr, qkz80_uint8 abyte) override {
+// BIOS entry point offsets (relative to BIOS_BASE)
+enum BiosEntry {
+  BIOS_BOOT    = 0x00,  // Cold boot
+  BIOS_WBOOT   = 0x03,  // Warm boot
+  BIOS_CONST   = 0x06,  // Console status
+  BIOS_CONIN   = 0x09,  // Console input
+  BIOS_CONOUT  = 0x0C,  // Console output
+  BIOS_LIST    = 0x0F,  // List (printer) output
+  BIOS_PUNCH   = 0x12,  // Punch output
+  BIOS_READER  = 0x15,  // Reader input
+  BIOS_HOME    = 0x18,  // Home disk
+  BIOS_SELDSK  = 0x1B,  // Select disk
+  BIOS_SETTRK  = 0x1E,  // Set track
+  BIOS_SETSEC  = 0x21,  // Set sector
+  BIOS_SETDMA  = 0x24,  // Set DMA address
+  BIOS_READ    = 0x27,  // Read sector
+  BIOS_WRITE   = 0x2A,  // Write sector
+  BIOS_PRSTAT  = 0x2D,  // Printer status
+  BIOS_SECTRN  = 0x30,  // Sector translate
+};
+
+// Memory subclass with ROM/BIOS trap detection
+class cpm_mem : public qkz80_cpu_mem {
+  uint16_t rom_start = 0;
+  uint16_t bios_start = 0;
+  uint16_t bios_end = 0;
+public:
+  bool bios_trap_hit = false;
+  uint16_t trapped_addr = 0;
+
+  void set_rom_start(uint16_t addr) { rom_start = addr; }
+  void set_bios_range(uint16_t start, uint16_t end) {
+    bios_start = start;
+    bios_end = end;
+  }
+
+  void store_mem(uint16_t addr, uint8_t abyte) override {
     if (rom_start != 0 && addr >= rom_start) {
       return;  // Silently ignore writes to ROM region
     }
     qkz80_cpu_mem::store_mem(addr, abyte);
+  }
+
+  // Check if we're about to execute BIOS code
+  bool is_bios_trap(uint16_t pc) {
+    return pc >= bios_start && pc < bios_end;
   }
 };
 
@@ -68,15 +111,34 @@ static void enable_raw_mode() {
   tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
-// Check if input is available
+// Track if stdin has reached EOF
+static bool stdin_eof = false;
+static int peek_char = -1;  // Peeked character, -1 if none
+
+// Check if input is available (not just EOF) by peeking
 static bool stdin_has_data() {
+  if (stdin_eof) return false;  // Already at EOF
+  if (peek_char >= 0) return true;  // We have a peeked char
+
+  // Check if select says readable
   fd_set readfds;
   struct timeval tv;
   FD_ZERO(&readfds);
   FD_SET(STDIN_FILENO, &readfds);
   tv.tv_sec = 0;
   tv.tv_usec = 0;
-  return select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv) > 0;
+  if (select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv) <= 0) {
+    return false;  // Nothing waiting
+  }
+
+  // Select says readable - peek to see if it's data or EOF
+  int ch = getchar();
+  if (ch == EOF) {
+    stdin_eof = true;
+    return false;  // Was EOF, not actual data
+  }
+  peek_char = ch;  // Save for later read
+  return true;
 }
 
 // ^C exit handling
@@ -98,10 +160,113 @@ static bool check_ctrl_c_exit(int ch) {
   }
 }
 
+// CP/M Disk Parameter Block (DPB) for standard 8" SSSD
+// 77 tracks, 26 sectors/track, 128 bytes/sector, 1024 bytes/block
+// Reserved tracks: 2 (for system), directory entries: 64
+// IMPORTANT: These must be placed AFTER the BIOS code (F633+) to not
+// overwrite BDOS code which extends up to ~F5EC.
+constexpr uint16_t DPB_ADDR = 0xF700;  // Location of DPB in memory
+constexpr uint16_t DIRBUF_ADDR = 0xF720;  // 128-byte directory buffer
+constexpr uint16_t ALV_ADDR = 0xF7A0;  // Allocation vector (32 bytes for 243 blocks)
+constexpr uint16_t CSV_ADDR = 0xF7C0;  // Checksum vector (16 bytes)
+constexpr uint16_t DPH_BASE = 0xF7E0;  // DPH for each disk (16 bytes each)
+
+// CP/M Disk simulation using Linux filesystem
+class CPMDisk {
+public:
+  std::string directory;  // Host directory for this drive
+  bool selected = false;
+  bool valid = false;
+
+  // Disk geometry (standard 8" SSSD)
+  static constexpr int SECTORS_PER_TRACK = 26;
+  static constexpr int TRACKS = 77;
+  static constexpr int SECTOR_SIZE = 128;
+  static constexpr int BLOCK_SIZE = 1024;
+  static constexpr int DIR_ENTRIES = 64;
+  static constexpr int RESERVED_TRACKS = 2;  // System tracks
+
+  // Disk Parameter Header (DPH) - returned by SELDSK
+  // Points to: XLT, 0000, 0000, 0000, DIRBUF, DPB, CSV, ALV
+  uint16_t dph_addr = 0;  // Address of DPH in CP/M memory
+
+  CPMDisk() = default;
+
+  bool open(const std::string& dir) {
+    directory = dir;
+    struct stat st;
+    valid = (stat(dir.c_str(), &st) == 0 && S_ISDIR(st.st_mode));
+    return valid;
+  }
+
+  // Initialize disk structures in CP/M memory
+  static void init_disk_tables(char* mem) {
+    // DPB - Disk Parameter Block (15 bytes)
+    // Format: SPT, BSH, BLM, EXM, DSM, DRM, AL0, AL1, CKS, OFF
+    uint16_t dpb = DPB_ADDR;
+    mem[dpb + 0] = 26;      // SPT - sectors per track (low)
+    mem[dpb + 1] = 0;       // SPT - sectors per track (high)
+    mem[dpb + 2] = 3;       // BSH - block shift (1024 byte blocks = 2^(7+3) = 1024)
+    mem[dpb + 3] = 7;       // BLM - block mask (2^3 - 1 = 7)
+    mem[dpb + 4] = 0;       // EXM - extent mask (for 1K blocks = 0)
+    mem[dpb + 5] = 242;     // DSM - max block number (low) ((77-2)*26*128/1024 - 1 = 242)
+    mem[dpb + 6] = 0;       // DSM - max block number (high)
+    mem[dpb + 7] = 63;      // DRM - max directory entry (low) (64 entries - 1)
+    mem[dpb + 8] = 0;       // DRM - max directory entry (high)
+    mem[dpb + 9] = 0xC0;    // AL0 - directory allocation bitmap
+    mem[dpb + 10] = 0;      // AL1
+    mem[dpb + 11] = 16;     // CKS - checksum vector size (low) (DRM/4 = 16)
+    mem[dpb + 12] = 0;      // CKS - checksum vector size (high)
+    mem[dpb + 13] = 2;      // OFF - reserved tracks (low)
+    mem[dpb + 14] = 0;      // OFF - reserved tracks (high)
+
+    // Initialize directory buffer to E5 (empty)
+    for (int i = 0; i < 128; i++) {
+      mem[DIRBUF_ADDR + i] = 0xE5;
+    }
+
+    // Initialize allocation vector to 0
+    for (int i = 0; i < 32; i++) {
+      mem[ALV_ADDR + i] = 0;
+    }
+
+    // Initialize checksum vector to 0
+    for (int i = 0; i < 16; i++) {
+      mem[CSV_ADDR + i] = 0;
+    }
+
+    // Initialize DPH for each potential drive (16 drives max)
+    for (int d = 0; d < 16; d++) {
+      uint16_t dph = DPH_BASE + (d * 16);
+      // XLT - no translation table (sectors 1:1)
+      mem[dph + 0] = 0;
+      mem[dph + 1] = 0;
+      // Scratch areas (3 x 16-bit = 6 bytes)
+      mem[dph + 2] = 0; mem[dph + 3] = 0;
+      mem[dph + 4] = 0; mem[dph + 5] = 0;
+      mem[dph + 6] = 0; mem[dph + 7] = 0;
+      // DIRBUF pointer
+      mem[dph + 8] = DIRBUF_ADDR & 0xFF;
+      mem[dph + 9] = (DIRBUF_ADDR >> 8) & 0xFF;
+      // DPB pointer
+      mem[dph + 10] = DPB_ADDR & 0xFF;
+      mem[dph + 11] = (DPB_ADDR >> 8) & 0xFF;
+      // CSV pointer (each drive could have separate, but we share for now)
+      mem[dph + 12] = CSV_ADDR & 0xFF;
+      mem[dph + 13] = (CSV_ADDR >> 8) & 0xFF;
+      // ALV pointer (each drive should have separate, but we share for now)
+      mem[dph + 14] = ALV_ADDR & 0xFF;
+      mem[dph + 15] = (ALV_ADDR >> 8) & 0xFF;
+    }
+  }
+};
+
 class AltairEmulator {
 private:
   qkz80* cpu;
+  cpm_mem* memory;
   bool debug;
+  bool cpm_mode;
 
   // I/O port tracking
   std::map<uint8_t, int> port_in_counts;
@@ -109,113 +274,70 @@ private:
   std::set<uint8_t> unknown_ports;
 
   // Serial port state (88-2SIO)
-  // Port A: status=0x10, data=0x11 (or 0x00/0x01 for some configs)
-  // Port B: status=0x12, data=0x13
   uint8_t sio_status_a;
   uint8_t sio_status_b;
   int input_char;  // Buffered input character (-1 = none)
 
-  // Sense switches (directly accessible from front panel, read via port 0xFF)
+  // Sense switches
   uint8_t sense_switches;
 
   // Memory configuration
-  uint16_t ram_top;        // Top of RAM (for ROM detection)
-  bool protect_high_page;  // Protect writes to 0xFF00-0xFFFF
+  uint16_t ram_top;
 
-  // Cassette interface (88-ACR) - ports 0x06/0x07
-  FILE* cassette_out;      // Output file for CSAVE
-  FILE* cassette_in;       // Input file for CLOAD
-  std::string cassette_filename;
-  int cassette_leader_count;  // Simulate leader before data
+  // CP/M BIOS state
+  CPMDisk disks[16];      // A: through P:
+  int current_disk = 0;   // Currently selected disk
+  int current_track = 0;  // Current track
+  int current_sector = 0; // Current sector
+  uint16_t dma_addr = DMA_DEFAULT;  // DMA address
+
+  // Directory buffer in CP/M memory (at DIRBUF location)
+  uint16_t dirbuf_addr = 0x0080;  // Temporary, will be set properly
 
 public:
-  AltairEmulator(qkz80* acpu, bool adebug = false)
-    : cpu(acpu), debug(adebug),
-      sio_status_a(0x02), sio_status_b(0x02),  // TX ready by default
+  AltairEmulator(qkz80* acpu, cpm_mem* amem, bool adebug = false, bool acpm = false)
+    : cpu(acpu), memory(amem), debug(adebug), cpm_mode(acpm),
+      sio_status_a(0x02), sio_status_b(0x02),
       input_char(-1),
-      sense_switches(0x00),  // Will be set based on memory size
-      ram_top(0xFFFF),
-      protect_high_page(true),
-      cassette_out(nullptr),
-      cassette_in(nullptr),
-      cassette_leader_count(0) {
+      sense_switches(0x00),
+      ram_top(0xFFFF) {
   }
 
-  ~AltairEmulator() {
-    if (cassette_out) {
-      fclose(cassette_out);
-      fprintf(stderr, "Cassette output saved to: %s\n", cassette_filename.c_str());
+  void set_cpm_mode(bool mode) { cpm_mode = mode; }
+  bool is_cpm_mode() const { return cpm_mode; }
+
+  void set_disk_directory(int drive, const std::string& dir) {
+    if (drive >= 0 && drive < 16) {
+      if (disks[drive].open(dir)) {
+        fprintf(stderr, "Drive %c: -> %s\n", 'A' + drive, dir.c_str());
+      } else {
+        fprintf(stderr, "Warning: Cannot open directory for drive %c: %s\n",
+                'A' + drive, dir.c_str());
+      }
     }
-    if (cassette_in) fclose(cassette_in);
-  }
-
-  void set_cassette_output(const std::string& filename) {
-    cassette_filename = filename;
-  }
-
-  bool set_cassette_input(const std::string& filename) {
-    cassette_in = fopen(filename.c_str(), "rb");
-    if (!cassette_in) {
-      fprintf(stderr, "Cannot open cassette input: %s\n", filename.c_str());
-      return false;
-    }
-    fprintf(stderr, "Cassette input: %s\n", filename.c_str());
-    return true;
-  }
-
-  void set_memory_size(int kb) {
-    // Configure sense switches based on memory size
-    // Altair BASIC uses sense switches to determine memory size
-    // Common configurations:
-    //   4K BASIC: needs at least 4K RAM
-    //   8K BASIC: needs at least 8K RAM
-    //
-    // Sense switch bits (directly influence BASIC's behavior):
-    //   Different versions interpret these differently
-    //   For now, we'll discover what the binaries actually read
-
-    ram_top = (kb * 1024) - 1;
-    if (ram_top > 0xFEFF) ram_top = 0xFEFF;  // Reserve top page
-
-    // Set sense switches - bits interpreted by BASIC
-    // This may need adjustment based on what the binaries expect
-    sense_switches = 0x00;
-
-    fprintf(stderr, "Memory size: %dK, RAM top: 0x%04X\n", kb, ram_top);
   }
 
   void set_sense_switches(uint8_t val) {
     sense_switches = val;
-    fprintf(stderr, "Sense switches set to: 0x%02X\n", sense_switches);
+    if (debug) fprintf(stderr, "Sense switches set to: 0x%02X\n", sense_switches);
   }
 
   // Handle IN instruction - returns value read from port
   uint8_t handle_in(uint8_t port) {
     port_in_counts[port]++;
-
     uint8_t value = 0x00;
 
     switch (port) {
-      // 88-2SIO Port A - commonly used configuration
-      case 0x00:  // Status port (alternate address)
-      case 0x10:  // Status port (standard address)
-        // Bit 0: Input device ready (RDRF - Receive Data Register Full)
-        // Bit 1: Transmit buffer empty (TDRE - Transmit Data Register Empty)
-        // Bit 2-4: Error flags (always 0)
-        // Bit 5: Data Carrier Detect (always 0)
-        // Bit 7: IRQ flag (always 0)
-        value = 0x02;  // TDRE always set (can always transmit)
+      case 0x00:  // SIO status (alternate)
+      case 0x10:  // SIO status (standard)
+        value = 0x02;  // TDRE always set
         if (input_char >= 0 || stdin_has_data()) {
-          value |= 0x01;  // RDRF set - data available
-        }
-        if (debug) {
-          fprintf(stderr, "[IN port 0x%02X (SIO-A status) = 0x%02X]\n", port, value);
+          value |= 0x01;  // RDRF set
         }
         break;
 
-      case 0x01:  // Data port (alternate address)
-      case 0x11:  // Data port (standard address)
-        // Read character from input
+      case 0x01:  // SIO data (alternate)
+      case 0x11:  // SIO data (standard)
         if (input_char >= 0) {
           value = input_char & 0x7F;
           input_char = -1;
@@ -225,79 +347,18 @@ public:
           check_ctrl_c_exit(ch);
           if (ch == '\n') ch = '\r';
           value = ch & 0x7F;
-        } else {
-          value = 0x00;
-        }
-        if (debug) {
-          fprintf(stderr, "[IN port 0x%02X (SIO-A data) = 0x%02X '%c']\n",
-                  port, value, isprint(value) ? value : '.');
         }
         break;
 
-      // 88-2SIO Port B
-      case 0x12:  // Status port B
-        value = 0x02;  // TDRE set
-        break;
-
-      case 0x13:  // Data port B
-        value = 0x00;
-        break;
-
-      // Sense switches - directly readable from front panel
       case 0xFF:
         value = sense_switches;
-        if (debug) {
-          fprintf(stderr, "[IN port 0xFF (sense switches) = 0x%02X]\n", value);
-        }
-        break;
-
-      // 88-ACR Cassette interface (88-SIO at ports 0x06/0x07)
-      case 0x06:  // Cassette status register
-        // 88-SIO status bits (different from MC6850!):
-        // Bit 0: Input device ready (1 = CPU can write/transmit)
-        // Bit 1: Transmitter buffer empty (1 = data received and ready to read)
-        // Bit 2: Parity error
-        // Bit 3: Framing error
-        // Bit 4: Data overflow
-        // Bit 5: Data available for writing (always 0)
-        // Bit 6: Not used
-        // Bit 7: Output device ready (always 0)
-        value = 0x01;  // Bit 0 = 1: ready to transmit (for CSAVE)
-        if (cassette_in) {
-          // Check if data available from cassette input file
-          int ch = fgetc(cassette_in);
-          if (ch != EOF) {
-            ungetc(ch, cassette_in);
-            value = 0x02;  // ONLY Bit 1 = 1: data available to read
-          } else {
-            value = 0x00;  // No data, end of tape
-          }
-        }
-        if (debug) {
-          fprintf(stderr, "[IN port 0x06 (cassette status) = 0x%02X]\n", value);
-        }
-        break;
-
-      case 0x07:  // Cassette data register (read)
-        // Read byte from cassette input file
-        if (cassette_in) {
-          int ch = fgetc(cassette_in);
-          if (ch != EOF) {
-            value = ch & 0xFF;
-          }
-        }
-        if (debug) {
-          fprintf(stderr, "[IN port 0x07 (cassette data) = 0x%02X]\n", value);
-        }
         break;
 
       default:
-        // Unknown port - log it
         if (unknown_ports.find(port) == unknown_ports.end()) {
-          fprintf(stderr, "[WARNING: Unknown IN port 0x%02X]\n", port);
+          if (debug) fprintf(stderr, "[WARNING: Unknown IN port 0x%02X]\n", port);
           unknown_ports.insert(port);
         }
-        value = 0x00;
         break;
     }
 
@@ -309,94 +370,364 @@ public:
     port_out_counts[port]++;
 
     switch (port) {
-      // 88-2SIO Port A
-      case 0x00:  // Control port (alternate address)
-      case 0x10:  // Control port (standard address)
-        // Control register write - configure SIO
-        // Bit 0-1: Counter divide select
-        // Bit 2-4: Word select
-        // Bit 5-6: Transmit control
-        // Bit 7: Receive interrupt enable
-        if (debug) {
-          fprintf(stderr, "[OUT port 0x%02X (SIO-A control) = 0x%02X]\n", port, value);
-        }
+      case 0x00:  // SIO control (alternate)
+      case 0x10:  // SIO control (standard)
         break;
 
-      case 0x01:  // Data port (alternate address)
-      case 0x11:  // Data port (standard address)
-        // Output character - filter nulls (teletype timing padding)
+      case 0x01:  // SIO data (alternate)
+      case 0x11:  // SIO data (standard)
         if ((value & 0x7F) != 0x00) {
           putchar(value & 0x7F);
           fflush(stdout);
         }
-        if (debug) {
-          fprintf(stderr, "[OUT port 0x%02X (SIO-A data) = 0x%02X '%c']\n",
-                  port, value, isprint(value & 0x7F) ? (value & 0x7F) : '.');
-        }
         break;
 
-      // 88-2SIO Port B
-      case 0x12:  // Control port B
-        break;
-
-      case 0x13:  // Data port B
-        break;
-
-      // Front panel switches/LEDs
       case 0xFF:
-        if (debug) {
-          fprintf(stderr, "[OUT port 0xFF = 0x%02X]\n", value);
-        }
-        break;
-
-      // 88-ACR Cassette interface
-      case 0x06:  // Cassette control
-        if (debug) {
-          fprintf(stderr, "[OUT port 0x06 (cassette control) = 0x%02X]\n", value);
-        }
-        break;
-
-      case 0x07:  // Cassette data output
-        // Open cassette file on first write if not already open
-        if (!cassette_out) {
-          std::string fname = cassette_filename.empty() ? "cassette.cas" : cassette_filename;
-          cassette_out = fopen(fname.c_str(), "wb");
-          if (cassette_out) {
-            fprintf(stderr, "[Cassette recording to: %s]\n", fname.c_str());
-          } else {
-            fprintf(stderr, "[WARNING: Cannot open cassette file: %s]\n", fname.c_str());
-          }
-        }
-        if (cassette_out) {
-          fputc(value, cassette_out);
-          fflush(cassette_out);
-        }
-        if (debug) {
-          fprintf(stderr, "[OUT port 0x07 (cassette data) = 0x%02X]\n", value);
-        }
         break;
 
       default:
-        // Unknown port - log it
         if (unknown_ports.find(port) == unknown_ports.end()) {
-          fprintf(stderr, "[WARNING: Unknown OUT port 0x%02X value 0x%02X]\n", port, value);
+          if (debug) fprintf(stderr, "[WARNING: Unknown OUT port 0x%02X]\n", port);
           unknown_ports.insert(port);
         }
         break;
     }
   }
 
-  // Check if memory write should be allowed (for ROM detection)
-  bool allow_memory_write(uint16_t addr) {
-    if (protect_high_page && addr >= 0xFF00) {
-      if (debug) {
-        fprintf(stderr, "[BLOCKED write to protected address 0x%04X]\n", addr);
-      }
-      return false;
+  // Handle BIOS call - called when PC is in BIOS range
+  // Returns true if handled, false to continue normal execution
+  bool handle_bios_call(uint16_t pc) {
+    uint16_t offset = pc - BIOS_BASE;
+    char* mem = cpu->get_mem();
+
+    if (debug) {
+      fprintf(stderr, "[BIOS call at 0x%04X, offset 0x%02X]\n", pc, offset);
     }
-    return true;
+
+    switch (offset) {
+      case BIOS_BOOT: {
+        // Cold boot - initialize system
+        if (debug) fprintf(stderr, "[BIOS BOOT - Cold boot]\n");
+
+        // Initialize disk tables (DPH, DPB, buffers)
+        CPMDisk::init_disk_tables(mem);
+
+        // Set up page zero
+        mem[0x0000] = 0xC3;  // JMP WBOOT
+        mem[0x0001] = (BIOS_BASE + BIOS_WBOOT) & 0xFF;
+        mem[0x0002] = (BIOS_BASE + BIOS_WBOOT) >> 8;
+        mem[0x0003] = 0x00;  // IOBYTE
+        mem[0x0004] = 0x00;  // Current drive/user
+        mem[0x0005] = 0xC3;  // JMP BDOS
+        // BDOS entry is at FBASE (E806 from sym file)
+        mem[0x0006] = 0x06;
+        mem[0x0007] = 0xE8;
+
+        // CRITICAL: Set BDOS ACTIVE variable to 0xFF (invalid disk)
+        // so that the first SETDSK call from CCP actually runs LOGINDRV
+        // which calls SELDSK to initialize disk parameters.
+        // ACTIVE is at EB42 (from symbol file)
+        mem[0xEB42] = 0xFF;
+
+        // Set default DMA
+        dma_addr = DMA_DEFAULT;
+        // Select disk A
+        current_disk = 0;
+        current_track = 0;
+        current_sector = 1;
+        // Print signon message
+        fprintf(stderr, "\n[CP/M 2.2 Emulator - BIOS Cold Boot]\n");
+
+        // CCP expects BC = (user << 4) | drive
+        // Set BC = 0 for user 0, drive A
+        cpu->regs.BC.set_pair16(0x0000);
+
+        // Jump to CCP (E000) - not CBASE+3, that's for warm boot
+        cpu->regs.PC.set_pair16(CPM_LOAD_ADDR);
+        return true;
+      }
+
+      case BIOS_WBOOT: {
+        // Warm boot - reload CCP/BDOS and jump to CCP
+        if (debug) fprintf(stderr, "[BIOS WBOOT - Warm boot]\n");
+        // Reload page zero (same as cold boot minus initialization)
+        mem[0x0000] = 0xC3;  // JMP WBOOT
+        mem[0x0001] = (BIOS_BASE + BIOS_WBOOT) & 0xFF;
+        mem[0x0002] = (BIOS_BASE + BIOS_WBOOT) >> 8;
+        // Preserve IOBYTE and current drive/user
+        mem[0x0005] = 0xC3;  // JMP BDOS
+        mem[0x0006] = 0x06;
+        mem[0x0007] = 0xE8;
+        // Set default DMA
+        dma_addr = DMA_DEFAULT;
+        // Jump to CCP + 3 (warm boot entry)
+        cpu->regs.PC.set_pair16(CPM_LOAD_ADDR + 3);
+        return true;
+      }
+
+      case BIOS_CONST: {
+        // Console status - return A=0xFF if ready, A=0 if not
+        bool ready = (input_char >= 0 || stdin_has_data());
+        cpu->set_reg8(ready ? 0xFF : 0x00, qkz80::reg_A);
+        // Return from BIOS call
+        do_ret();
+        return true;
+      }
+
+      case BIOS_CONIN: {
+        // Console input - wait for character, return in A
+        int ch;
+        if (input_char >= 0) {
+          ch = input_char;
+          input_char = -1;
+        } else if (peek_char >= 0) {
+          // Use peeked character from stdin_has_data()
+          ch = peek_char;
+          peek_char = -1;
+        } else {
+          // Blocking wait for input
+          while (!stdin_has_data()) {
+            if (stdin_eof) {
+              // EOF reached during wait - exit for pipe input
+              if (!isatty(STDIN_FILENO)) {
+                exit(0);
+              }
+              // For TTY, return ^Z
+              ch = 0x1A;
+              cpu->set_reg8(ch & 0x7F, qkz80::reg_A);
+              do_ret();
+              return true;
+            }
+            usleep(1000);  // 1ms delay
+          }
+          // stdin_has_data() returned true, so peek_char is set
+          ch = peek_char;
+          peek_char = -1;
+          check_ctrl_c_exit(ch);
+          if (ch == '\n') ch = '\r';
+        }
+        cpu->set_reg8(ch & 0x7F, qkz80::reg_A);
+        do_ret();
+        return true;
+      }
+
+      case BIOS_CONOUT: {
+        // Console output - print character in C
+        uint8_t ch = cpu->get_reg8(qkz80::reg_C);
+        putchar(ch & 0x7F);
+        fflush(stdout);
+        do_ret();
+        return true;
+      }
+
+      case BIOS_LIST: {
+        // List output (printer) - print char in C
+        uint8_t ch = cpu->get_reg8(qkz80::reg_C);
+        // For now, send to stdout like console
+        putchar(ch & 0x7F);
+        fflush(stdout);
+        do_ret();
+        return true;
+      }
+
+      case BIOS_PUNCH: {
+        // Punch output - ignore for now
+        do_ret();
+        return true;
+      }
+
+      case BIOS_READER: {
+        // Reader input - return ^Z (EOF)
+        cpu->set_reg8(0x1A, qkz80::reg_A);
+        do_ret();
+        return true;
+      }
+
+      case BIOS_HOME: {
+        // Home disk - seek to track 0
+        current_track = 0;
+        do_ret();
+        return true;
+      }
+
+      case BIOS_SELDSK: {
+        // Select disk - C=disk number (0=A, 1=B, etc.)
+        // Return HL=DPH address or HL=0 if invalid
+        uint8_t disk = cpu->get_reg8(qkz80::reg_C);
+        if (debug) fprintf(stderr, "[BIOS SELDSK: disk %c]\n", 'A' + disk);
+
+        if (disk < 16 && disks[disk].valid) {
+          current_disk = disk;
+          // Return pointer to DPH (properly initialized in BOOT)
+          uint16_t dph = DPH_BASE + (disk * 16);
+          cpu->regs.HL.set_pair16(dph);
+        } else {
+          // Invalid disk
+          cpu->regs.HL.set_pair16(0x0000);
+        }
+        do_ret();
+        return true;
+      }
+
+      case BIOS_SETTRK: {
+        // Set track - BC=track number
+        current_track = cpu->regs.BC.get_pair16();
+        if (debug) fprintf(stderr, "[BIOS SETTRK: track %d]\n", current_track);
+        do_ret();
+        return true;
+      }
+
+      case BIOS_SETSEC: {
+        // Set sector - BC=sector number
+        current_sector = cpu->regs.BC.get_pair16();
+        if (debug) fprintf(stderr, "[BIOS SETSEC: sector %d]\n", current_sector);
+        do_ret();
+        return true;
+      }
+
+      case BIOS_SETDMA: {
+        // Set DMA address - BC=address
+        dma_addr = cpu->regs.BC.get_pair16();
+        if (debug) fprintf(stderr, "[BIOS SETDMA: 0x%04X]\n", dma_addr);
+        do_ret();
+        return true;
+      }
+
+      case BIOS_READ: {
+        // Read sector - return A=0 if OK, A=1 if error
+        if (debug) {
+          fprintf(stderr, "[BIOS READ: disk %c, track %d, sector %d, DMA 0x%04X]\n",
+                  'A' + current_disk, current_track, current_sector, dma_addr);
+        }
+
+        int result = do_disk_read();
+        cpu->set_reg8(result, qkz80::reg_A);
+        do_ret();
+        return true;
+      }
+
+      case BIOS_WRITE: {
+        // Write sector - C=write type, return A=0 if OK
+        uint8_t write_type = cpu->get_reg8(qkz80::reg_C);
+        if (debug) {
+          fprintf(stderr, "[BIOS WRITE: disk %c, track %d, sector %d, DMA 0x%04X, type %d]\n",
+                  'A' + current_disk, current_track, current_sector, dma_addr, write_type);
+        }
+
+        int result = do_disk_write();
+        cpu->set_reg8(result, qkz80::reg_A);
+        do_ret();
+        return true;
+      }
+
+      case BIOS_PRSTAT: {
+        // Printer status - return A=0 if not ready, A=0xFF if ready
+        cpu->set_reg8(0xFF, qkz80::reg_A);  // Always ready
+        do_ret();
+        return true;
+      }
+
+      case BIOS_SECTRN: {
+        // Sector translate - BC=logical sector (0-based), DE=translate table
+        // Return HL=physical sector
+        // For IBM 8" SSSD format, physical sectors are 1-based (1-26)
+        // With no skew table (XLT=0), simply convert 0-based to 1-based
+        uint16_t logical = cpu->regs.BC.get_pair16();
+        uint16_t de = cpu->regs.DE.get_pair16();
+        uint16_t physical;
+        if (de == 0) {
+          // No translation table - just add 1 to convert to 1-based physical
+          physical = logical + 1;
+        } else {
+          // Use translation table - read physical sector from table
+          char* mem = cpu->get_mem();
+          physical = (uint8_t)mem[de + logical];
+        }
+        if (debug) fprintf(stderr, "[BIOS SECTRN: logical %d -> physical %d]\n", logical, physical);
+        cpu->regs.HL.set_pair16(physical);
+        do_ret();
+        return true;
+      }
+
+      default:
+        fprintf(stderr, "[ERROR: Unknown BIOS call at 0x%04X, offset 0x%02X]\n",
+                pc, offset);
+        return false;
+    }
   }
 
+private:
+  // Execute RET instruction to return from BIOS call
+  void do_ret() {
+    char* mem = cpu->get_mem();
+    uint16_t sp = cpu->regs.SP.get_pair16();
+    uint16_t ret_addr = (uint8_t)mem[sp] | ((uint8_t)mem[sp + 1] << 8);
+    cpu->regs.SP.set_pair16(sp + 2);
+    cpu->regs.PC.set_pair16(ret_addr);
+  }
+
+  // Read a sector from the disk image
+  int do_disk_read() {
+    if (current_disk < 0 || current_disk >= 16 || !disks[current_disk].valid) {
+      return 1;  // Error
+    }
+
+    // Calculate file offset: (track * 26 + (sector - 1)) * 128
+    // Sector numbers are 1-based in CP/M
+    long offset = ((long)current_track * CPMDisk::SECTORS_PER_TRACK +
+                   (current_sector - 1)) * CPMDisk::SECTOR_SIZE;
+
+    // Build filename: directory/diskimage.img or use raw sectors
+    std::string img_path = disks[current_disk].directory + "/disk.img";
+    FILE* f = fopen(img_path.c_str(), "rb");
+    if (!f) {
+      // No disk image - return zeros
+      char* mem = cpu->get_mem();
+      memset(&mem[dma_addr], 0xE5, CPMDisk::SECTOR_SIZE);
+      return 0;
+    }
+
+    fseek(f, offset, SEEK_SET);
+    char* mem = cpu->get_mem();
+    size_t read = fread(&mem[dma_addr], 1, CPMDisk::SECTOR_SIZE, f);
+    fclose(f);
+
+    if (read < CPMDisk::SECTOR_SIZE) {
+      // Pad with E5 (empty directory entry marker)
+      memset(&mem[dma_addr + read], 0xE5, CPMDisk::SECTOR_SIZE - read);
+    }
+
+    return 0;  // Success
+  }
+
+  // Write a sector to the disk image
+  int do_disk_write() {
+    if (current_disk < 0 || current_disk >= 16 || !disks[current_disk].valid) {
+      return 1;  // Error
+    }
+
+    long offset = ((long)current_track * CPMDisk::SECTORS_PER_TRACK +
+                   (current_sector - 1)) * CPMDisk::SECTOR_SIZE;
+
+    std::string img_path = disks[current_disk].directory + "/disk.img";
+    FILE* f = fopen(img_path.c_str(), "r+b");
+    if (!f) {
+      // Create the file
+      f = fopen(img_path.c_str(), "wb");
+      if (!f) {
+        return 1;  // Error
+      }
+    }
+
+    fseek(f, offset, SEEK_SET);
+    char* mem = cpu->get_mem();
+    fwrite(&mem[dma_addr], 1, CPMDisk::SECTOR_SIZE, f);
+    fclose(f);
+
+    return 0;  // Success
+  }
+
+public:
   void print_port_stats() {
     fprintf(stderr, "\n=== I/O Port Statistics ===\n");
     fprintf(stderr, "IN ports accessed:\n");
@@ -410,26 +741,26 @@ public:
   }
 };
 
-// Global emulator instance for callbacks
-static AltairEmulator* g_emu = nullptr;
+void print_usage(const char* prog) {
+  fprintf(stderr, "Usage: %s [options] <binary.bin|cpm22.sys>\n", prog);
+  fprintf(stderr, "\n");
+  fprintf(stderr, "Options:\n");
+  fprintf(stderr, "  --cpm             Enable CP/M mode (load at 0xE000, trap BIOS)\n");
+  fprintf(stderr, "  --debug           Enable debug output\n");
+  fprintf(stderr, "  --load=0xNNNN     Load address (default: 0x0000, or 0xE000 for --cpm)\n");
+  fprintf(stderr, "  --start=0xNNNN    Start address (default: load address)\n");
+  fprintf(stderr, "  --disk-a=DIR      Set drive A: directory\n");
+  fprintf(stderr, "  --disk-b=DIR      Set drive B: directory\n");
+  fprintf(stderr, "  --sense=0xNN      Set sense switch value\n");
+  fprintf(stderr, "\n");
+  fprintf(stderr, "Examples:\n");
+  fprintf(stderr, "  %s --cpm cpm22.sys --disk-a=./drivea\n", prog);
+  fprintf(stderr, "  %s 4kbas40.bin\n", prog);
+}
 
 int main(int argc, char** argv) {
   if (argc < 2) {
-    fprintf(stderr, "Usage: %s [options] <binary.bin> [load_address]\n", argv[0]);
-    fprintf(stderr, "\n");
-    fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  --debug         Enable debug output\n");
-    fprintf(stderr, "  --mem=N         Set memory size in KB (default: 64)\n");
-    fprintf(stderr, "  --sense=0xNN    Set sense switch value\n");
-    fprintf(stderr, "  --load=0xNNNN   Load address (default: 0x0000)\n");
-    fprintf(stderr, "  --start=0xNNNN  Start address (default: load address)\n");
-    fprintf(stderr, "  --tape-in=FILE  Cassette input file (for CLOAD)\n");
-    fprintf(stderr, "  --tape-out=FILE Cassette output file (for CSAVE, default: cassette.cas)\n");
-    fprintf(stderr, "\n");
-    fprintf(stderr, "Examples:\n");
-    fprintf(stderr, "  %s 4kbas40.bin                  # Load at 0x0000, run\n", argv[0]);
-    fprintf(stderr, "  %s --mem=16 --sense=0x00 8kbas.bin\n", argv[0]);
-    fprintf(stderr, "  %s --tape-out=prog.cas 8kbas.bin  # Save to prog.cas with CSAVE\n", argv[0]);
+    print_usage(argv[0]);
     return 1;
   }
 
@@ -437,31 +768,42 @@ int main(int argc, char** argv) {
   const char* binary = nullptr;
   uint16_t load_addr = 0x0000;
   uint16_t start_addr = 0x0000;
+  bool load_addr_set = false;
   bool start_addr_set = false;
   bool debug = false;
-  int mem_kb = 64;
-  int sense = -1;  // -1 = not set
-  const char* tape_in = nullptr;
-  const char* tape_out = nullptr;
+  bool cpm_mode = false;
+  int sense = -1;
+  std::string disk_dirs[16];
 
   for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "--debug") == 0) {
+    if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+      print_usage(argv[0]);
+      return 0;
+    } else if (strcmp(argv[i], "--debug") == 0) {
       debug = true;
-    } else if (strncmp(argv[i], "--mem=", 6) == 0) {
-      mem_kb = atoi(argv[i] + 6);
+    } else if (strcmp(argv[i], "--cpm") == 0) {
+      cpm_mode = true;
     } else if (strncmp(argv[i], "--sense=", 8) == 0) {
       sense = strtol(argv[i] + 8, nullptr, 0);
-    } else if (strncmp(argv[i], "--tape-in=", 10) == 0) {
-      tape_in = argv[i] + 10;
-    } else if (strncmp(argv[i], "--tape-out=", 11) == 0) {
-      tape_out = argv[i] + 11;
     } else if (strncmp(argv[i], "--load=", 7) == 0) {
       load_addr = strtol(argv[i] + 7, nullptr, 0);
+      load_addr_set = true;
     } else if (strncmp(argv[i], "--start=", 8) == 0) {
       start_addr = strtol(argv[i] + 8, nullptr, 0);
       start_addr_set = true;
+    } else if (strncmp(argv[i], "--disk-a=", 9) == 0) {
+      disk_dirs[0] = argv[i] + 9;
+    } else if (strncmp(argv[i], "--disk-b=", 9) == 0) {
+      disk_dirs[1] = argv[i] + 9;
+    } else if (strncmp(argv[i], "--disk-c=", 9) == 0) {
+      disk_dirs[2] = argv[i] + 9;
+    } else if (strncmp(argv[i], "--disk-d=", 9) == 0) {
+      disk_dirs[3] = argv[i] + 9;
     } else if (argv[i][0] != '-') {
       binary = argv[i];
+    } else {
+      fprintf(stderr, "Unknown option: %s\n", argv[i]);
+      return 1;
     }
   }
 
@@ -470,39 +812,40 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  if (!start_addr_set) {
-    start_addr = load_addr;
+  // Set defaults based on mode
+  if (cpm_mode) {
+    if (!load_addr_set) load_addr = CPM_LOAD_ADDR;
+    if (!start_addr_set) start_addr = BIOS_BASE;  // Start at BIOS BOOT
+  } else {
+    if (!start_addr_set) start_addr = load_addr;
   }
 
-  // Create memory with ROM protection and CPU in 8080 mode
-  altair_mem memory;
+  // Create memory and CPU in 8080 mode
+  cpm_mem memory;
   qkz80 cpu(&memory);
   cpu.set_cpu_mode(qkz80::MODE_8080);
   fprintf(stderr, "CPU mode: 8080\n");
 
   // Create emulator
-  AltairEmulator emu(&cpu, debug);
-  g_emu = &emu;
+  AltairEmulator emu(&cpu, &memory, debug, cpm_mode);
 
-  emu.set_memory_size(mem_kb);
+  // Set up disks
+  for (int i = 0; i < 16; i++) {
+    if (!disk_dirs[i].empty()) {
+      emu.set_disk_directory(i, disk_dirs[i]);
+    }
+  }
+
   if (sense >= 0) {
     emu.set_sense_switches(sense & 0xFF);
   }
 
-  // Set up cassette files
-  if (tape_out) {
-    emu.set_cassette_output(tape_out);
+  // Set up BIOS trap range for CP/M mode
+  if (cpm_mode) {
+    memory.set_bios_range(BIOS_BASE, BIOS_BASE + 0x33);  // 17 * 3 = 51 bytes
+    fprintf(stderr, "CP/M mode: BIOS traps at 0x%04X-0x%04X\n",
+            BIOS_BASE, BIOS_BASE + 0x32);
   }
-  if (tape_in) {
-    emu.set_cassette_input(tape_in);
-  }
-
-  // Set ROM protection to simulate limited RAM
-  // BASIC probes memory by writing byte 0 of each page and reading back
-  // For 64K, set ROM at 0xFF00 so BASIC finds ~64K of RAM
-  uint16_t rom_addr = 0xFF00;  // Protect top page
-  memory.set_rom_start(rom_addr);
-  fprintf(stderr, "ROM starts at: 0x%04X (for memory detection)\n", rom_addr);
 
   // Enable raw terminal mode
   enable_raw_mode();
@@ -515,11 +858,8 @@ int main(int argc, char** argv) {
   }
 
   char* mem = cpu.get_mem();
-
-  // Clear memory first
   memset(mem, 0, 65536);
 
-  // Load the binary
   fseek(fp, 0, SEEK_END);
   size_t file_size = ftell(fp);
   fseek(fp, 0, SEEK_SET);
@@ -533,20 +873,36 @@ int main(int argc, char** argv) {
   // Set PC to start address
   cpu.regs.PC.set_pair16(start_addr);
 
-  // Set SP to top of RAM (at ROM boundary, grows down into RAM)
-  cpu.regs.SP.set_pair16(0xFF00);
+  // Set SP to start of CCP for CP/M - stack grows down into TPA
+  if (cpm_mode) {
+    cpu.regs.SP.set_pair16(CPM_LOAD_ADDR);  // E000 - stack grows into TPA
+  } else {
+    cpu.regs.SP.set_pair16(0xFF00);
+  }
 
   // Main execution loop
   long long instruction_count = 0;
-  long long max_instructions = 1000000000LL;  // 1 billion max
+  long long max_instructions = 10000000000LL;  // 10 billion max
 
   while (true) {
     uint16_t pc = cpu.regs.PC.get_pair16();
     uint8_t opcode = mem[pc] & 0xFF;
 
+    // Check for BIOS trap in CP/M mode
+    if (cpm_mode && memory.is_bios_trap(pc)) {
+      if (debug) fprintf(stderr, "[BIOS trap check: PC=0x%04X]\n", pc);
+      if (emu.handle_bios_call(pc)) {
+        instruction_count++;
+        continue;
+      }
+      // If handle_bios_call returned false, we have an unhandled BIOS call
+      fprintf(stderr, "[ERROR: Unhandled BIOS trap at PC=0x%04X, falling through!]\n", pc);
+    }
+
     // Check for HLT instruction
     if (opcode == 0x76) {
-      fprintf(stderr, "\nHLT instruction at 0x%04X after %lld instructions\n", pc, instruction_count);
+      fprintf(stderr, "\nHLT instruction at 0x%04X after %lld instructions\n",
+              pc, instruction_count);
       emu.print_port_stats();
       break;
     }
@@ -571,10 +927,20 @@ int main(int argc, char** argv) {
       continue;
     }
 
-    // Check for writes to protected memory (for ROM detection)
-    // This is a simplified check - a full implementation would intercept
-    // all memory write instructions (STA, STAX, MOV M, SHLD, etc.)
-    // For now, we'll mark the top page as ROM-like
+    // Debug: track first 50000 instructions after boot to see where we go
+    static long debug_count = 0;
+    if (debug && debug_count < 50000 && instruction_count > 1) {
+      debug_count++;
+      if (debug_count % 1000 == 0 || (pc >= 0xF600 && pc < 0xF700) ||
+          pc == 0xEB59 || pc == 0xEB5C || pc == 0xE806 || pc == 0xF483) {
+        fprintf(stderr, "[TRACE %ld: PC=0x%04X, op=0x%02X]\n", debug_count, pc, opcode);
+      }
+    }
+    // Debug: check for BIOS-area execution that doesn't get trapped
+    if (debug && pc >= 0xF600 && pc < 0xF633) {
+      fprintf(stderr, "[DEBUG BIOS AREA: PC=0x%04X, opcode=0x%02X, is_trap=%d]\n",
+              pc, opcode, memory.is_bios_trap(pc));
+    }
 
     // Execute one instruction
     cpu.execute();
