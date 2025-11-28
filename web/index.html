@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>CP/M 2.2 Emulator</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+  <style>
+    body {
+      background: #1a1a2e;
+      color: #eee;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+    }
+    h1 {
+      color: #00ff88;
+      margin-bottom: 10px;
+    }
+    #status {
+      color: #888;
+      margin-bottom: 10px;
+      font-size: 14px;
+    }
+    #terminal-container {
+      border: 2px solid #333;
+      border-radius: 8px;
+      overflow: hidden;
+      display: inline-block;
+    }
+    .controls {
+      margin: 15px 0;
+    }
+    button {
+      background: #00aa66;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      margin-right: 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover {
+      background: #00cc77;
+    }
+    button:disabled {
+      background: #555;
+      cursor: not-allowed;
+    }
+    .file-input {
+      margin: 10px 0;
+    }
+    label {
+      display: inline-block;
+      margin-right: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>CP/M 2.2 Emulator</h1>
+  <div id="status">Loading...</div>
+
+  <div class="controls">
+    <div class="file-input">
+      <label>CP/M System (cpm22.sys):</label>
+      <input type="file" id="sysFile" accept=".sys,.bin">
+    </div>
+    <div class="file-input">
+      <label>Disk A Image:</label>
+      <input type="file" id="diskFile" accept=".img,.dsk">
+    </div>
+    <button id="startBtn" disabled>Start CP/M</button>
+    <button id="stopBtn" disabled>Stop</button>
+    <button id="downloadBtn" disabled>Download Disk</button>
+  </div>
+
+  <div id="terminal-container">
+    <div id="terminal"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+  <script src="cpm.js"></script>
+  <script>
+    // Terminal setup
+    const term = new Terminal({
+      cols: 80,
+      rows: 24,
+      cursorBlink: true,
+      fontSize: 16,
+      fontFamily: 'Consolas, Monaco, monospace',
+      theme: {
+        background: '#0a0a1a',
+        foreground: '#00ff88',
+        cursor: '#00ff88'
+      }
+    });
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(document.getElementById('terminal'));
+    fitAddon.fit();
+
+    const statusDiv = document.getElementById('status');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const sysFile = document.getElementById('sysFile');
+    const diskFile = document.getElementById('diskFile');
+
+    let systemLoaded = false;
+    let diskLoaded = false;
+
+    // Console output from emulator
+    Module.onConsoleOutput = function(ch) {
+      if (ch === 13) {  // CR
+        term.write('\r\n');
+      } else if (ch === 8) {  // Backspace
+        term.write('\b \b');
+      } else if (ch >= 32 && ch < 127) {
+        term.write(String.fromCharCode(ch));
+      }
+    };
+
+    // Status messages from emulator
+    Module.onStatus = function(msg) {
+      statusDiv.textContent = msg;
+    };
+
+    // Keyboard input to emulator
+    term.onKey(function(e) {
+      if (Module._cpm_key_input) {
+        let ch = e.key.charCodeAt(0);
+        if (e.key === 'Enter') ch = 13;
+        else if (e.key === 'Backspace') ch = 8;
+        else if (e.key === 'Delete') ch = 127;
+        Module._cpm_key_input(ch);
+      }
+    });
+
+    // Load system file
+    sysFile.addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const data = new Uint8Array(e.target.result);
+        const ptr = Module._malloc(data.length);
+        Module.HEAPU8.set(data, ptr);
+        Module._cpm_load_system(ptr, data.length);
+        Module._free(ptr);
+        systemLoaded = true;
+        updateButtons();
+        statusDiv.textContent = 'System loaded: ' + file.name;
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    // Load disk file
+    diskFile.addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const data = new Uint8Array(e.target.result);
+        const ptr = Module._malloc(data.length);
+        Module.HEAPU8.set(data, ptr);
+        Module._cpm_load_disk(ptr, data.length);
+        Module._free(ptr);
+        diskLoaded = true;
+        updateButtons();
+        statusDiv.textContent = 'Disk loaded: ' + file.name;
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    // Start button
+    startBtn.addEventListener('click', function() {
+      term.clear();
+      Module._cpm_start();
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      downloadBtn.disabled = false;
+    });
+
+    // Stop button
+    stopBtn.addEventListener('click', function() {
+      Module._cpm_stop();
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      statusDiv.textContent = 'Stopped';
+    });
+
+    // Download disk
+    downloadBtn.addEventListener('click', function() {
+      const size = Module._cpm_get_disk_size();
+      const ptr = Module._cpm_get_disk_data();
+      const data = new Uint8Array(Module.HEAPU8.buffer, ptr, size);
+      const blob = new Blob([data], {type: 'application/octet-stream'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'cpm_disk.img';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    function updateButtons() {
+      startBtn.disabled = !(systemLoaded && diskLoaded);
+    }
+
+    // Wait for WASM to load, then auto-start
+    Module.onRuntimeInitialized = function() {
+      statusDiv.textContent = 'Starting CP/M...';
+      term.writeln('CP/M 2.2 Emulator - WebAssembly Edition');
+      term.writeln('');
+
+      // Auto-start with bundled files
+      setTimeout(function() {
+        if (Module._cpm_autostart) {
+          Module._cpm_autostart();
+          startBtn.disabled = true;
+          stopBtn.disabled = false;
+          downloadBtn.disabled = false;
+        }
+      }, 100);
+    };
+  </script>
+</body>
+</html>
