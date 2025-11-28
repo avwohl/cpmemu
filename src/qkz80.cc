@@ -3,7 +3,8 @@
 #include <iostream>
 
 static qkz80_trace dummy_trace;
-qkz80::qkz80():
+qkz80::qkz80(qkz80_cpu_mem *memory):
+  mem(memory),
   trace(&dummy_trace),
   qkz80_debug(false),
   cpu_mode(MODE_Z80) { // Default to Z80 mode
@@ -21,7 +22,7 @@ void qkz80::cpm_setup_memory(void) {
   for(qkz80_uint16 i(1); i<8; i++) {
     qkz80_uint16 addr(i*20);
     qkz80_uint8 return_instruction(0xc9);
-    mem.store_mem(addr,return_instruction);
+    mem->store_mem(addr,return_instruction);
   }
 }
 
@@ -110,8 +111,8 @@ void qkz80::halt(void) {
 }
 
 qkz80_uint16 qkz80::read_word(qkz80_uint16 addr) {
-  qkz80_uint8 low(mem.fetch_mem(addr));
-  qkz80_uint8 high(mem.fetch_mem(addr+1));
+  qkz80_uint8 low(mem->fetch_mem(addr));
+  qkz80_uint8 high(mem->fetch_mem(addr+1));
   return qkz80_MK_INT16(low,high);
 }
 
@@ -230,8 +231,8 @@ void qkz80::set_reg16(qkz80_uint16 a,qkz80_uint8 rp) {
 void qkz80::write_2_bytes(qkz80_uint16 store_me,qkz80_uint16 location) {
   qkz80_uint8 low(qkz80_GET_CLEAN8(store_me));
   qkz80_uint8 high(qkz80_GET_HIGH8(store_me));
-  mem.store_mem(location,low);
-  mem.store_mem(location+1,high);
+  mem->store_mem(location,low);
+  mem->store_mem(location+1,high);
 }
 
 qkz80_uint16 qkz80::get_reg16(qkz80_uint8 rnum) {
@@ -274,7 +275,7 @@ qkz80_uint8 qkz80::get_reg8(qkz80_uint8 rnum) {
   case reg_L:
     return regs.HL.get_low();
   case reg_M:
-    return mem.fetch_mem(regs.HL.get_pair16());
+    return mem->fetch_mem(regs.HL.get_pair16());
   case reg_A:
     return regs.AF.get_high();
   default:
@@ -311,7 +312,7 @@ void qkz80::set_reg8(qkz80_uint8 dat,qkz80_uint8 rnum) {
     regs.HL.set_low(dat);
     break;
   case reg_M:
-    mem.store_mem(regs.HL.get_pair16(),dat);
+    mem->store_mem(regs.HL.get_pair16(),dat);
     break;
   case reg_A:
     regs.AF.set_high(dat);
@@ -323,14 +324,14 @@ void qkz80::set_reg8(qkz80_uint8 dat,qkz80_uint8 rnum) {
 
 qkz80_uint8 qkz80::peek_byte_from_opcode_stream(void) {
   qkz80_uint16 pc=regs.PC.get_pair16();
-  qkz80_uint8 opcode_byte(mem.fetch_mem(pc));
+  qkz80_uint8 opcode_byte(mem->fetch_mem(pc));
   trace->fetch(opcode_byte,pc);
   return opcode_byte;
 }
 
 qkz80_uint8 qkz80::pull_byte_from_opcode_stream(void) {
   qkz80_uint16 pc=regs.PC.get_pair16();
-  qkz80_uint8 opcode_byte(mem.fetch_mem(pc));
+  qkz80_uint8 opcode_byte(mem->fetch_mem(pc));
   trace->fetch(opcode_byte,pc);
   pc++;
   regs.PC.set_pair16(pc);
@@ -539,11 +540,11 @@ void qkz80::execute(void) {
     case 0x67: { // RRD
       qkz80_uint16 hl_addr = get_reg16(regp_HL);
       qkz80_uint8 a_val = get_reg8(reg_A);
-      qkz80_uint8 mem_val = mem.fetch_mem(hl_addr);
+      qkz80_uint8 mem_val = mem->fetch_mem(hl_addr);
       qkz80_uint8 new_a = (a_val & 0xf0) | (mem_val & 0x0f);
       qkz80_uint8 new_mem = (mem_val >> 4) | ((a_val & 0x0f) << 4);
       set_A(new_a);
-      mem.store_mem(hl_addr, new_mem);
+      mem->store_mem(hl_addr, new_mem);
       regs.set_flags_from_logic8(new_a, regs.get_carry_as_int(), 0);
       trace->asm_op("rrd");
       return;
@@ -552,11 +553,11 @@ void qkz80::execute(void) {
     case 0x6f: { // RLD
       qkz80_uint16 hl_addr = get_reg16(regp_HL);
       qkz80_uint8 a_val = get_reg8(reg_A);
-      qkz80_uint8 mem_val = mem.fetch_mem(hl_addr);
+      qkz80_uint8 mem_val = mem->fetch_mem(hl_addr);
       qkz80_uint8 new_a = (a_val & 0xf0) | ((mem_val >> 4) & 0x0f);
       qkz80_uint8 new_mem = (mem_val << 4) | (a_val & 0x0f);
       set_A(new_a);
-      mem.store_mem(hl_addr, new_mem);
+      mem->store_mem(hl_addr, new_mem);
       regs.set_flags_from_logic8(new_a, regs.get_carry_as_int(), 0);
       trace->asm_op("rld");
       return;
@@ -567,8 +568,8 @@ void qkz80::execute(void) {
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 de = get_reg16(regp_DE);
       qkz80_uint16 bc = get_reg16(regp_BC);
-      qkz80_uint8 byte_val = mem.fetch_mem(hl);
-      mem.store_mem(de, byte_val);
+      qkz80_uint8 byte_val = mem->fetch_mem(hl);
+      mem->store_mem(de, byte_val);
       set_reg16(hl + 1, regp_HL);
       set_reg16(de + 1, regp_DE);
       set_reg16(bc - 1, regp_BC);
@@ -581,8 +582,8 @@ void qkz80::execute(void) {
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 de = get_reg16(regp_DE);
       qkz80_uint16 bc = get_reg16(regp_BC);
-      qkz80_uint8 byte_val = mem.fetch_mem(hl);
-      mem.store_mem(de, byte_val);
+      qkz80_uint8 byte_val = mem->fetch_mem(hl);
+      mem->store_mem(de, byte_val);
       set_reg16(hl + 1, regp_HL);
       set_reg16(de + 1, regp_DE);
       set_reg16(bc - 1, regp_BC);
@@ -596,8 +597,8 @@ void qkz80::execute(void) {
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 de = get_reg16(regp_DE);
       qkz80_uint16 bc = get_reg16(regp_BC);
-      qkz80_uint8 byte_val = mem.fetch_mem(hl);
-      mem.store_mem(de, byte_val);
+      qkz80_uint8 byte_val = mem->fetch_mem(hl);
+      mem->store_mem(de, byte_val);
       set_reg16(hl - 1, regp_HL);
       set_reg16(de - 1, regp_DE);
       set_reg16(bc - 1, regp_BC);
@@ -610,8 +611,8 @@ void qkz80::execute(void) {
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 de = get_reg16(regp_DE);
       qkz80_uint16 bc = get_reg16(regp_BC);
-      qkz80_uint8 byte_val = mem.fetch_mem(hl);
-      mem.store_mem(de, byte_val);
+      qkz80_uint8 byte_val = mem->fetch_mem(hl);
+      mem->store_mem(de, byte_val);
       set_reg16(hl - 1, regp_HL);
       set_reg16(de - 1, regp_DE);
       set_reg16(bc - 1, regp_BC);
@@ -625,7 +626,7 @@ void qkz80::execute(void) {
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 bc = get_reg16(regp_BC);
       qkz80_uint8 a_val = get_reg8(reg_A);
-      qkz80_uint8 mem_val = mem.fetch_mem(hl);
+      qkz80_uint8 mem_val = mem->fetch_mem(hl);
       regs.set_flags_from_block_cp(a_val, mem_val, bc - 1);
       set_reg16(hl + 1, regp_HL);
       set_reg16(bc - 1, regp_BC);
@@ -637,7 +638,7 @@ void qkz80::execute(void) {
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 bc = get_reg16(regp_BC);
       qkz80_uint8 a_val = get_reg8(reg_A);
-      qkz80_uint8 mem_val = mem.fetch_mem(hl);
+      qkz80_uint8 mem_val = mem->fetch_mem(hl);
       qkz80_big_uint diff = a_val - mem_val;
       regs.set_flags_from_block_cp(a_val, mem_val, bc - 1);
       set_reg16(hl + 1, regp_HL);
@@ -651,7 +652,7 @@ void qkz80::execute(void) {
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 bc = get_reg16(regp_BC);
       qkz80_uint8 a_val = get_reg8(reg_A);
-      qkz80_uint8 mem_val = mem.fetch_mem(hl);
+      qkz80_uint8 mem_val = mem->fetch_mem(hl);
       regs.set_flags_from_block_cp(a_val, mem_val, bc - 1);
       set_reg16(hl - 1, regp_HL);
       set_reg16(bc - 1, regp_BC);
@@ -663,7 +664,7 @@ void qkz80::execute(void) {
       qkz80_uint16 hl = get_reg16(regp_HL);
       qkz80_uint16 bc = get_reg16(regp_BC);
       qkz80_uint8 a_val = get_reg8(reg_A);
-      qkz80_uint8 mem_val = mem.fetch_mem(hl);
+      qkz80_uint8 mem_val = mem->fetch_mem(hl);
       qkz80_big_uint diff = a_val - mem_val;
       regs.set_flags_from_block_cp(a_val, mem_val, bc - 1);
       set_reg16(hl - 1, regp_HL);
@@ -695,10 +696,10 @@ void qkz80::execute(void) {
     // For DDCB/FDCB, address is already calculated
     if (has_dd_prefix || has_fd_prefix) {
       addr = get_reg16(active_hl) + index_offset;
-      val = mem.fetch_mem(addr);
+      val = mem->fetch_mem(addr);
     } else if (reg_sel == reg_M) {
       addr = get_reg16(regp_HL);
-      val = mem.fetch_mem(addr);
+      val = mem->fetch_mem(addr);
     } else {
       val = get_reg8(reg_sel);
     }
@@ -746,11 +747,11 @@ void qkz80::execute(void) {
       }
       // Write result back
       if (has_dd_prefix || has_fd_prefix) {
-        mem.store_mem(addr, result);
+        mem->store_mem(addr, result);
         // DDCB/FDCB undocumented: also store in register
         if (reg_sel != reg_M) set_reg8(result, reg_sel);
       } else if (reg_sel == reg_M) {
-        mem.store_mem(addr, result);
+        mem->store_mem(addr, result);
       } else {
         set_reg8(result, reg_sel);
       }
@@ -788,10 +789,10 @@ void qkz80::execute(void) {
       qkz80_uint8 bit_mask = ~(1 << bit_num);
       result = val & bit_mask;
       if (has_dd_prefix || has_fd_prefix) {
-        mem.store_mem(addr, result);
+        mem->store_mem(addr, result);
         if (reg_sel != reg_M) set_reg8(result, reg_sel);  // undocumented
       } else if (reg_sel == reg_M) {
-        mem.store_mem(addr, result);
+        mem->store_mem(addr, result);
       } else {
         set_reg8(result, reg_sel);
       }
@@ -801,10 +802,10 @@ void qkz80::execute(void) {
       qkz80_uint8 bit_mask = 1 << bit_num;
       result = val | bit_mask;
       if (has_dd_prefix || has_fd_prefix) {
-        mem.store_mem(addr, result);
+        mem->store_mem(addr, result);
         if (reg_sel != reg_M) set_reg8(result, reg_sel);  // undocumented
       } else if (reg_sel == reg_M) {
-        mem.store_mem(addr, result);
+        mem->store_mem(addr, result);
       } else {
         set_reg8(result, reg_sel);
       }
@@ -827,7 +828,7 @@ void qkz80::execute(void) {
         qkz80_int8 displacement = static_cast<qkz80_int8>(pull_byte_from_opcode_stream());
         qkz80_uint16 base_addr = has_dd_prefix ? regs.IX.get_pair16() : regs.IY.get_pair16();
         qkz80_uint16 addr = base_addr + displacement;
-        regb = mem.fetch_mem(addr);
+        regb = mem->fetch_mem(addr);
       } else {
         // IXH/IXL/IYH/IYL (undocumented half-register operations)
         regb = (reg_num == reg_H) ?
@@ -971,7 +972,7 @@ void qkz80::execute(void) {
     qkz80_uint16 pair(get_reg16(rp));
     qkz80_uint8 rega(get_reg8(reg_A));
     trace->add_reg16(rp);
-    mem.store_mem(pair,rega);
+    mem->store_mem(pair,rega);
     trace->asm_op("stax %s",name_reg16(rp));
     return;
   }
@@ -1001,9 +1002,9 @@ void qkz80::execute(void) {
     if ((has_dd_prefix || has_fd_prefix) && reg_num == reg_M) {
       qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
       qkz80_uint16 addr = get_reg16(active_hl) + offset;
-      qkz80_uint8 num = mem.fetch_mem(addr);
+      qkz80_uint8 num = mem->fetch_mem(addr);
       num++;
-      mem.store_mem(addr, num);
+      mem->store_mem(addr, num);
       qkz80_uint8 hc((num & 0xf) == 0);
       regs.set_zspa_from_inr(num,hc);
       if (has_dd_prefix)
@@ -1061,9 +1062,9 @@ void qkz80::execute(void) {
     if ((has_dd_prefix || has_fd_prefix) && reg_num == reg_M) {
       qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
       qkz80_uint16 addr = get_reg16(active_hl) + offset;
-      qkz80_uint8 num = mem.fetch_mem(addr);
+      qkz80_uint8 num = mem->fetch_mem(addr);
       num--;
-      mem.store_mem(addr, num);
+      mem->store_mem(addr, num);
       // Half-carry calculation differs between Z80 and 8080 for DCR
       qkz80_uint8 hc;
       if (cpu_mode == MODE_8080) {
@@ -1138,7 +1139,7 @@ void qkz80::execute(void) {
       qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
       qkz80_uint8 dat = pull_byte_from_opcode_stream();
       qkz80_uint16 addr = get_reg16(active_hl) + offset;
-      mem.store_mem(addr, dat);
+      mem->store_mem(addr, dat);
       if (has_dd_prefix)
         trace->asm_op("ld (ix%+d),0x%02x", offset, dat);
       else
@@ -1235,7 +1236,7 @@ void qkz80::execute(void) {
   case 0x0a: case 0x1a: {
     qkz80_uint8 rp((opcode >> 4) & 0x03);
     qkz80_uint16 pair(get_reg16(rp));
-    qkz80_uint8 dat(mem.fetch_mem(pair));
+    qkz80_uint8 dat(mem->fetch_mem(pair));
     trace->add_reg16(rp);
     set_reg8(dat,reg_A);
     trace->asm_op("ldax %s",name_reg16(rp));
@@ -1488,7 +1489,7 @@ void qkz80::execute(void) {
   {
     qkz80_uint16 addr(pull_word_from_opcode_stream());
     qkz80_uint8 rega(get_reg8(reg_A));
-    mem.store_mem(addr,rega);
+    mem->store_mem(addr,rega);
     trace->asm_op("sta 0x%0x",addr);
     return;
   }
@@ -1521,7 +1522,7 @@ void qkz80::execute(void) {
   case 0x3a: // LDA
   {
     qkz80_uint16 addr(pull_word_from_opcode_stream());
-    qkz80_uint8 dat(mem.fetch_mem(addr));
+    qkz80_uint8 dat(mem->fetch_mem(addr));
     trace->asm_op("lda 0x%0x",addr);
     set_reg8(dat,reg_A);
     return;
@@ -1560,7 +1561,7 @@ void qkz80::execute(void) {
         qkz80_global_fatal("illegal MOV (IX+d),(IX+d)");
       } else if (src == reg_M) {
         // LD r,(IX+d) or LD r,(IY+d)
-        qkz80_uint8 dat = mem.fetch_mem(addr);
+        qkz80_uint8 dat = mem->fetch_mem(addr);
         set_reg8(dat, dst);
         if (has_dd_prefix)
           trace->asm_op("ld %s,(ix%+d)", name_reg8(dst), offset);
@@ -1569,7 +1570,7 @@ void qkz80::execute(void) {
       } else {
         // LD (IX+d),r or LD (IY+d),r
         qkz80_uint8 dat = get_reg8(src);
-        mem.store_mem(addr, dat);
+        mem->store_mem(addr, dat);
         if (has_dd_prefix)
           trace->asm_op("ld (ix%+d),%s", offset, name_reg8(src));
         else
@@ -1979,10 +1980,10 @@ void qkz80::execute(void) {
   case 0xe3: // EX (SP),HL/IX/IY - xthl
   {
     qkz80_uint16 addr(get_reg16(regp_SP));
-    qkz80_uint16 dat(mem.fetch_mem16(addr));
+    qkz80_uint16 dat(mem->fetch_mem16(addr));
     qkz80_uint16 hl(get_reg16(active_hl));
     set_reg16(dat,active_hl);
-    mem.store_mem16(addr,hl);
+    mem->store_mem16(addr,hl);
     if (has_dd_prefix) trace->asm_op("ex (sp),ix");
     else if (has_fd_prefix) trace->asm_op("ex (sp),iy");
     else trace->asm_op("xthl");

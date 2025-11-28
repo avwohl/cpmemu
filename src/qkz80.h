@@ -33,7 +33,7 @@ class qkz80 {
   };
 
   qkz80_reg_set regs;
-  qkz80_cpu_mem mem;
+  qkz80_cpu_mem *mem;  // Pointer to memory (allows subclassing)
   qkz80_trace *trace;
   bool qkz80_debug;
   CPUMode cpu_mode;  // 8080 or Z80 mode
@@ -50,16 +50,17 @@ class qkz80 {
   CPUMode get_cpu_mode() const {
     return cpu_mode;
   }
-  
+
   char *get_mem(void) {
-    return mem.get_mem();
+    return mem->get_mem();
   }
 
   void set_trace(qkz80_trace *new_trace) {
     trace=new_trace;
   }
-  
-  qkz80();
+
+  // Constructor takes a memory object pointer
+  qkz80(qkz80_cpu_mem *memory);
 
   void cpm_setup_memory(void);
 
@@ -81,7 +82,7 @@ class qkz80 {
   qkz80_uint8 pull_byte_from_opcode_stream(void);
   qkz80_uint16 pull_word_from_opcode_stream(void);
   void setup_parity(void);
-  void push_word(qkz80_uint16 aword); 
+  void push_word(qkz80_uint16 aword);
   qkz80_uint16 read_word(qkz80_uint16 addr);
   qkz80_uint16 pop_word(void);
 

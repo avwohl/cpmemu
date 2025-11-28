@@ -13,11 +13,8 @@ qkz80_cpu_mem::~qkz80_cpu_mem() {
   dat=0;
 }
 
-void qkz80_cpu_mem::store_mem(qkz80_uint16 addr,qkz80_uint8 abyte) {
+void qkz80_cpu_mem::store_mem(qkz80_uint16 addr, qkz80_uint8 abyte) {
   addr = 0x0FFFF & addr;
-
-  // No memory protection - allow all writes
-  // CP/M programs manage their own stack and memory
   dat[ addr ] = abyte;
 }
 
@@ -29,7 +26,7 @@ qkz80_uint16 qkz80_cpu_mem::fetch_mem16(qkz80_uint16 addr) {
   return fetch_mem(addr) | (fetch_mem(addr+1) << 8);
 }
 
-void qkz80_cpu_mem::store_mem16(qkz80_uint16 addr,qkz80_uint16 aword) {
+void qkz80_cpu_mem::store_mem16(qkz80_uint16 addr, qkz80_uint16 aword) {
   store_mem(addr,aword);
   store_mem(addr+1,aword >> 8);
 }

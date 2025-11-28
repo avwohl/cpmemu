@@ -108,6 +108,33 @@ static void disable_raw_mode();
 static int consecutive_ctrl_c = 0;
 static const int CTRL_C_EXIT_COUNT = 5;
 
+// Memory save support for MOVCPM/SYSGEN
+static const char* save_memory_file = nullptr;
+static uint16_t save_memory_start = 0x0000;
+static uint16_t save_memory_end = 0x0000;  // 0 = full 64K
+static qkz80* save_memory_cpu = nullptr;
+
+static void do_save_memory() {
+  if (!save_memory_file || !save_memory_cpu) return;
+
+  char* mem = save_memory_cpu->get_mem();
+  uint16_t start = save_memory_start;
+  uint16_t end = save_memory_end ? save_memory_end : 0xFFFF;
+  size_t size = (end >= start) ? (end - start + 1) : (0x10000 - start);
+
+  FILE* fp = fopen(save_memory_file, "wb");
+  if (!fp) {
+    fprintf(stderr, "Failed to save memory to %s: %s\n", save_memory_file, strerror(errno));
+    return;
+  }
+
+  size_t written = fwrite(&mem[start], 1, size, fp);
+  fclose(fp);
+
+  fprintf(stderr, "Saved %zu bytes (0x%04X-0x%04X) to %s\n",
+          written, start, (uint16_t)(start + size - 1), save_memory_file);
+}
+
 // Check for ^C and handle exit logic
 // Returns true if we should exit, false if character should be passed through
 static bool check_ctrl_c_exit(int ch) {
@@ -115,6 +142,7 @@ static bool check_ctrl_c_exit(int ch) {
     consecutive_ctrl_c++;
     if (consecutive_ctrl_c >= CTRL_C_EXIT_COUNT) {
       fprintf(stderr, "\n[Exiting: %d consecutive ^C received]\n", CTRL_C_EXIT_COUNT);
+      do_save_memory();
       disable_raw_mode();
       exit(0);
     }
@@ -1003,6 +1031,7 @@ bool CPMEmulator::handle_pc(qkz80_uint16 pc) {
   // Check for JMP 0 (exit)
   if (pc == 0) {
     fprintf(stderr, "Program exit via JMP 0\n");
+    do_save_memory();
     exit(0);
   }
 
@@ -2017,6 +2046,8 @@ int main(int argc, char** argv) {
     fprintf(stderr, "  --z80               Run in Z80 mode (default)\n");
     fprintf(stderr, "  --progress[=N]      Enable progress reporting every N million instructions\n");
     fprintf(stderr, "                      (default N=100 if not specified, off by default)\n");
+    fprintf(stderr, "  --save-memory=FILE  Save memory to FILE on exit (for MOVCPM/SYSGEN)\n");
+    fprintf(stderr, "  --save-range=S-E    Save only range S to E (hex, e.g., DC00-FFFF)\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Environment variables:\n");
     fprintf(stderr, "  CPM_PROGRESS=N      Enable progress reporting every N million instructions\n");
@@ -2049,6 +2080,17 @@ int main(int argc, char** argv) {
     } else if (strcmp(argv[arg_offset], "--progress") == 0) {
       cli_progress_interval = 100 * 1000000LL;  // Default to 100M if no value specified
       arg_offset++;
+    } else if (strncmp(argv[arg_offset], "--save-memory=", 14) == 0) {
+      save_memory_file = argv[arg_offset] + 14;
+      arg_offset++;
+    } else if (strncmp(argv[arg_offset], "--save-range=", 13) == 0) {
+      // Parse range like "DC00-FFFF"
+      unsigned int start, end;
+      if (sscanf(argv[arg_offset] + 13, "%x-%x", &start, &end) == 2) {
+        save_memory_start = start;
+        save_memory_end = end;
+      }
+      arg_offset++;
     } else {
       break;  // Unknown option, assume it's the program
     }
@@ -2064,10 +2106,21 @@ int main(int argc, char** argv) {
   bool is_config = (strstr(arg1, ".cfg") != nullptr);
   const char* program = nullptr;
 
-  // Create CPU and set mode
-  qkz80 cpu;
+  // Create memory and CPU
+  qkz80_cpu_mem memory;
+  qkz80 cpu(&memory);
   cpu.set_cpu_mode(mode_8080 ? qkz80::MODE_8080 : qkz80::MODE_Z80);
   fprintf(stderr, "CPU mode: %s\n", mode_8080 ? "8080" : "Z80");
+
+  // Set up memory save if requested
+  save_memory_cpu = &cpu;
+  if (save_memory_file) {
+    fprintf(stderr, "Memory will be saved to %s on exit\n", save_memory_file);
+    if (save_memory_start || save_memory_end) {
+      fprintf(stderr, "  Range: 0x%04X-0x%04X\n", save_memory_start,
+              save_memory_end ? save_memory_end : 0xFFFF);
+    }
+  }
 
   // Create emulator
   CPMEmulator cpm(&cpu, false);

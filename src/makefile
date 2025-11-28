@@ -1,15 +1,25 @@
-all: cpmemu
+all: cpmemu altair_emu cpm_bios
 
 CXXFLAGS = -std=c++11 -Wall -O2 -I.
 SOURCES = qkz80.cc  qkz80_errors.cc  qkz80_mem.cc  qkz80_reg_set.cc cpmemu.cc
 OBJECTS = $(SOURCES:.cc=.o)
 TARGET = cpmemu
 
-all: $(TARGET)
+# Common object files for all emulators
+COMMON_OBJS = qkz80.o qkz80_errors.o qkz80_mem.o qkz80_reg_set.o console_io.o
 
-# Rule to link object files into the executable
+# Disk image handling
+DISK_OBJS = disk_image.o
+
 $(TARGET): $(OBJECTS)
 	$(CXX) $(CXXFLAGS) $(OBJECTS) -o $(TARGET)
+
+altair_emu: altair_emu.o $(COMMON_OBJS)
+	$(CXX) $(CXXFLAGS) altair_emu.o $(COMMON_OBJS) -o altair_emu
+
+# BIOS-level CP/M emulator (boots from disk images)
+cpm_bios: cpm_bios.o $(COMMON_OBJS) $(DISK_OBJS)
+	$(CXX) $(CXXFLAGS) cpm_bios.o $(COMMON_OBJS) $(DISK_OBJS) -o cpm_bios
 
 # Pattern rule to compile .cc files into .o object files
 # $< is the first dependency (the .cc file)
@@ -31,7 +41,7 @@ test: cpmemu
 	@echo "All tests completed!"
 
 clean:
-	@rm -f qkz80 cpm_emulator cpmemu *.o *.lst *.ihx *.com *.cdb *.rel *.map *~
+	@rm -f qkz80 cpm_emulator cpmemu altair_emu *.o *.lst *.ihx *.com *.cdb *.rel *.map *~
 
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
