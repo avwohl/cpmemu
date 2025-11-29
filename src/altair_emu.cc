@@ -270,8 +270,18 @@ static bool console_mode_requested = false;
 
 // Check if escape character is available in stdin (non-blocking)
 // This is called periodically from the main loop for tight loops that don't do I/O
+// IMPORTANT: Only consume the character if it IS the escape char, otherwise leave it
 static bool check_console_escape_async() {
   if (!isatty(STDIN_FILENO)) return false;
+  if (peek_char >= 0) {
+    // Already have a peeked char - check if it's escape
+    if (peek_char == console_escape_char) {
+      peek_char = -1;  // Consume it
+      console_mode_requested = true;
+      return true;
+    }
+    return false;  // Has data but not escape - don't consume
+  }
 
   fd_set readfds;
   struct timeval tv;
@@ -282,14 +292,16 @@ static bool check_console_escape_async() {
 
   if (select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv) > 0) {
     int ch = getchar();
+    if (ch == EOF) {
+      stdin_eof = true;
+      return false;
+    }
     if (ch == console_escape_char) {
       console_mode_requested = true;
       return true;
     }
-    // Not escape char - save it for later
-    if (ch != EOF) {
-      peek_char = ch;
-    }
+    // Not escape char - save it for the emulated program to read
+    peek_char = ch;
   }
   return false;
 }
@@ -910,8 +922,17 @@ public:
         if (input_char >= 0) {
           value = input_char & 0x7F;
           input_char = -1;
+        } else if (peek_char >= 0) {
+          // Use character already peeked by stdin_has_data() or check_console_escape_async()
+          int ch = peek_char;
+          peek_char = -1;
+          check_ctrl_c_exit(ch);
+          if (ch == '\n') ch = '\r';
+          value = ch & 0x7F;
         } else if (stdin_has_data()) {
-          int ch = getchar();
+          // stdin_has_data() sets peek_char, so use it
+          int ch = peek_char;
+          peek_char = -1;
           if (ch == EOF) ch = 0;
           check_ctrl_c_exit(ch);
           if (ch == '\n') ch = '\r';
