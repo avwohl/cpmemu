@@ -44,4 +44,8 @@ clean:
 serve: cpm.js
 	python3 -m http.server 8080
 
-.PHONY: all clean serve
+deploy: cpm.js
+	mkdir -p ~/www/cpm
+	cp index.html cpm.js cpm.wasm cpm.data ~/www/cpm/
+
+.PHONY: all clean serve deploy

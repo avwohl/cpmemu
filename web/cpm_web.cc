@@ -72,6 +72,9 @@ constexpr int HD_BOOT_TRACKS = 6;    // SIMH reserves 6 boot tracks
 constexpr int HD_BLOCKSIZE = 4096;
 constexpr int HD_MAXDIR = 1024;  // 1024 directory entries (standard for 8MB HD)
 
+// Debug tracking
+static uint16_t last_pc = 0;
+
 // Memory class with write protection for BIOS area
 class cpm_mem : public qkz80_cpu_mem {
   uint16_t protect_start = 0;
@@ -92,6 +95,11 @@ public:
   }
 
   void store_mem(qkz80_uint16 addr, qkz80_uint8 abyte) override {
+    // Trap writes to location 4 with invalid drive (debug - disabled)
+    // if (addr == 0x0004 && (abyte & 0x0F) > 3) {
+    //   fprintf(stderr, "\n*** LOC4 TRAP: Writing 0x%02X to location 4 (drive=%d) at PC=0x%04X ***\n",
+    //           abyte, abyte & 0x0F, last_pc);
+    // }
     if (protection_enabled && addr >= protect_start && addr < protect_end) {
       // Write to protected memory!
       fprintf(stderr, "\n*** WRITE PROTECT VIOLATION ***\n");
@@ -118,6 +126,7 @@ static std::queue<int> input_queue;
 static std::vector<uint8_t> disk_a;
 static std::vector<uint8_t> disk_b;
 static std::vector<uint8_t> disk_c;  // 8MB hard disk
+static std::vector<uint8_t> cpm_system;  // Copy of CCP+BDOS for warm boot reload
 static int current_disk = 0;
 static int current_track = 0;
 static int current_sector = 1;
@@ -142,13 +151,13 @@ EM_JS(void, js_status, (const char* msg), {
   if (Module.onStatus) Module.onStatus(UTF8ToString(msg));
 });
 
-// Debug output
+// Debug output (disabled by default - too verbose)
 EM_JS(void, js_debug, (int track, int sector, int dma, int first_byte), {
-  console.log('READ T:' + track + ' S:' + sector + ' DMA:' + dma.toString(16) + ' [' + first_byte.toString(16) + ']');
+  // console.log('READ T:' + track + ' S:' + sector + ' DMA:' + dma.toString(16) + ' [' + first_byte.toString(16) + ']');
 });
 
-EM_JS(void, js_seldsk, (int disk, int dph, int e_reg, int bc_val), {
-  console.log('SELDSK C=' + disk + ' (' + String.fromCharCode(65 + disk) + ':) BC=' + bc_val.toString(16) + ' E=' + e_reg + ' -> DPH=' + dph.toString(16));
+EM_JS(void, js_seldsk, (int disk, int dph, int e_reg, int bc_val, int loc4), {
+  // console.log('SELDSK C=' + disk + ' (' + String.fromCharCode(65 + disk) + ':) BC=' + bc_val.toString(16) + ' E=' + e_reg + ' loc4=' + loc4.toString(16) + ' -> DPH=' + dph.toString(16));
 });
 
 // No sector skew - disk image is in logical order (sectors 0-25)
@@ -229,13 +238,16 @@ static bool handle_bios(uint16_t pc) {
 
   switch (offset) {
     case BIOS_BOOT: {
-      // Cold boot - disk tables are already loaded from bios.bin
-      // Set up page zero
+      // Cold boot - full initialization, print signon, then go to GOCPM
+      // (In real BIOS this prints signon then falls through to GOCPM)
+      // fprintf(stderr, "BOOT: Cold boot\n");
+      mem[0x0003] = 0x00;  // Clear IOBYTE
+      mem[0x0004] = 0x00;  // Clear current drive/user (select A:)
+      // Fall through to GOCPM setup (same as end of WBOOT)
+      // Set up page zero - JP 0 goes to WBOOT
       mem[0x0000] = 0xC3;  // JMP WBOOT
       mem[0x0001] = static_cast<char>((BIOS_BASE + BIOS_WBOOT) & 0xFF);
       mem[0x0002] = static_cast<char>((BIOS_BASE + BIOS_WBOOT) >> 8);
-      mem[0x0003] = 0x00;  // IOBYTE
-      mem[0x0004] = 0x00;  // Current drive/user
       mem[0x0005] = 0xC3;  // JMP BDOS
       mem[0x0006] = 0x06;  // BDOS entry at E806 (from cpm22.sym)
       mem[0x0007] = 0xE8;
@@ -246,23 +258,46 @@ static bool handle_bios(uint16_t pc) {
       dma_addr = 0x0080;
 
       cpu.regs.BC.set_pair16(0x0000);
-      cpu.regs.PC.set_pair16(CPM_LOAD_ADDR);
+      cpu.regs.PC.set_pair16(CPM_LOAD_ADDR);  // Jump to CCP
       js_status("CP/M Cold Boot");
       return true;
     }
 
     case BIOS_WBOOT: {
-      mem[0x0000] = 0xC3;
+      // Warm boot - reload CCP+BDOS from saved copy, then GOCPM
+      // (Real BIOS reads CCP+BDOS from disk system tracks)
+      // CCP is 0x800 bytes, BDOS is 0xE00 bytes, total 0x1600 bytes
+      uint8_t loc4_before = (uint8_t)mem[0x0004];
+      // fprintf(stderr, "WBOOT: Warm boot, reloading CCP+BDOS (%zu bytes), loc4=0x%02X\n",
+      //         cpm_system.size(), loc4_before);
+
+      // Check if loc4 is corrupted (drive > 3)
+      if ((loc4_before & 0x0F) > 3) {
+        // fprintf(stderr, "WBOOT: WARNING - loc4 drive nibble corrupted (0x%02X), resetting to 0\n", loc4_before);
+        mem[0x0004] = 0x00;  // Reset to drive A:
+      }
+
+      if (!cpm_system.empty()) {
+        // Reload entire CCP+BDOS, not just CCP
+        memcpy(&mem[CPM_LOAD_ADDR], cpm_system.data(), cpm_system.size());
+      }
+      // GOCPM: Set up page zero
+      mem[0x0000] = 0xC3;  // JMP WBOOT
       mem[0x0001] = static_cast<char>((BIOS_BASE + BIOS_WBOOT) & 0xFF);
       mem[0x0002] = static_cast<char>((BIOS_BASE + BIOS_WBOOT) >> 8);
-      mem[0x0005] = 0xC3;
+      mem[0x0003] = 0x00;  // IOBYTE - initialize to 0
+      // Note: location 4 (CDISK) is NOT reset - preserves current drive
+      mem[0x0005] = 0xC3;  // JMP BDOS
       mem[0x0006] = 0x06;
       mem[0x0007] = 0xE8;
       dma_addr = 0x0080;
-      // C register = current drive (from location 4, low nibble)
-      // Warm boot enters CCP at offset +3
-      cpu.regs.BC.set_pair16(static_cast<uint8_t>(mem[0x0004]) & 0x0F);
-      cpu.regs.PC.set_pair16(CPM_LOAD_ADDR + 3);  // Warm boot entry
+      // Get current drive from location 4 (preserved across warm boot)
+      int drive = static_cast<uint8_t>(mem[0x0004]) & 0x0F;
+      current_disk = drive;
+      // fprintf(stderr, "WBOOT: drive from loc4 = %d\n", drive);
+      // C register = current drive, jump to CCP (not CCP+3 for warm boot)
+      cpu.regs.BC.set_pair16(drive);
+      cpu.regs.PC.set_pair16(CPM_LOAD_ADDR);  // Jump to CCP start
       return true;
     }
 
@@ -325,7 +360,7 @@ static bool handle_bios(uint16_t pc) {
         dph = 0;  // Invalid disk or C: not loaded
       }
 
-      js_seldsk(disk, dph, e_reg, cpu.regs.BC.get_pair16());
+      js_seldsk(disk, dph, e_reg, cpu.regs.BC.get_pair16(), (uint8_t)mem[4]);
       cpu.regs.HL.set_pair16(dph);
       do_ret();
       return true;
@@ -386,9 +421,19 @@ static bool handle_bios(uint16_t pc) {
 // Run one batch of instructions
 static void run_batch() {
   if (!running || waiting_for_input) return;
+  char* mem = cpu.get_mem();
 
   for (int i = 0; i < 10000; i++) {
     uint16_t pc = cpu.regs.PC.get_pair16();
+    last_pc = pc;  // Track for debug traps
+
+    // Debug: check if jumping to location 0 (disabled)
+    // if (pc == 0x0000) {
+    //   fprintf(stderr, "JP 0 detected! loc0-2: %02X %02X %02X (target: %04X), loc4=%02X\n",
+    //           (uint8_t)mem[0], (uint8_t)mem[1], (uint8_t)mem[2],
+    //           (uint8_t)mem[1] | ((uint8_t)mem[2] << 8),
+    //           (uint8_t)mem[4]);
+    // }
 
     if (memory.is_bios_trap(pc)) {
       if (!handle_bios(pc)) break;
@@ -419,6 +464,8 @@ int cpm_load_system(const char* data, int size) {
   if (size > 0x2000) size = 0x2000;  // Max 8KB for CCP+BDOS
   char* mem = cpu.get_mem();
   memcpy(&mem[CPM_LOAD_ADDR], data, size);
+  // Save a copy for warm boot reload
+  cpm_system.assign(data, data + size);
   js_status("System loaded");
   return 0;
 }
@@ -428,7 +475,7 @@ extern "C" EMSCRIPTEN_KEEPALIVE
 int cpm_load_bios(const char* data, int size) {
   char* mem = cpu.get_mem();
   memcpy(&mem[BIOS_BASE], data, size);
-  fprintf(stderr, "BIOS loaded: %d bytes at 0x%04X\n", size, BIOS_BASE);
+  // fprintf(stderr, "BIOS loaded: %d bytes at 0x%04X\n", size, BIOS_BASE);
   return 0;
 }
 
@@ -519,8 +566,8 @@ static void init_drive_c_tables() {
     mem[ALV_C_ADDR + i] = 0;
   }
 
-  fprintf(stderr, "Drive C: DPH at %04X, DPB at %04X, DSM=%d, DRM=%d\n",
-          DPH_C_ADDR, DPB_C_ADDR, dsm, drm);
+  // fprintf(stderr, "Drive C: DPH at %04X, DPB at %04X, DSM=%d, DRM=%d\n",
+  //         DPH_C_ADDR, DPB_C_ADDR, dsm, drm);
 }
 
 // Exported: Load disk C image (8MB hard disk)
@@ -621,7 +668,7 @@ int cpm_autostart() {
   fseek(f, 0, SEEK_SET);
   fread(&mem[BIOS_BASE], 1, size, f);
   fclose(f);
-  fprintf(stderr, "Loaded bios.sys: %ld bytes at 0x%04X\n", size, BIOS_BASE);
+  // fprintf(stderr, "Loaded bios.sys: %ld bytes at 0x%04X\n", size, BIOS_BASE);
 
   // Load bundled cpm22.sys (CCP+BDOS)
   f = fopen("/cpm22.sys", "rb");
@@ -634,7 +681,9 @@ int cpm_autostart() {
   fseek(f, 0, SEEK_SET);
   fread(&mem[CPM_LOAD_ADDR], 1, size, f);
   fclose(f);
-  fprintf(stderr, "Loaded cpm22.sys: %ld bytes at 0x%04X\n", size, CPM_LOAD_ADDR);
+  // Save a copy for warm boot reload
+  cpm_system.assign(&mem[CPM_LOAD_ADDR], &mem[CPM_LOAD_ADDR] + size);
+  // fprintf(stderr, "Loaded cpm22.sys: %ld bytes at 0x%04X\n", size, CPM_LOAD_ADDR);
 
   // Load bundled disk
   f = fopen("/drivea", "rb");
@@ -666,7 +715,7 @@ int cpm_autostart() {
       disk_c.resize(HD_DISK_SIZE, 0xE5);
     }
     init_drive_c_tables();
-    fprintf(stderr, "Loaded drivec: %ld bytes (8MB HD)\n", (long)read);
+    // fprintf(stderr, "Loaded drivec: %ld bytes (8MB HD)\n", (long)read);
   }
 
   // Start emulation

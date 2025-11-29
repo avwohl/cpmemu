@@ -1035,8 +1035,8 @@ bool CPMEmulator::handle_pc(qkz80_uint16 pc) {
     exit(0);
   }
 
-  // Check for BDOS call
-  if (pc == BDOS_ENTRY) {
+  // Check for BDOS call (trap at BDOS_BASE where jump from 0x0005 lands)
+  if (pc == BDOS_BASE) {
     qkz80_uint8 func = cpu->get_reg8(qkz80::reg_C);
     bdos_call(func);
 

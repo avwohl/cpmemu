@@ -34,11 +34,11 @@
       background: #00aa66;
       color: white;
       border: none;
-      padding: 10px 20px;
-      margin-right: 10px;
+      padding: 4px 12px;
+      margin-right: 8px;
       border-radius: 4px;
       cursor: pointer;
-      font-size: 14px;
+      font-size: 13px;
     }
     button:hover {
       background: #00cc77;
@@ -48,43 +48,43 @@
       cursor: not-allowed;
     }
     .file-input {
-      margin: 10px 0;
+      margin: 4px 0;
     }
     label {
       display: inline-block;
-      margin-right: 10px;
+      margin-right: 8px;
+      font-size: 13px;
+    }
+    .header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .disk-format {
+      font-size: 12px;
+      color: #666;
     }
   </style>
 </head>
 <body>
-  <h1>CP/M 2.2 Emulator <a href="https://github.com/avwohl/cpmemu" style="font-size:12px;color:#888;margin-left:10px;">[sources]</a></h1>
+  <div class="header-row">
+    <h1>CP/M 2.2 Emulator <a href="https://github.com/avwohl/cpmemu" style="font-size:12px;color:#888;margin-left:10px;">[sources]</a> <span style="font-size:11px;color:#555;">v1.9</span></h1>
+    <span class="disk-format">A:/B: IBM 8" SSSD (250KB) | C: 8MB HD</span>
+  </div>
   <div id="status">Loading...</div>
 
   <div class="controls">
     <div class="file-input">
-      <label>CP/M System (cpm22.sys):</label>
-      <input type="file" id="sysFile" accept=".sys,.bin">
+      <label>System:</label><input type="file" id="sysFile" accept=".sys,.bin">
+      <label style="margin-left:12px;">A:</label><input type="file" id="diskFile" accept=".img,.dsk"><button id="downloadBtn" disabled>↓A:</button>
+      <label style="margin-left:12px;">B:</label><input type="file" id="diskBFile" accept=".img,.dsk"><button id="downloadBBtn" disabled>↓B:</button>
     </div>
     <div class="file-input">
-      <label>Disk A Image:</label>
-      <input type="file" id="diskFile" accept=".img,.dsk">
-      <button id="downloadBtn" disabled>Download A:</button>
+      <label>C:</label><input type="file" id="diskCFile" accept=".img,.dsk"><button id="createCBtn">Create C:</button><button id="downloadCBtn" disabled>↓C:</button>
+      <button id="startBtn" disabled style="margin-left:20px;">Start CP/M</button>
+      <button id="stopBtn" disabled>Stop</button>
     </div>
-    <div class="file-input">
-      <label>Disk B Image:</label>
-      <input type="file" id="diskBFile" accept=".img,.dsk">
-      <button id="downloadBBtn" disabled>Download B:</button>
-    </div>
-    <div class="file-input">
-      <label>Disk C (8MB HD):</label>
-      <input type="file" id="diskCFile" accept=".img,.dsk">
-      <button id="createCBtn">Create Empty C:</button>
-      <button id="downloadCBtn" disabled>Download C:</button>
-    </div>
-    <button id="startBtn" disabled>Start CP/M</button>
-    <button id="stopBtn" disabled>Stop</button>
   </div>
-  <p style="font-size:12px;color:#666;">A:/B: IBM 8" SSSD (250KB) | C: Hard disk (8MB max for CP/M 2.2)</p>
 
   <div id="terminal-container">
     <div id="terminal"></div>
