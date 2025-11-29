@@ -324,14 +324,14 @@ void qkz80::set_reg8(qkz80_uint8 dat,qkz80_uint8 rnum) {
 
 qkz80_uint8 qkz80::peek_byte_from_opcode_stream(void) {
   qkz80_uint16 pc=regs.PC.get_pair16();
-  qkz80_uint8 opcode_byte(mem->fetch_mem(pc));
+  qkz80_uint8 opcode_byte(mem->fetch_mem(pc, true));  // true = instruction fetch
   trace->fetch(opcode_byte,pc);
   return opcode_byte;
 }
 
 qkz80_uint8 qkz80::pull_byte_from_opcode_stream(void) {
   qkz80_uint16 pc=regs.PC.get_pair16();
-  qkz80_uint8 opcode_byte(mem->fetch_mem(pc));
+  qkz80_uint8 opcode_byte(mem->fetch_mem(pc, true));  // true = instruction fetch
   trace->fetch(opcode_byte,pc);
   pc++;
   regs.PC.set_pair16(pc);

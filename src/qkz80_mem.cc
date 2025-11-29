@@ -18,7 +18,8 @@ void qkz80_cpu_mem::store_mem(qkz80_uint16 addr, qkz80_uint8 abyte) {
   dat[ addr ] = abyte;
 }
 
-qkz80_uint8 qkz80_cpu_mem::fetch_mem(qkz80_uint16 addr) {
+qkz80_uint8 qkz80_cpu_mem::fetch_mem(qkz80_uint16 addr, bool is_instruction) {
+  (void)is_instruction;  // Unused in base class
   return (dat[0x0FFFF & addr]) & 0x0ff;
 }
 
