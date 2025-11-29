@@ -1,5 +1,6 @@
 *.o
 *~
+\#*
 
 # Assembled output (keep source .asm files)
 *.rel
