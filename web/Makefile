@@ -20,10 +20,18 @@ SRCS = cpm_web.cc \
 
 all: cpm.js cpm_cli
 
-# Assemble BIOS from source
+# Assemble BIOS from source (only if um80 is available)
+# bios.sys is committed to git for CI builds where um80 is not available
 bios.sys: bios.asm
-	um80 -g bios.asm
-	ul80 -o bios.sys -S bios.sym -p f600 bios.rel
+	@if command -v um80 >/dev/null 2>&1; then \
+		um80 -g bios.asm && \
+		ul80 -o bios.sys -S bios.sym -p f600 bios.rel; \
+	elif [ ! -f bios.sys ]; then \
+		echo "Error: um80 not found and bios.sys does not exist"; \
+		exit 1; \
+	else \
+		echo "Using pre-built bios.sys (um80 not available)"; \
+	fi
 
 cpm.js: $(SRCS) bios.sys ../cpm22.sys ../drivea.img
 	$(EMCC) $(CFLAGS) $(LDFLAGS) -o cpm.js $(SRCS)
