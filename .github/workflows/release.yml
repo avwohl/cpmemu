@@ -36,6 +36,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential ruby ruby-dev rubygems rpm
           sudo gem install fpm
+          # Install emscripten for WebAssembly build
+          git clone https://github.com/emscripten-core/emsdk.git
+          cd emsdk
+          ./emsdk install latest
+          ./emsdk activate latest
 
       - name: Get version
         id: version
@@ -55,11 +60,21 @@ jobs:
           make clean || true
           make
 
+      - name: Build web version
+        run: |
+          source emsdk/emsdk_env.sh
+          cd web
+          make clean || true
+          make
+
       - name: Create staging directory
         run: |
           mkdir -p staging/usr/bin
           mkdir -p staging/usr/share/doc/cpmemu
+          mkdir -p staging/usr/share/cpmemu/web
           cp src/cpmemu staging/usr/bin/
+          cp web/cpm_cli staging/usr/bin/cpm_cli
+          cp web/index.html web/cpm.js web/cpm.wasm web/cpm.data staging/usr/share/cpmemu/web/
           cp README.md staging/usr/share/doc/cpmemu/
           cp LICENSE staging/usr/share/doc/cpmemu/
 

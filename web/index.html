@@ -68,11 +68,17 @@
     <div class="file-input">
       <label>Disk A Image:</label>
       <input type="file" id="diskFile" accept=".img,.dsk">
+      <button id="downloadBtn" disabled>Download A:</button>
+    </div>
+    <div class="file-input">
+      <label>Disk B Image:</label>
+      <input type="file" id="diskBFile" accept=".img,.dsk">
+      <button id="downloadBBtn" disabled>Download B:</button>
     </div>
     <button id="startBtn" disabled>Start CP/M</button>
     <button id="stopBtn" disabled>Stop</button>
-    <button id="downloadBtn" disabled>Download Disk</button>
   </div>
+  <p style="font-size:12px;color:#666;">Disk format: Standard IBM 8" SSSD - 77 tracks, 26 sectors/track, 128 bytes/sector, no skew</p>
 
   <div id="terminal-container">
     <div id="terminal"></div>
@@ -104,8 +110,10 @@
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
     const downloadBtn = document.getElementById('downloadBtn');
+    const downloadBBtn = document.getElementById('downloadBBtn');
     const sysFile = document.getElementById('sysFile');
     const diskFile = document.getElementById('diskFile');
+    const diskBFile = document.getElementById('diskBFile');
 
     let systemLoaded = false;
     let diskLoaded = false;
@@ -155,7 +163,7 @@
       reader.readAsArrayBuffer(file);
     });
 
-    // Load disk file
+    // Load disk A file
     diskFile.addEventListener('change', function(e) {
       const file = e.target.files[0];
       if (!file) return;
@@ -168,7 +176,24 @@
         Module._free(ptr);
         diskLoaded = true;
         updateButtons();
-        statusDiv.textContent = 'Disk loaded: ' + file.name;
+        statusDiv.textContent = 'Disk A loaded: ' + file.name;
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    // Load disk B file
+    diskBFile.addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const data = new Uint8Array(e.target.result);
+        const ptr = Module._malloc(data.length);
+        Module.HEAPU8.set(data, ptr);
+        Module._cpm_load_disk_b(ptr, data.length);
+        Module._free(ptr);
+        downloadBBtn.disabled = false;
+        statusDiv.textContent = 'Disk B loaded: ' + file.name;
       };
       reader.readAsArrayBuffer(file);
     });
@@ -190,7 +215,7 @@
       statusDiv.textContent = 'Stopped';
     });
 
-    // Download disk
+    // Download disk A
     downloadBtn.addEventListener('click', function() {
       const size = Module._cpm_get_disk_size();
       const ptr = Module._cpm_get_disk_data();
@@ -199,7 +224,21 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'cpm_disk.img';
+      a.download = 'cpm_disk_a.img';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    // Download disk B
+    downloadBBtn.addEventListener('click', function() {
+      const size = Module._cpm_get_disk_b_size();
+      const ptr = Module._cpm_get_disk_b_data();
+      const data = new Uint8Array(Module.HEAPU8.buffer, ptr, size);
+      const blob = new Blob([data], {type: 'application/octet-stream'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'cpm_disk_b.img';
       a.click();
       URL.revokeObjectURL(url);
     });
@@ -207,6 +246,11 @@
     function updateButtons() {
       startBtn.disabled = !(systemLoaded && diskLoaded);
     }
+
+    // Click on terminal to focus it
+    document.getElementById('terminal-container').addEventListener('click', function() {
+      term.focus();
+    });
 
     // Wait for WASM to load, then auto-start
     Module.onRuntimeInitialized = function() {
@@ -221,6 +265,8 @@
           startBtn.disabled = true;
           stopBtn.disabled = false;
           downloadBtn.disabled = false;
+          // Auto-focus the terminal so typing works immediately
+          term.focus();
         }
       }, 100);
     };

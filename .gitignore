@@ -1,5 +1,22 @@
 *.o
-**.sym
-**.sys
-**~
-**.rel
+*~
+
+# Assembled output (keep source .asm files)
+*.rel
+*.sym
+
+# Executables
+src/altair_emu
+src/cpmemu
+src/cpm_bios
+src/test_disk
+web/cpm_cli
+
+# Web build output (generated from source)
+web/cpm.js
+web/cpm.wasm
+web/cpm.data
+web/bios.sys
+
+# Emscripten SDK (if installed locally)
+emsdk/
