@@ -16,7 +16,7 @@ web/cpm_cli
 web/cpm.js
 web/cpm.wasm
 web/cpm.data
-# Note: web/bios.sys is tracked in git because um80 assembler is not available in CI
+web/bios.sys
 
 # Emscripten SDK (if installed locally)
 emsdk/

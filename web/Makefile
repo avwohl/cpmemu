@@ -20,18 +20,10 @@ SRCS = cpm_web.cc \
 
 all: cpm.js cpm_cli
 
-# Assemble BIOS from source (only if um80 is available)
-# bios.sys is committed to git for CI builds where um80 is not available
+# Assemble BIOS from source
 bios.sys: bios.asm
-	@if command -v um80 >/dev/null 2>&1; then \
-		um80 -g bios.asm && \
-		ul80 -o bios.sys -S bios.sym -p f600 bios.rel; \
-	elif [ ! -f bios.sys ]; then \
-		echo "Error: um80 not found and bios.sys does not exist"; \
-		exit 1; \
-	else \
-		echo "Using pre-built bios.sys (um80 not available)"; \
-	fi
+	um80 -g bios.asm
+	ul80 -o bios.sys -S bios.sym -p f600 bios.rel
 
 cpm.js: $(SRCS) bios.sys ../cpm22.sys ../drivea.img
 	$(EMCC) $(CFLAGS) $(LDFLAGS) -o cpm.js $(SRCS)
@@ -47,11 +39,7 @@ cpm_cli: $(CLI_SRCS) bios.sys ../cpm22.sys ../drivea.img
 	g++ -O2 -std=c++11 -o cpm_cli $(CLI_SRCS)
 
 clean:
-	rm -f cpm.js cpm.wasm cpm.data bios.rel bios.sym cpm_cli
-
-# Full clean including bios.sys (only use if um80 is available to rebuild)
-distclean: clean
-	rm -f bios.sys
+	rm -f cpm.js cpm.wasm cpm.data bios.sys bios.rel bios.sym cpm_cli
 
 serve: cpm.js
 	python3 -m http.server 8080

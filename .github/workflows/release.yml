@@ -34,8 +34,10 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential ruby ruby-dev rubygems rpm
+          sudo apt-get install -y build-essential ruby ruby-dev rubygems rpm python3-pip
           sudo gem install fpm
+          # Install um80 assembler for 8080/Z80
+          pip install um80
           # Install emscripten for WebAssembly build
           git clone https://github.com/emscripten-core/emsdk.git
           cd emsdk
