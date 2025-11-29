@@ -60,6 +60,18 @@ constexpr int SECTOR_SIZE = 128;
 constexpr int TRACK_SIZE = SECTORS * SECTOR_SIZE;
 constexpr int DISK_SIZE = TRACKS * TRACK_SIZE;
 
+// Drive C: SIMH/Altair 8MB hard disk format (compatible with altairz80 hdsk)
+// 2048 tracks, 32 sectors/track, 128 bytes/sector = 8MB
+// This matches SIMH hdsk0/hdsk1 format for maximum compatibility
+constexpr int HD_TRACKS = 2048;
+constexpr int HD_SECTORS = 32;
+constexpr int HD_SECTOR_SIZE = 128;  // SIMH uses 128-byte sectors
+constexpr int HD_TRACK_SIZE = HD_SECTORS * HD_SECTOR_SIZE;
+constexpr int HD_DISK_SIZE = HD_TRACKS * HD_TRACK_SIZE;  // 8MB
+constexpr int HD_BOOT_TRACKS = 6;    // SIMH reserves 6 boot tracks
+constexpr int HD_BLOCKSIZE = 4096;
+constexpr int HD_MAXDIR = 1024;  // 1024 directory entries (standard for 8MB HD)
+
 // Memory class with write protection for BIOS area
 class cpm_mem : public qkz80_cpu_mem {
   uint16_t protect_start = 0;
@@ -105,12 +117,21 @@ static qkz80 cpu(&memory);
 static std::queue<int> input_queue;
 static std::vector<uint8_t> disk_a;
 static std::vector<uint8_t> disk_b;
+static std::vector<uint8_t> disk_c;  // 8MB hard disk
 static int current_disk = 0;
 static int current_track = 0;
 static int current_sector = 1;
 static uint16_t dma_addr = 0x0080;
 static bool running = false;
 static bool waiting_for_input = false;
+
+// Drive C DPB and DPH addresses (dynamically placed after existing BIOS tables)
+// Existing BIOS ends at F7D8, so we put drive C tables after that
+constexpr uint16_t DPH_C_ADDR = 0xF7D8;   // DPH for drive C (16 bytes)
+constexpr uint16_t DPB_C_ADDR = 0xF7E8;   // DPB for drive C (15 bytes)
+constexpr uint16_t CSV_C_ADDR = 0xF7F7;   // CSV for drive C (0 bytes - fixed disk)
+constexpr uint16_t ALV_C_ADDR = 0xF7F7;   // ALV for drive C (256 bytes for 8MB)
+constexpr uint16_t DIRBUF_C_END = 0xF8F7; // End of drive C tables
 
 // JavaScript callbacks
 EM_JS(void, js_console_output, (int ch), {
@@ -138,7 +159,23 @@ static std::vector<uint8_t>* get_current_disk() {
   switch (current_disk) {
     case 0: return &disk_a;
     case 1: return &disk_b;
+    case 2: return &disk_c;
     default: return nullptr;
+  }
+}
+
+// Get disk geometry for current drive
+static void get_disk_geometry(int& sectors, int& sector_size, int& track_size) {
+  if (current_disk == 2) {
+    // Drive C: hard disk format
+    sectors = HD_SECTORS;
+    sector_size = HD_SECTOR_SIZE;
+    track_size = HD_TRACK_SIZE;
+  } else {
+    // Drives A/B: floppy format
+    sectors = SECTORS;
+    sector_size = SECTOR_SIZE;
+    track_size = TRACK_SIZE;
   }
 }
 
@@ -146,12 +183,16 @@ static std::vector<uint8_t>* get_current_disk() {
 static int disk_read(int track, int sector) {
   std::vector<uint8_t>* disk = get_current_disk();
   if (!disk || disk->empty()) return 1;
-  // Convert 1-based sector (1-26) to 0-based (0-25) for disk image access
+
+  int sectors, sector_size, track_size;
+  get_disk_geometry(sectors, sector_size, track_size);
+
+  // Convert 1-based sector to 0-based for disk image access
   int logical_sector = sector - 1;
-  int offset = track * TRACK_SIZE + logical_sector * SECTOR_SIZE;
-  if (offset < 0 || offset + SECTOR_SIZE > (int)disk->size()) return 1;
+  int offset = track * track_size + logical_sector * sector_size;
+  if (offset < 0 || offset + sector_size > (int)disk->size()) return 1;
   char* mem = cpu.get_mem();
-  memcpy(&mem[dma_addr], &(*disk)[offset], SECTOR_SIZE);
+  memcpy(&mem[dma_addr], &(*disk)[offset], sector_size);
   js_debug(track, sector, dma_addr, (uint8_t)(*disk)[offset]);
   return 0;
 }
@@ -160,12 +201,16 @@ static int disk_read(int track, int sector) {
 static int disk_write(int track, int sector) {
   std::vector<uint8_t>* disk = get_current_disk();
   if (!disk || disk->empty()) return 1;
-  // Convert 1-based sector (1-26) to 0-based (0-25) for disk image access
+
+  int sectors, sector_size, track_size;
+  get_disk_geometry(sectors, sector_size, track_size);
+
+  // Convert 1-based sector to 0-based for disk image access
   int logical_sector = sector - 1;
-  int offset = track * TRACK_SIZE + logical_sector * SECTOR_SIZE;
-  if (offset < 0 || offset + SECTOR_SIZE > (int)disk->size()) return 1;
+  int offset = track * track_size + logical_sector * sector_size;
+  if (offset < 0 || offset + sector_size > (int)disk->size()) return 1;
   char* mem = cpu.get_mem();
-  memcpy(&(*disk)[offset], &mem[dma_addr], SECTOR_SIZE);
+  memcpy(&(*disk)[offset], &mem[dma_addr], sector_size);
   return 0;
 }
 
@@ -265,13 +310,19 @@ static bool handle_bios(uint16_t pc) {
       int e_reg = cpu.get_reg8(qkz80::reg_E);  // E=0 means first select, E=1 means already logged in
       uint16_t dph = 0;
 
-      // Return DPH address from assembled BIOS tables (4 drives: A-D)
-      static const uint16_t dph_table[4] = { DPH0_ADDR, DPH1_ADDR, DPH2_ADDR, DPH3_ADDR };
-      if (disk < 4) {
-        dph = dph_table[disk];
-        current_disk = disk;
+      // Return DPH address (A-B from assembled BIOS, C is dynamic)
+      if (disk == 0) {
+        dph = DPH0_ADDR;
+        current_disk = 0;
+      } else if (disk == 1) {
+        dph = DPH1_ADDR;
+        current_disk = 1;
+      } else if (disk == 2 && !disk_c.empty()) {
+        // Drive C: uses dynamically generated DPH/DPB
+        dph = DPH_C_ADDR;
+        current_disk = 2;
       } else {
-        dph = 0;  // Invalid disk - return 0 to signal error
+        dph = 0;  // Invalid disk or C: not loaded
       }
 
       js_seldsk(disk, dph, e_reg, cpu.regs.BC.get_pair16());
@@ -403,6 +454,108 @@ int cpm_load_disk_b(const char* data, int size) {
   return 0;
 }
 
+// Initialize drive C's DPB and DPH tables in memory
+// DPB format: SPT(2), BSH(1), BLM(1), EXM(1), DSM(2), DRM(2), AL0(1), AL1(1), CKS(2), OFF(2) = 15 bytes
+// DPH format: XLT(2), scratch1-3(6), DIRBUF(2), DPB(2), CSV(2), ALV(2) = 16 bytes
+static void init_drive_c_tables() {
+  char* mem = cpu.get_mem();
+
+  // Calculate DPB values for SIMH 8MB hard disk format
+  // 2048 tracks, 32 sectors/track, 128 bytes/sector, 4096 byte blocks
+  int spt = HD_SECTORS;
+  int bsh = 5;  // log2(4096/128) = 5
+  int blm = 31; // (4096/128) - 1 = 31
+  int data_bytes = (HD_TRACKS - HD_BOOT_TRACKS) * HD_SECTORS * HD_SECTOR_SIZE;
+  int dsm = (data_bytes / HD_BLOCKSIZE) - 1;  // Max block number
+  int drm = HD_MAXDIR - 1;  // Max directory entry
+  int exm = (dsm > 255) ? 1 : 0;  // For 4K blocks with DSM>255, exm=1
+  // 1024 dir entries * 32 bytes = 32768 bytes = 8 blocks of 4KB
+  // AL0/AL1 bitmap: bit 7 of AL0 = block 0, bit 6 = block 1, etc.
+  // 8 blocks = bits 7-0 of AL0, so AL0=0xFF, AL1=0x00
+  int al0 = 0xFF;
+  int al1 = 0x00;
+  int cks = 0;  // Fixed disk, no checksum
+  int off = HD_BOOT_TRACKS;
+
+  // Build DPB at DPB_C_ADDR
+  mem[DPB_C_ADDR + 0] = spt & 0xFF;
+  mem[DPB_C_ADDR + 1] = (spt >> 8) & 0xFF;
+  mem[DPB_C_ADDR + 2] = bsh;
+  mem[DPB_C_ADDR + 3] = blm;
+  mem[DPB_C_ADDR + 4] = exm;
+  mem[DPB_C_ADDR + 5] = dsm & 0xFF;
+  mem[DPB_C_ADDR + 6] = (dsm >> 8) & 0xFF;
+  mem[DPB_C_ADDR + 7] = drm & 0xFF;
+  mem[DPB_C_ADDR + 8] = (drm >> 8) & 0xFF;
+  mem[DPB_C_ADDR + 9] = al0;
+  mem[DPB_C_ADDR + 10] = al1;
+  mem[DPB_C_ADDR + 11] = cks & 0xFF;
+  mem[DPB_C_ADDR + 12] = (cks >> 8) & 0xFF;
+  mem[DPB_C_ADDR + 13] = off & 0xFF;
+  mem[DPB_C_ADDR + 14] = (off >> 8) & 0xFF;
+
+  // Build DPH at DPH_C_ADDR
+  // Uses shared DIRBUF from floppy BIOS (at DIRBUF_ADDR = 0xF69C)
+  uint16_t dirbuf = DIRBUF_ADDR;
+  mem[DPH_C_ADDR + 0] = 0;  // XLT low - no sector translation
+  mem[DPH_C_ADDR + 1] = 0;  // XLT high
+  mem[DPH_C_ADDR + 2] = 0;  // Scratch 1
+  mem[DPH_C_ADDR + 3] = 0;
+  mem[DPH_C_ADDR + 4] = 0;  // Scratch 2
+  mem[DPH_C_ADDR + 5] = 0;
+  mem[DPH_C_ADDR + 6] = 0;  // Scratch 3
+  mem[DPH_C_ADDR + 7] = 0;
+  mem[DPH_C_ADDR + 8] = dirbuf & 0xFF;
+  mem[DPH_C_ADDR + 9] = (dirbuf >> 8) & 0xFF;
+  mem[DPH_C_ADDR + 10] = DPB_C_ADDR & 0xFF;
+  mem[DPH_C_ADDR + 11] = (DPB_C_ADDR >> 8) & 0xFF;
+  mem[DPH_C_ADDR + 12] = CSV_C_ADDR & 0xFF;  // CSV (0 for fixed disk)
+  mem[DPH_C_ADDR + 13] = (CSV_C_ADDR >> 8) & 0xFF;
+  mem[DPH_C_ADDR + 14] = ALV_C_ADDR & 0xFF;
+  mem[DPH_C_ADDR + 15] = (ALV_C_ADDR >> 8) & 0xFF;
+
+  // Clear ALV area (256 bytes for 8MB = 2048 blocks / 8 bits)
+  for (int i = 0; i < 256; i++) {
+    mem[ALV_C_ADDR + i] = 0;
+  }
+
+  fprintf(stderr, "Drive C: DPH at %04X, DPB at %04X, DSM=%d, DRM=%d\n",
+          DPH_C_ADDR, DPB_C_ADDR, dsm, drm);
+}
+
+// Exported: Load disk C image (8MB hard disk)
+extern "C" EMSCRIPTEN_KEEPALIVE
+int cpm_load_disk_c(const char* data, int size) {
+  disk_c.assign(data, data + size);
+  if ((int)disk_c.size() < HD_DISK_SIZE) {
+    disk_c.resize(HD_DISK_SIZE, 0xE5);
+  }
+  // Initialize drive C tables in CP/M memory
+  init_drive_c_tables();
+  js_status("Disk C loaded (8MB)");
+  return 0;
+}
+
+// Exported: Create empty disk C (8MB)
+extern "C" EMSCRIPTEN_KEEPALIVE
+int cpm_create_disk_c() {
+  disk_c.assign(HD_DISK_SIZE, 0xE5);
+  init_drive_c_tables();
+  js_status("Disk C created (8MB empty)");
+  return 0;
+}
+
+// Exported: Get disk C data for download
+extern "C" EMSCRIPTEN_KEEPALIVE
+const uint8_t* cpm_get_disk_c_data() {
+  return disk_c.data();
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE
+int cpm_get_disk_c_size() {
+  return disk_c.size();
+}
+
 // Exported: Start emulation
 extern "C" EMSCRIPTEN_KEEPALIVE
 void cpm_start() {
@@ -498,6 +651,22 @@ int cpm_autostart() {
 
   if (disk_a.size() < DISK_SIZE) {
     disk_a.resize(DISK_SIZE, 0xE5);
+  }
+
+  // Load bundled drive C (8MB hard disk with utilities)
+  f = fopen("/drivec", "rb");
+  if (f) {
+    fseek(f, 0, SEEK_END);
+    size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    disk_c.resize(size);
+    size_t read = fread(disk_c.data(), 1, size, f);
+    fclose(f);
+    if (disk_c.size() < HD_DISK_SIZE) {
+      disk_c.resize(HD_DISK_SIZE, 0xE5);
+    }
+    init_drive_c_tables();
+    fprintf(stderr, "Loaded drivec: %ld bytes (8MB HD)\n", (long)read);
   }
 
   // Start emulation

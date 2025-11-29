@@ -1,0 +1,391 @@
+# CP/M Disk Definitions
+# Based on cpmtools diskdefs format
+# https://github.com/lipro-cpm4l/cpmtools
+#
+# Format:
+#   diskdef <name>
+#     seclen <bytes>       - Sector size (128, 256, 512, 1024)
+#     tracks <count>       - Total tracks
+#     sectrk <count>       - Sectors per track
+#     blocksize <bytes>    - Allocation block size (1024-16384)
+#     maxdir <count>       - Maximum directory entries
+#     boottrk <count>      - Reserved system tracks
+#     skew <factor>        - Sector interleave
+#     skewtab <n,n,n,...>  - Explicit sector translation table
+#     os <type>            - OS type (2.2, 3, p2dos)
+#   end
+#
+# CP/M 2.2 maximum disk size: 8MB (65536 sectors * 128 bytes)
+# CP/M 3.0 maximum disk size: 32MB
+
+# ============================================
+# 8" Floppy Disks
+# ============================================
+
+# IBM 3740 - THE standard CP/M format
+# 77 tracks, 26 sectors/track, 128 bytes/sector
+# Capacity: 243KB usable (250KB raw)
+diskdef ibm-3740
+  seclen 128
+  tracks 77
+  sectrk 26
+  blocksize 1024
+  maxdir 64
+  skew 6
+  boottrk 2
+  os 2.2
+end
+
+# 8" Double-Sided Single-Density
+diskdef ibm-8dssd
+  seclen 128
+  tracks 154
+  sectrk 26
+  blocksize 2048
+  maxdir 128
+  skew 6
+  boottrk 2
+  os 2.2
+end
+
+# 8" Double-Sided Double-Density
+diskdef ibm-8dsdd
+  seclen 512
+  tracks 154
+  sectrk 8
+  blocksize 2048
+  maxdir 128
+  skew 0
+  boottrk 2
+  os 2.2
+end
+
+# ============================================
+# 5.25" Floppy Disks
+# ============================================
+
+# Kaypro II - Single-sided DD (191KB)
+diskdef kaypro2
+  seclen 512
+  tracks 40
+  sectrk 10
+  blocksize 1024
+  maxdir 64
+  skew 0
+  boottrk 1
+  os 2.2
+end
+
+# Kaypro IV/10 - Double-sided DD (390KB)
+diskdef kaypro4
+  seclen 512
+  tracks 80
+  sectrk 10
+  blocksize 2048
+  maxdir 64
+  skew 0
+  boottrk 1
+  os 2.2
+end
+
+# Osborne 1 (92KB single-sided)
+diskdef osborne1
+  seclen 256
+  tracks 40
+  sectrk 10
+  blocksize 1024
+  maxdir 64
+  skew 0
+  boottrk 3
+  os 2.2
+end
+
+# Apple II CP/M (140KB)
+diskdef apple-do
+  seclen 256
+  tracks 35
+  sectrk 16
+  blocksize 1024
+  maxdir 64
+  skewtab 0,6,12,3,9,15,14,5,11,2,8,7,13,4,10,1
+  boottrk 3
+  os 2.2
+end
+
+# Apple II ProDOS skew
+diskdef apple-po
+  seclen 256
+  tracks 35
+  sectrk 16
+  blocksize 1024
+  maxdir 64
+  skewtab 0,9,3,12,6,15,1,10,4,13,7,8,2,11,5,14
+  boottrk 3
+  os 2.2
+end
+
+# Generic 5.25" SSDD (180KB)
+diskdef ssdd-180k
+  seclen 512
+  tracks 40
+  sectrk 9
+  blocksize 1024
+  maxdir 64
+  skew 0
+  boottrk 2
+  os 2.2
+end
+
+# Generic 5.25" DSDD (360KB)
+diskdef dsdd-360k
+  seclen 512
+  tracks 80
+  sectrk 9
+  blocksize 2048
+  maxdir 64
+  skew 0
+  boottrk 2
+  os 2.2
+end
+
+# TRS-80 Model 4 (180KB)
+diskdef trs80-m4
+  seclen 256
+  tracks 40
+  sectrk 18
+  blocksize 1024
+  maxdir 64
+  skew 1
+  boottrk 2
+  os 2.2
+end
+
+# Morrow MD2 (390KB DSDD)
+diskdef morrow-md2
+  seclen 1024
+  tracks 80
+  sectrk 5
+  blocksize 2048
+  maxdir 128
+  skew 0
+  boottrk 2
+  os 2.2
+end
+
+# Epson QX-10 (390KB)
+diskdef epson-qx10
+  seclen 512
+  tracks 40
+  sectrk 20
+  blocksize 2048
+  maxdir 128
+  skew 0
+  boottrk 2
+  os 2.2
+end
+
+# ============================================
+# 3.5" Floppy Disks
+# ============================================
+
+# 3.5" DD (720KB)
+diskdef dd-720k
+  seclen 512
+  tracks 160
+  sectrk 9
+  blocksize 2048
+  maxdir 128
+  skew 1
+  boottrk 2
+  os 2.2
+end
+
+# 3.5" HD (1.44MB) - CP/M Plus format
+diskdef hd-1440k
+  seclen 512
+  tracks 160
+  sectrk 18
+  blocksize 4096
+  maxdir 256
+  skew 1
+  boottrk 2
+  os 3
+end
+
+# Amstrad PCW 180KB (3" disk)
+diskdef pcw180
+  seclen 512
+  tracks 40
+  sectrk 9
+  blocksize 1024
+  maxdir 64
+  skew 1
+  boottrk 1
+  os 3
+end
+
+# ============================================
+# Hard Disks (CP/M 2.2 compatible)
+# ============================================
+
+# 1MB Hard Disk
+diskdef hd-1mb
+  seclen 512
+  tracks 64
+  sectrk 32
+  blocksize 2048
+  maxdir 128
+  skew 0
+  boottrk 2
+  os 2.2
+end
+
+# 2MB Hard Disk
+diskdef hd-2mb
+  seclen 512
+  tracks 128
+  sectrk 32
+  blocksize 2048
+  maxdir 256
+  skew 0
+  boottrk 2
+  os 2.2
+end
+
+# 4MB Hard Disk
+diskdef hd-4mb
+  seclen 512
+  tracks 256
+  sectrk 32
+  blocksize 4096
+  maxdir 512
+  skew 0
+  boottrk 2
+  os 2.2
+end
+
+# 8MB Hard Disk (MAXIMUM for CP/M 2.2!)
+# 8MB = 8,388,608 bytes = 65,536 * 128
+# This is the absolute limit due to 16-bit sector addressing
+diskdef hd-8mb
+  seclen 512
+  tracks 512
+  sectrk 32
+  blocksize 4096
+  maxdir 1024
+  skew 0
+  boottrk 2
+  os 2.2
+end
+
+# SIMH/Altair 8MB hard disk (native format)
+# 2048 tracks * 32 sectors * 128 bytes = 8MB
+# This is the format used by altairz80 simulator hdsk
+diskdef simh-hdsk
+  seclen 128
+  tracks 2048
+  sectrk 32
+  blocksize 4096
+  maxdir 1024
+  skew 0
+  boottrk 6
+  os 2.2
+end
+
+# SIMH/Altair style floppy (254 tracks)
+diskdef simh-floppy
+  seclen 128
+  tracks 254
+  sectrk 32
+  blocksize 2048
+  maxdir 256
+  skew 0
+  boottrk 6
+  os 2.2
+end
+
+# Z80pack 4MB hard disk
+diskdef z80pack-hd
+  seclen 128
+  tracks 255
+  sectrk 128
+  blocksize 2048
+  maxdir 1024
+  skew 0
+  boottrk 0
+  os 2.2
+end
+
+# North Star hard disk 4MB
+diskdef nshd4
+  seclen 512
+  tracks 512
+  sectrk 16
+  blocksize 4096
+  maxdir 256
+  skew 0
+  boottrk 0
+  os 2.2
+end
+
+# ============================================
+# P2DOS / Extended Formats (>8MB)
+# ============================================
+
+# P2DOS is a CP/M 2.2 compatible replacement that
+# supports larger disks. Use these only with P2DOS.
+
+# 16MB P2DOS disk
+diskdef p2dos-16mb
+  seclen 512
+  tracks 1024
+  sectrk 32
+  blocksize 8192
+  maxdir 512
+  skew 0
+  boottrk 2
+  os p2dos
+end
+
+# ============================================
+# CP/M 3.0 (CP/M Plus) Formats
+# ============================================
+
+# CP/M 3 supports larger disks (up to 32MB) and
+# date/time stamps in directory entries.
+
+# 8MB CP/M 3 disk
+diskdef cpm3-8mb
+  seclen 512
+  tracks 512
+  sectrk 32
+  blocksize 4096
+  maxdir 512
+  skew 0
+  boottrk 2
+  os 3
+end
+
+# 16MB CP/M 3 disk
+diskdef cpm3-16mb
+  seclen 512
+  tracks 1024
+  sectrk 32
+  blocksize 8192
+  maxdir 1024
+  skew 0
+  boottrk 2
+  os 3
+end
+
+# 32MB CP/M 3 disk (maximum)
+diskdef cpm3-32mb
+  seclen 512
+  tracks 2048
+  sectrk 32
+  blocksize 16384
+  maxdir 2048
+  skew 0
+  boottrk 2
+  os 3
+end

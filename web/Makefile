@@ -3,13 +3,14 @@
 EMCC = emcc
 CFLAGS = -O2 -std=c++11
 LDFLAGS = -s WASM=1 \
-          -s EXPORTED_FUNCTIONS='["_main","_cpm_key_input","_cpm_load_system","_cpm_load_bios","_cpm_load_disk","_cpm_load_disk_b","_cpm_start","_cpm_stop","_cpm_get_disk_data","_cpm_get_disk_size","_cpm_get_disk_b_data","_cpm_get_disk_b_size","_cpm_autostart","_malloc","_free"]' \
+          -s EXPORTED_FUNCTIONS='["_main","_cpm_key_input","_cpm_load_system","_cpm_load_bios","_cpm_load_disk","_cpm_load_disk_b","_cpm_load_disk_c","_cpm_create_disk_c","_cpm_start","_cpm_stop","_cpm_get_disk_data","_cpm_get_disk_size","_cpm_get_disk_b_data","_cpm_get_disk_b_size","_cpm_get_disk_c_data","_cpm_get_disk_c_size","_cpm_autostart","_malloc","_free"]' \
           -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","FS"]' \
           -s ALLOW_MEMORY_GROWTH=1 \
           -s INITIAL_MEMORY=16777216 \
           --preload-file bios.sys@/bios.sys \
           --preload-file ../cpm22.sys@/cpm22.sys \
-          --preload-file ../drivea.img@/drivea
+          --preload-file ../drivea.img@/drivea \
+          --preload-file drivec.img@/drivec
 
 SRCS = cpm_web.cc \
        ../src/qkz80.cc \

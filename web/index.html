@@ -57,7 +57,7 @@
   </style>
 </head>
 <body>
-  <h1>CP/M 2.2 Emulator</h1>
+  <h1>CP/M 2.2 Emulator <a href="https://github.com/avwohl/cpmemu" style="font-size:12px;color:#888;margin-left:10px;">[sources]</a></h1>
   <div id="status">Loading...</div>
 
   <div class="controls">
@@ -75,10 +75,16 @@
       <input type="file" id="diskBFile" accept=".img,.dsk">
       <button id="downloadBBtn" disabled>Download B:</button>
     </div>
+    <div class="file-input">
+      <label>Disk C (8MB HD):</label>
+      <input type="file" id="diskCFile" accept=".img,.dsk">
+      <button id="createCBtn">Create Empty C:</button>
+      <button id="downloadCBtn" disabled>Download C:</button>
+    </div>
     <button id="startBtn" disabled>Start CP/M</button>
     <button id="stopBtn" disabled>Stop</button>
   </div>
-  <p style="font-size:12px;color:#666;">Disk format: Standard IBM 8" SSSD - 77 tracks, 26 sectors/track, 128 bytes/sector, no skew</p>
+  <p style="font-size:12px;color:#666;">A:/B: IBM 8" SSSD (250KB) | C: Hard disk (8MB max for CP/M 2.2)</p>
 
   <div id="terminal-container">
     <div id="terminal"></div>
@@ -111,9 +117,12 @@
     const stopBtn = document.getElementById('stopBtn');
     const downloadBtn = document.getElementById('downloadBtn');
     const downloadBBtn = document.getElementById('downloadBBtn');
+    const downloadCBtn = document.getElementById('downloadCBtn');
+    const createCBtn = document.getElementById('createCBtn');
     const sysFile = document.getElementById('sysFile');
     const diskFile = document.getElementById('diskFile');
     const diskBFile = document.getElementById('diskBFile');
+    const diskCFile = document.getElementById('diskCFile');
 
     let systemLoaded = false;
     let diskLoaded = false;
@@ -198,6 +207,31 @@
       reader.readAsArrayBuffer(file);
     });
 
+    // Load disk C file (8MB hard disk)
+    diskCFile.addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const data = new Uint8Array(e.target.result);
+        const ptr = Module._malloc(data.length);
+        Module.HEAPU8.set(data, ptr);
+        Module._cpm_load_disk_c(ptr, data.length);
+        Module._free(ptr);
+        downloadCBtn.disabled = false;
+        statusDiv.textContent = 'Disk C loaded: ' + file.name + ' (8MB HD)';
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    // Create empty disk C
+    createCBtn.addEventListener('click', function() {
+      if (Module._cpm_create_disk_c) {
+        Module._cpm_create_disk_c();
+        downloadCBtn.disabled = false;
+      }
+    });
+
     // Start button
     startBtn.addEventListener('click', function() {
       term.clear();
@@ -243,6 +277,20 @@
       URL.revokeObjectURL(url);
     });
 
+    // Download disk C (8MB)
+    downloadCBtn.addEventListener('click', function() {
+      const size = Module._cpm_get_disk_c_size();
+      const ptr = Module._cpm_get_disk_c_data();
+      const data = new Uint8Array(Module.HEAPU8.buffer, ptr, size);
+      const blob = new Blob([data], {type: 'application/octet-stream'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'cpm_disk_c_8mb.img';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
     function updateButtons() {
       startBtn.disabled = !(systemLoaded && diskLoaded);
     }
@@ -265,6 +313,7 @@
           startBtn.disabled = true;
           stopBtn.disabled = false;
           downloadBtn.disabled = false;
+          downloadCBtn.disabled = false;  // C: is bundled
           // Auto-focus the terminal so typing works immediately
           term.focus();
         }

@@ -264,6 +264,471 @@ static bool check_ctrl_c_exit(int ch) {
   }
 }
 
+// Console mode escape character (default ^E like SIMH)
+static char console_escape_char = 0x05;  // Ctrl+E
+static bool console_mode_requested = false;
+
+// Check if escape character is available in stdin (non-blocking)
+// This is called periodically from the main loop for tight loops that don't do I/O
+static bool check_console_escape_async() {
+  if (!isatty(STDIN_FILENO)) return false;
+
+  fd_set readfds;
+  struct timeval tv;
+  FD_ZERO(&readfds);
+  FD_SET(STDIN_FILENO, &readfds);
+  tv.tv_sec = 0;
+  tv.tv_usec = 0;  // Non-blocking
+
+  if (select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv) > 0) {
+    int ch = getchar();
+    if (ch == console_escape_char) {
+      console_mode_requested = true;
+      return true;
+    }
+    // Not escape char - save it for later
+    if (ch != EOF) {
+      peek_char = ch;
+    }
+  }
+  return false;
+}
+
+// Symbol table for symbolic debugging
+static std::map<std::string, uint16_t> symbols;        // name -> address
+static std::map<uint16_t, std::string> addr_to_symbol; // address -> name
+
+// Breakpoints
+static std::set<uint16_t> breakpoints;
+
+// Load symbol table from .sym file
+// Format: Each line is "ADDRESS SYMBOL" where ADDRESS is 4 hex digits
+static bool load_symbols(const char* filename) {
+  FILE* f = fopen(filename, "r");
+  if (!f) return false;
+
+  char line[256];
+  while (fgets(line, sizeof(line), f)) {
+    // Skip empty lines and comments
+    if (line[0] == '\0' || line[0] == '\n' || line[0] == ';' || line[0] == '#') continue;
+
+    // Parse "ADDR SYMBOL" or "SYMBOL = ADDR" formats
+    char sym[64];
+    unsigned int addr;
+
+    // Try "ADDR SYMBOL" format first
+    if (sscanf(line, "%x %63s", &addr, sym) == 2) {
+      symbols[sym] = addr;
+      addr_to_symbol[addr] = sym;
+    }
+    // Try "SYMBOL = ADDR" format
+    else if (sscanf(line, "%63s = %x", sym, &addr) == 2 ||
+             sscanf(line, "%63s =%x", sym, &addr) == 2 ||
+             sscanf(line, "%63s= %x", sym, &addr) == 2 ||
+             sscanf(line, "%63s=%x", sym, &addr) == 2) {
+      symbols[sym] = addr;
+      addr_to_symbol[addr] = sym;
+    }
+    // Try "SYMBOL EQU ADDR" format (common in assembler listings)
+    else if (sscanf(line, "%63s EQU %x", sym, &addr) == 2 ||
+             sscanf(line, "%63s equ %x", sym, &addr) == 2) {
+      symbols[sym] = addr;
+      addr_to_symbol[addr] = sym;
+    }
+  }
+
+  fclose(f);
+  fprintf(stderr, "Loaded %zu symbols from %s\n", symbols.size(), filename);
+  return true;
+}
+
+// Parse an address that might be numeric or symbolic
+// Numeric: plain hex (ffa0) or with $ prefix ($ffa0) or 0x prefix (0xffa0)
+// Symbolic: with . prefix (.BDOS, .ffa0)
+// Returns -1 if invalid
+static int parse_address(const char* str) {
+  if (!str || !*str) return -1;
+
+  // Symbolic lookup with . prefix
+  if (str[0] == '.') {
+    const char* sym = str + 1;
+    auto it = symbols.find(sym);
+    if (it != symbols.end()) {
+      return it->second;
+    }
+    // Symbol not found
+    fprintf(stderr, "Unknown symbol: %s\n", sym);
+    return -1;
+  }
+
+  // Try numeric parsing
+  char* endptr;
+  unsigned long val;
+
+  if (str[0] == '$') {
+    // $hex format
+    val = strtoul(str + 1, &endptr, 16);
+  } else if (str[0] == '0' && (str[1] == 'x' || str[1] == 'X')) {
+    // 0x hex format
+    val = strtoul(str + 2, &endptr, 16);
+  } else {
+    // Plain hex
+    val = strtoul(str, &endptr, 16);
+  }
+
+  if (*endptr != '\0' && !isspace(*endptr)) {
+    return -1;  // Invalid character in number
+  }
+
+  if (val > 0xFFFF) return -1;
+  return (int)val;
+}
+
+// Format address with symbol if available
+static std::string format_address(uint16_t addr) {
+  char buf[64];
+  auto it = addr_to_symbol.find(addr);
+  if (it != addr_to_symbol.end()) {
+    snprintf(buf, sizeof(buf), "%04X (%s)", addr, it->second.c_str());
+  } else {
+    snprintf(buf, sizeof(buf), "%04X", addr);
+  }
+  return std::string(buf);
+}
+
+// Console mode help text
+static void print_console_help() {
+  fprintf(stderr, "\nConsole mode commands:\n");
+  fprintf(stderr, "  g, go, c, cont   Continue execution\n");
+  fprintf(stderr, "  q, quit, exit    Exit emulator (writes trace if enabled)\n");
+  fprintf(stderr, "  r, reg           Show registers\n");
+  fprintf(stderr, "  e ADDR [COUNT]   Examine memory (e .LABEL or e ffa0)\n");
+  fprintf(stderr, "  d ADDR VAL...    Deposit bytes to memory\n");
+  fprintf(stderr, "  dm ADDR [COUNT]  Dump memory (16 bytes/line, with ASCII)\n");
+  fprintf(stderr, "  bp ADDR          Set breakpoint (bp .LABEL or bp ffa0)\n");
+  fprintf(stderr, "  bc ADDR          Clear breakpoint\n");
+  fprintf(stderr, "  bl               List breakpoints\n");
+  fprintf(stderr, "  ba               Clear all breakpoints\n");
+  fprintf(stderr, "  s, step [N]      Step N instructions (default 1)\n");
+  fprintf(stderr, "  sym [PATTERN]    List symbols matching pattern (or all)\n");
+  fprintf(stderr, "  pc ADDR          Set PC to address\n");
+  fprintf(stderr, "  ?, help          Show this help\n");
+  fprintf(stderr, "\n");
+  fprintf(stderr, "Address formats:\n");
+  fprintf(stderr, "  ffa0             Plain hex\n");
+  fprintf(stderr, "  $ffa0 or 0xffa0  Explicit hex\n");
+  fprintf(stderr, "  .LABEL           Symbol lookup (. prefix)\n");
+  fprintf(stderr, "\n");
+}
+
+// Read a line in console mode (with cooked terminal)
+static bool read_console_line(char* buf, size_t buflen) {
+  disable_raw_mode();
+  fprintf(stderr, "sim> ");
+  fflush(stderr);
+
+  if (!fgets(buf, buflen, stdin)) {
+    enable_raw_mode();
+    return false;
+  }
+
+  // Strip newline
+  size_t len = strlen(buf);
+  if (len > 0 && buf[len-1] == '\n') buf[len-1] = '\0';
+
+  enable_raw_mode();
+  return true;
+}
+
+// Console mode return values
+enum ConsoleResult {
+  CONSOLE_CONTINUE,   // Resume execution
+  CONSOLE_QUIT,       // Exit emulator
+  CONSOLE_STEP,       // Step N instructions then re-enter console
+  CONSOLE_AGAIN       // Stay in console mode
+};
+
+// Step count for stepping
+static int step_count = 0;
+
+// Handle console mode - returns action to take
+static ConsoleResult handle_console_mode(qkz80* cpu, cpm_mem* memory) {
+  char line[256];
+  char cmd[64];
+  char arg1[64], arg2[64], arg3[64];
+
+  fprintf(stderr, "\n[Console mode - ^E to enter, 'help' for commands]\n");
+  fprintf(stderr, "PC=%s\n", format_address(cpu->regs.PC.get_pair16()).c_str());
+
+  while (true) {
+    if (!read_console_line(line, sizeof(line))) {
+      return CONSOLE_QUIT;
+    }
+
+    // Parse command and args
+    cmd[0] = arg1[0] = arg2[0] = arg3[0] = '\0';
+    sscanf(line, "%63s %63s %63s %63s", cmd, arg1, arg2, arg3);
+
+    // Empty line - repeat last command or just prompt again
+    if (cmd[0] == '\0') continue;
+
+    // Convert command to lowercase for comparison
+    for (char* p = cmd; *p; p++) *p = tolower(*p);
+
+    // Continue/Go
+    if (strcmp(cmd, "g") == 0 || strcmp(cmd, "go") == 0 ||
+        strcmp(cmd, "c") == 0 || strcmp(cmd, "cont") == 0) {
+      fprintf(stderr, "[Continuing...]\n");
+      return CONSOLE_CONTINUE;
+    }
+
+    // Quit/Exit
+    if (strcmp(cmd, "q") == 0 || strcmp(cmd, "quit") == 0 ||
+        strcmp(cmd, "exit") == 0) {
+      fprintf(stderr, "[Exiting...]\n");
+      return CONSOLE_QUIT;
+    }
+
+    // Registers
+    if (strcmp(cmd, "r") == 0 || strcmp(cmd, "reg") == 0 ||
+        strcmp(cmd, "regs") == 0) {
+      uint16_t af = cpu->regs.AF.get_pair16();
+      uint16_t bc = cpu->regs.BC.get_pair16();
+      uint16_t de = cpu->regs.DE.get_pair16();
+      uint16_t hl = cpu->regs.HL.get_pair16();
+      uint16_t sp = cpu->regs.SP.get_pair16();
+      uint16_t pc = cpu->regs.PC.get_pair16();
+      uint8_t flags = af & 0xFF;
+
+      fprintf(stderr, "  A=%02X  BC=%04X  DE=%04X  HL=%04X  SP=%04X  PC=%s\n",
+              af >> 8, bc, de, hl, sp, format_address(pc).c_str());
+      fprintf(stderr, "  Flags: %c%c%c%c%c%c%c%c (S Z - H - P/V N C)\n",
+              (flags & 0x80) ? 'S' : '-',
+              (flags & 0x40) ? 'Z' : '-',
+              (flags & 0x20) ? '1' : '0',
+              (flags & 0x10) ? 'H' : '-',
+              (flags & 0x08) ? '1' : '0',
+              (flags & 0x04) ? 'P' : '-',
+              (flags & 0x02) ? 'N' : '-',
+              (flags & 0x01) ? 'C' : '-');
+      continue;
+    }
+
+    // Examine memory
+    if (strcmp(cmd, "e") == 0) {
+      if (arg1[0] == '\0') {
+        fprintf(stderr, "Usage: e ADDR [COUNT]\n");
+        continue;
+      }
+      int addr = parse_address(arg1);
+      if (addr < 0) {
+        fprintf(stderr, "Invalid address: %s\n", arg1);
+        continue;
+      }
+      int count = 1;
+      if (arg2[0] != '\0') {
+        count = parse_address(arg2);
+        if (count < 1) count = 1;
+        if (count > 256) count = 256;
+      }
+      char* mem = cpu->get_mem();
+      for (int i = 0; i < count; i++) {
+        uint16_t a = (addr + i) & 0xFFFF;
+        fprintf(stderr, "  %s: %02X\n", format_address(a).c_str(),
+                (uint8_t)mem[a]);
+      }
+      continue;
+    }
+
+    // Dump memory (hex + ASCII)
+    if (strcmp(cmd, "dm") == 0) {
+      if (arg1[0] == '\0') {
+        fprintf(stderr, "Usage: dm ADDR [COUNT]\n");
+        continue;
+      }
+      int addr = parse_address(arg1);
+      if (addr < 0) {
+        fprintf(stderr, "Invalid address: %s\n", arg1);
+        continue;
+      }
+      int count = 128;  // Default 8 lines
+      if (arg2[0] != '\0') {
+        count = parse_address(arg2);
+        if (count < 1) count = 1;
+        if (count > 4096) count = 4096;
+      }
+      char* mem = cpu->get_mem();
+      for (int i = 0; i < count; i += 16) {
+        uint16_t a = (addr + i) & 0xFFFF;
+        fprintf(stderr, "  %04X: ", a);
+        // Hex
+        for (int j = 0; j < 16 && (i + j) < count; j++) {
+          fprintf(stderr, "%02X ", (uint8_t)mem[(a + j) & 0xFFFF]);
+        }
+        // Pad if short line
+        for (int j = count - i; j < 16; j++) {
+          fprintf(stderr, "   ");
+        }
+        fprintf(stderr, " ");
+        // ASCII
+        for (int j = 0; j < 16 && (i + j) < count; j++) {
+          uint8_t c = mem[(a + j) & 0xFFFF];
+          fprintf(stderr, "%c", (c >= 0x20 && c < 0x7F) ? c : '.');
+        }
+        fprintf(stderr, "\n");
+      }
+      continue;
+    }
+
+    // Deposit to memory
+    if (strcmp(cmd, "d") == 0) {
+      if (arg1[0] == '\0' || arg2[0] == '\0') {
+        fprintf(stderr, "Usage: d ADDR VAL [VAL...]\n");
+        continue;
+      }
+      int addr = parse_address(arg1);
+      if (addr < 0) {
+        fprintf(stderr, "Invalid address: %s\n", arg1);
+        continue;
+      }
+      // Parse remaining values from the line
+      char* mem = cpu->get_mem();
+      char* p = line;
+      // Skip command
+      while (*p && !isspace(*p)) p++;
+      while (*p && isspace(*p)) p++;
+      // Skip address
+      while (*p && !isspace(*p)) p++;
+      while (*p && isspace(*p)) p++;
+      // Parse values
+      int offset = 0;
+      while (*p) {
+        unsigned int val;
+        if (sscanf(p, "%x", &val) != 1) break;
+        mem[(addr + offset) & 0xFFFF] = val & 0xFF;
+        offset++;
+        // Skip this value
+        while (*p && !isspace(*p)) p++;
+        while (*p && isspace(*p)) p++;
+      }
+      fprintf(stderr, "  Deposited %d byte(s) at %04X\n", offset, addr);
+      continue;
+    }
+
+    // Set breakpoint
+    if (strcmp(cmd, "bp") == 0) {
+      if (arg1[0] == '\0') {
+        fprintf(stderr, "Usage: bp ADDR\n");
+        continue;
+      }
+      int addr = parse_address(arg1);
+      if (addr < 0) {
+        fprintf(stderr, "Invalid address: %s\n", arg1);
+        continue;
+      }
+      breakpoints.insert(addr);
+      fprintf(stderr, "  Breakpoint set at %s\n", format_address(addr).c_str());
+      continue;
+    }
+
+    // Clear breakpoint
+    if (strcmp(cmd, "bc") == 0) {
+      if (arg1[0] == '\0') {
+        fprintf(stderr, "Usage: bc ADDR\n");
+        continue;
+      }
+      int addr = parse_address(arg1);
+      if (addr < 0) {
+        fprintf(stderr, "Invalid address: %s\n", arg1);
+        continue;
+      }
+      if (breakpoints.erase(addr)) {
+        fprintf(stderr, "  Breakpoint cleared at %s\n", format_address(addr).c_str());
+      } else {
+        fprintf(stderr, "  No breakpoint at %04X\n", addr);
+      }
+      continue;
+    }
+
+    // List breakpoints
+    if (strcmp(cmd, "bl") == 0) {
+      if (breakpoints.empty()) {
+        fprintf(stderr, "  No breakpoints set\n");
+      } else {
+        fprintf(stderr, "  Breakpoints:\n");
+        for (uint16_t bp : breakpoints) {
+          fprintf(stderr, "    %s\n", format_address(bp).c_str());
+        }
+      }
+      continue;
+    }
+
+    // Clear all breakpoints
+    if (strcmp(cmd, "ba") == 0) {
+      size_t count = breakpoints.size();
+      breakpoints.clear();
+      fprintf(stderr, "  Cleared %zu breakpoint(s)\n", count);
+      continue;
+    }
+
+    // Step
+    if (strcmp(cmd, "s") == 0 || strcmp(cmd, "step") == 0) {
+      step_count = 1;
+      if (arg1[0] != '\0') {
+        int n = atoi(arg1);
+        if (n > 0) step_count = n;
+      }
+      fprintf(stderr, "[Stepping %d instruction(s)...]\n", step_count);
+      return CONSOLE_STEP;
+    }
+
+    // Set PC
+    if (strcmp(cmd, "pc") == 0) {
+      if (arg1[0] == '\0') {
+        fprintf(stderr, "  PC=%s\n", format_address(cpu->regs.PC.get_pair16()).c_str());
+        continue;
+      }
+      int addr = parse_address(arg1);
+      if (addr < 0) {
+        fprintf(stderr, "Invalid address: %s\n", arg1);
+        continue;
+      }
+      cpu->regs.PC.set_pair16(addr);
+      fprintf(stderr, "  PC set to %s\n", format_address(addr).c_str());
+      continue;
+    }
+
+    // List symbols
+    if (strcmp(cmd, "sym") == 0) {
+      const char* pattern = arg1[0] ? arg1 : nullptr;
+      int count = 0;
+      for (auto& kv : symbols) {
+        if (pattern == nullptr || strcasestr(kv.first.c_str(), pattern)) {
+          fprintf(stderr, "  %04X %s\n", kv.second, kv.first.c_str());
+          count++;
+          if (count >= 50 && pattern == nullptr) {
+            fprintf(stderr, "  ... (%zu total symbols, use 'sym PATTERN' to filter)\n",
+                    symbols.size());
+            break;
+          }
+        }
+      }
+      if (count == 0) {
+        fprintf(stderr, "  No symbols%s\n", pattern ? " matching pattern" : " loaded");
+      }
+      continue;
+    }
+
+    // Help
+    if (strcmp(cmd, "?") == 0 || strcmp(cmd, "help") == 0) {
+      print_console_help();
+      continue;
+    }
+
+    fprintf(stderr, "Unknown command: %s (try 'help')\n", cmd);
+  }
+}
+
 // CP/M Disk Parameter Block (DPB) for standard 8" SSSD
 // 77 tracks, 26 sectors/track, 128 bytes/sector, 1024 bytes/block
 // Reserved tracks: 2 (for system), directory entries: 64
@@ -857,10 +1322,18 @@ void print_usage(const char* prog) {
   fprintf(stderr, "  --disk-b=DIR      Set drive B: directory\n");
   fprintf(stderr, "  --sense=0xNN      Set sense switch value\n");
   fprintf(stderr, "  --trace=FILE      Write execution trace to FILE (for ud80 disassembly)\n");
+  fprintf(stderr, "  --symbols=FILE    Load symbol table from FILE (.sym)\n");
+  fprintf(stderr, "  --escape=CHAR     Console escape char (default ^E, e.g. --escape=^]\\ )\n");
+  fprintf(stderr, "\n");
+  fprintf(stderr, "Console mode:\n");
+  fprintf(stderr, "  Press the escape char (default Ctrl+E) to enter console mode.\n");
+  fprintf(stderr, "  Type 'help' in console mode for available commands.\n");
+  fprintf(stderr, "  Use 'quit' to exit and write trace file.\n");
   fprintf(stderr, "\n");
   fprintf(stderr, "Examples:\n");
   fprintf(stderr, "  %s --cpm cpm22.sys --disk-a=./drivea\n", prog);
-  fprintf(stderr, "  %s 4kbas40.bin\n", prog);
+  fprintf(stderr, "  %s 4kbas40.bin --trace=trace.txt\n", prog);
+  fprintf(stderr, "  %s 4kbas40.bin --symbols=4kbas.sym\n", prog);
 }
 
 int main(int argc, char** argv) {
@@ -880,6 +1353,7 @@ int main(int argc, char** argv) {
   int sense = -1;
   std::string disk_dirs[16];
   std::string trace_file;
+  std::string symbols_file;
 
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -907,6 +1381,24 @@ int main(int argc, char** argv) {
       disk_dirs[3] = argv[i] + 9;
     } else if (strncmp(argv[i], "--trace=", 8) == 0) {
       trace_file = argv[i] + 8;
+    } else if (strncmp(argv[i], "--symbols=", 10) == 0) {
+      symbols_file = argv[i] + 10;
+    } else if (strncmp(argv[i], "--escape=", 9) == 0) {
+      // Parse escape character: ^X for control chars, or literal char
+      const char* esc = argv[i] + 9;
+      if (esc[0] == '^' && esc[1] != '\0') {
+        // ^X format - convert to control character
+        char c = toupper(esc[1]);
+        if (c >= '@' && c <= '_') {
+          console_escape_char = c - '@';
+        } else {
+          fprintf(stderr, "Invalid escape char: %s (use ^A through ^_)\n", esc);
+          return 1;
+        }
+      } else if (esc[0] != '\0') {
+        // Literal character
+        console_escape_char = esc[0];
+      }
     } else if (argv[i][0] != '-') {
       binary = argv[i];
     } else {
@@ -946,6 +1438,21 @@ int main(int argc, char** argv) {
 
   if (sense >= 0) {
     emu.set_sense_switches(sense & 0xFF);
+  }
+
+  // Load symbols if specified
+  if (!symbols_file.empty()) {
+    if (!load_symbols(symbols_file.c_str())) {
+      fprintf(stderr, "Warning: Could not load symbols from %s\n", symbols_file.c_str());
+    }
+  }
+
+  // Print console escape char info
+  if (console_escape_char < 0x20) {
+    fprintf(stderr, "Console escape: ^%c (Ctrl+%c)\n",
+            console_escape_char + '@', console_escape_char + '@');
+  } else {
+    fprintf(stderr, "Console escape: '%c'\n", console_escape_char);
   }
 
   // Set up BIOS trap range for CP/M mode
@@ -1005,16 +1512,56 @@ int main(int argc, char** argv) {
   // Main execution loop
   long long instruction_count = 0;
   long long max_instructions = 10000000000LL;  // 10 billion max
+  bool in_step_mode = false;  // True if stepping from console
 
   while (!stop_requested) {
     uint16_t pc = cpu.regs.PC.get_pair16();
     uint8_t opcode = mem[pc] & 0xFF;
+
+    // Check for breakpoint hit
+    if (breakpoints.count(pc) && !in_step_mode) {
+      fprintf(stderr, "\n[Breakpoint hit at %s]\n", format_address(pc).c_str());
+      console_mode_requested = true;
+    }
+
+    // Check if stepping is complete
+    if (in_step_mode && step_count <= 0) {
+      console_mode_requested = true;
+      in_step_mode = false;
+    }
+
+    // Check for console escape character in input buffer
+    if (peek_char == console_escape_char) {
+      peek_char = -1;  // Consume the escape char
+      console_mode_requested = true;
+    }
+
+    // Handle console mode
+    if (console_mode_requested) {
+      console_mode_requested = false;
+      ConsoleResult result = handle_console_mode(&cpu, &memory);
+      switch (result) {
+        case CONSOLE_QUIT:
+          stop_requested = true;
+          continue;
+        case CONSOLE_CONTINUE:
+          in_step_mode = false;
+          continue;
+        case CONSOLE_STEP:
+          in_step_mode = true;
+          // step_count is set by handle_console_mode
+          break;
+        case CONSOLE_AGAIN:
+          continue;
+      }
+    }
 
     // Check for BIOS trap in CP/M mode
     if (cpm_mode && memory.is_bios_trap(pc)) {
       if (debug) fprintf(stderr, "[BIOS trap check: PC=0x%04X]\n", pc);
       if (emu.handle_bios_call(pc)) {
         instruction_count++;
+        if (in_step_mode) step_count--;
         continue;
       }
       // If handle_bios_call returned false, we have an unhandled BIOS call
@@ -1036,9 +1583,17 @@ int main(int argc, char** argv) {
       memory.fetch_mem(pc + 1, true);
       uint8_t port = mem[pc + 1] & 0xFF;
       uint8_t value = emu.handle_in(port);
+      // Check if the input was the console escape char
+      if (value == console_escape_char && isatty(STDIN_FILENO)) {
+        console_mode_requested = true;
+        // Don't pass escape char to emulated program - re-read
+        cpu.regs.PC.set_pair16(pc);  // Stay at IN instruction
+        continue;
+      }
       cpu.set_reg8(value, qkz80::reg_A);
       cpu.regs.PC.set_pair16(pc + 2);
       instruction_count++;
+      if (in_step_mode) step_count--;
       continue;
     }
 
@@ -1052,6 +1607,7 @@ int main(int argc, char** argv) {
       emu.handle_out(port, value);
       cpu.regs.PC.set_pair16(pc + 2);
       instruction_count++;
+      if (in_step_mode) step_count--;
       continue;
     }
 
@@ -1073,6 +1629,13 @@ int main(int argc, char** argv) {
     // Execute one instruction
     cpu.execute();
     instruction_count++;
+    if (in_step_mode) step_count--;
+
+    // Periodically check for console escape (every 10000 instructions)
+    // This allows ^E to work even in tight loops that don't do I/O
+    if (instruction_count % 10000 == 0) {
+      check_console_escape_async();
+    }
 
     // Progress report every 100M instructions
     if (instruction_count % 100000000 == 0) {
