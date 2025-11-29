@@ -47,7 +47,11 @@ cpm_cli: $(CLI_SRCS) bios.sys ../cpm22.sys ../drivea.img
 	g++ -O2 -std=c++11 -o cpm_cli $(CLI_SRCS)
 
 clean:
-	rm -f cpm.js cpm.wasm cpm.data bios.sys bios.rel bios.sym cpm_cli
+	rm -f cpm.js cpm.wasm cpm.data bios.rel bios.sym cpm_cli
+
+# Full clean including bios.sys (only use if um80 is available to rebuild)
+distclean: clean
+	rm -f bios.sys
 
 serve: cpm.js
 	python3 -m http.server 8080
