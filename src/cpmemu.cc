@@ -27,6 +27,7 @@
 #include <fstream>
 #include <sstream>
 #include <termios.h>
+#include <dirent.h>
 #include <sys/select.h>
 
 // Helper function to expand environment variables in strings
@@ -216,6 +217,13 @@ static void enable_raw_mode() {
 #define BIOS_SETDMA    36  // Set DMA
 #define BIOS_READ      39  // Read sector
 #define BIOS_WRITE     42  // Write sector
+
+// Reserved memory area for system tables
+#define DPH_ADDR       0xFAE0  // Disk Parameter Header (16 bytes)
+#define DPB_ADDR       0xFAF0  // Disk Parameter Block (15 bytes)
+#define DIRBUF_ADDR    0xFB00  // Directory buffer (128 bytes)
+#define ALV_ADDR       0xFB80  // Allocation Vector (64 bytes for 512 blocks)
+#define CSV_ADDR       0xFBC0  // Check Vector (not used, but referenced)
 #define BIOS_LISTST    45  // List status
 #define BIOS_SECTRAN   48  // Sector translate
 
@@ -294,6 +302,12 @@ private:
   FILE* aux_out_file;      // PUN: device (Auxiliary output)
   qkz80_uint8 iobyte;      // IOBYTE for device mapping
 
+  // Directory search state for BDOS 17/18
+  std::vector<std::string> search_results;  // List of matching files
+  size_t search_index;                       // Current position in search
+  std::string search_pattern;                // FCB pattern for search
+  qkz80_uint8 search_user;                   // User number for search
+
 public:
   // Program name from config file
   std::string config_program;
@@ -310,7 +324,8 @@ public:
       current_dma(DEFAULT_DMA), debug(adebug),
       default_mode(MODE_AUTO), default_eol_convert(true),
       printer_file(nullptr), aux_in_file(nullptr),
-      aux_out_file(nullptr), iobyte(0), bios_disk_mode(0) {
+      aux_out_file(nullptr), iobyte(0),
+      search_index(0), search_user(0), bios_disk_mode(0) {
   }
 
   ~CPMEmulator() {
@@ -443,6 +458,50 @@ void CPMEmulator::setup_memory() {
   // Clear default FCBs
   memset(&mem[DEFAULT_FCB], 0, 36);
   memset(&mem[DEFAULT_FCB2], 0, 20);
+
+  // Initialize Disk Parameter Header (DPH) - 16 bytes
+  // This is what BIOS SELDSK returns a pointer to
+  uint8_t* dph = (uint8_t*)&mem[DPH_ADDR];
+  dph[0] = 0x00; dph[1] = 0x00;  // XLT - no sector translation
+  dph[2] = 0x00; dph[3] = 0x00;  // Scratch area (BDOS workspace)
+  dph[4] = 0x00; dph[5] = 0x00;
+  dph[6] = 0x00; dph[7] = 0x00;
+  dph[8] = DIRBUF_ADDR & 0xFF;          // DIRBUF low
+  dph[9] = (DIRBUF_ADDR >> 8) & 0xFF;   // DIRBUF high
+  dph[10] = DPB_ADDR & 0xFF;            // DPB low
+  dph[11] = (DPB_ADDR >> 8) & 0xFF;     // DPB high
+  dph[12] = CSV_ADDR & 0xFF;            // CSV low
+  dph[13] = (CSV_ADDR >> 8) & 0xFF;     // CSV high
+  dph[14] = ALV_ADDR & 0xFF;            // ALV low
+  dph[15] = (ALV_ADDR >> 8) & 0xFF;     // ALV high
+
+  // Initialize Disk Parameter Block (DPB) for a simulated 8MB drive
+  // This is a standard CP/M 2.2 DPB structure
+  // Format: SPT, BSH, BLM, EXM, DSM, DRM, AL0, AL1, CKS, OFF
+  uint8_t* dpb = (uint8_t*)&mem[DPB_ADDR];
+  dpb[0] = 128;  // SPT - sectors per track (low byte)
+  dpb[1] = 0;    // SPT high byte
+  dpb[2] = 4;    // BSH - block shift factor (2KB blocks = 2^(7+4) = 2048)
+  dpb[3] = 15;   // BLM - block mask (2^BSH - 1 = 15)
+  dpb[4] = 0;    // EXM - extent mask
+  dpb[5] = 0xFF; // DSM - max block number (low) - 4095 blocks = ~8MB
+  dpb[6] = 0x0F; // DSM high byte
+  dpb[7] = 0xFF; // DRM - max directory entry (low) - 1024 entries
+  dpb[8] = 0x03; // DRM high byte
+  dpb[9] = 0xFF; // AL0 - allocation bitmap for directory
+  dpb[10] = 0x00; // AL1
+  dpb[11] = 0x00; // CKS - check vector size (low) - no removable media
+  dpb[12] = 0x00; // CKS high byte
+  dpb[13] = 0x00; // OFF - track offset (low)
+  dpb[14] = 0x00; // OFF high byte
+
+  // Initialize directory buffer
+  memset(&mem[DIRBUF_ADDR], 0xE5, 128);  // Empty directory entries
+
+  // Initialize allocation vector - mark everything as free
+  // Each bit represents one block, 0=free, 1=allocated
+  // For 4096 blocks we need 512 bytes, but we'll just init first 64
+  memset(&mem[ALV_ADDR], 0x00, 64);  // All blocks free
 
   // Set stack pointer
   cpu->regs.SP.set_pair16(0xFFF0);
@@ -1482,6 +1541,10 @@ void CPMEmulator::bdos_open_file() {
 void CPMEmulator::bdos_close_file() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
 
+  if (debug || debug_bdos_funcs.count(16)) {
+    fprintf(stderr, "Close file: FCB at %04X\n", fcb_addr);
+  }
+
   auto it = open_files.find(fcb_addr);
   if (it != open_files.end()) {
     // Flush any pending writes
@@ -1490,11 +1553,22 @@ void CPMEmulator::bdos_close_file() {
                             it->second.write_buffer.size());
     }
 
+    if (debug || debug_bdos_funcs.count(16)) {
+      fprintf(stderr, "Close file: closing '%s'\n", it->second.cpm_name.c_str());
+    }
     fclose(it->second.fp);
     open_files.erase(it);
-    cpu->set_reg8(0, qkz80::reg_A);  // Success
   } else {
-    cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
+    if (debug || debug_bdos_funcs.count(16)) {
+      fprintf(stderr, "Close file: file not open (OK)\n");
+    }
+  }
+  // Always return success - CP/M close is idempotent
+  // Only return 0xFF if there's an actual disk error writing the directory
+  cpu->set_reg8(0, qkz80::reg_A);
+
+  if (debug || debug_bdos_funcs.count(16)) {
+    fprintf(stderr, "Close file: returning A=%02X\n", cpu->get_reg8(qkz80::reg_A));
   }
 }
 
@@ -1827,15 +1901,276 @@ void CPMEmulator::bdos_reset_disk() {
   // No return value
 }
 
+// Helper: match FCB-style pattern (with '?' wildcards) against a filename
+// Both pattern and filename should be space-padded 8+3 format
+static bool match_fcb_pattern(const char* pattern_name, const char* pattern_ext,
+                               const char* file_name, const char* file_ext) {
+  // Match name (8 chars)
+  for (int i = 0; i < 8; i++) {
+    char p = pattern_name[i];
+    char f = file_name[i];
+    if (p != '?' && toupper(p) != toupper(f)) {
+      return false;
+    }
+  }
+  // Match extension (3 chars)
+  for (int i = 0; i < 3; i++) {
+    char p = pattern_ext[i];
+    char f = file_ext[i];
+    if (p != '?' && toupper(p) != toupper(f)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Check if a character is valid in CP/M filenames
+// Valid: A-Z, 0-9, and some special chars
+static bool is_valid_cpm_char(char c) {
+  c = toupper(c);
+  if (c >= 'A' && c <= 'Z') return true;
+  if (c >= '0' && c <= '9') return true;
+  // CP/M allows: $ # @ ! % ' ( ) - { } ~
+  // Technically also & ^ but often cause issues
+  if (c == '$' || c == '#' || c == '@' || c == '!' ||
+      c == '%' || c == '\'' || c == '(' || c == ')' ||
+      c == '-' || c == '{' || c == '}' || c == '~') return true;
+  return false;
+}
+
+// Helper: convert Unix filename to CP/M 8.3 format (space-padded)
+// Returns false if the filename contains illegal CP/M characters
+static bool unix_to_cpm_83(const std::string& unix_name,
+                            char* name_out, char* ext_out) {
+  // Initialize with spaces
+  memset(name_out, ' ', 8);
+  memset(ext_out, ' ', 3);
+
+  // Find extension
+  size_t dot = unix_name.rfind('.');
+  std::string name_part, ext_part;
+
+  if (dot != std::string::npos && dot > 0) {
+    name_part = unix_name.substr(0, dot);
+    ext_part = unix_name.substr(dot + 1);
+  } else {
+    name_part = unix_name;
+  }
+
+  // Validate and copy name (up to 8 chars)
+  for (size_t i = 0; i < name_part.length() && i < 8; i++) {
+    if (!is_valid_cpm_char(name_part[i])) return false;
+    name_out[i] = toupper(name_part[i]);
+  }
+
+  // Validate and copy extension (up to 3 chars)
+  for (size_t i = 0; i < ext_part.length() && i < 3; i++) {
+    if (!is_valid_cpm_char(ext_part[i])) return false;
+    ext_out[i] = toupper(ext_part[i]);
+  }
+
+  // Reject if name is too long (wouldn't fit in 8.3)
+  if (name_part.length() > 8 || ext_part.length() > 3) return false;
+
+  return true;
+}
+
 void CPMEmulator::bdos_search_first() {
-  // Simple implementation: return not found
-  // A complete implementation would scan the directory
-  cpu->set_reg8(0xFF, qkz80::reg_A);
+  qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
+  char* mem = cpu->get_mem();
+
+  // Extract pattern from FCB
+  char pattern_name[8], pattern_ext[3];
+  memcpy(pattern_name, &mem[fcb_addr + 1], 8);
+  memcpy(pattern_ext, &mem[fcb_addr + 9], 3);
+
+  // Get drive from FCB (0 = default)
+  qkz80_uint8 fcb_drive = mem[fcb_addr];
+  (void)fcb_drive;  // We only support current directory
+
+  // Get user from FCB byte 0 for '?' user matching
+  search_user = current_user;
+
+  // Clear previous results and scan directory
+  search_results.clear();
+  search_index = 0;
+
+  // Store pattern for debug output
+  search_pattern = std::string(pattern_name, 8) + "." + std::string(pattern_ext, 3);
+
+  if (debug || debug_bdos_funcs.count(17)) {
+    fprintf(stderr, "Search First: pattern='%s'\n", search_pattern.c_str());
+  }
+
+  // Track which CP/M names we've already added (to avoid duplicates from mappings + dir)
+  std::set<std::string> added_cpm_names;
+
+  // First, check file mappings - these define explicit CP/M names
+  for (const auto& mapping : file_mappings) {
+    // Check if the Unix file exists
+    if (access(mapping.unix_pattern.c_str(), F_OK) != 0) continue;
+
+    // Check if mapping is a directory
+    struct stat st;
+    if (stat(mapping.unix_pattern.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) continue;
+
+    // Get the CP/M name from the mapping
+    char file_name[8], file_ext[3];
+    if (!unix_to_cpm_83(mapping.cpm_pattern, file_name, file_ext)) continue;
+
+    if (match_fcb_pattern(pattern_name, pattern_ext, file_name, file_ext)) {
+      search_results.push_back(mapping.unix_pattern);
+      // Remember this CP/M name to avoid duplicates
+      std::string cpm_name = std::string(file_name, 8) + std::string(file_ext, 3);
+      added_cpm_names.insert(cpm_name);
+    }
+  }
+
+  // Also check legacy file_map
+  for (const auto& pair : file_map) {
+    if (access(pair.second.c_str(), F_OK) != 0) continue;
+
+    struct stat st;
+    if (stat(pair.second.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) continue;
+
+    char file_name[8], file_ext[3];
+    if (!unix_to_cpm_83(pair.first, file_name, file_ext)) continue;
+
+    std::string cpm_name = std::string(file_name, 8) + std::string(file_ext, 3);
+    if (added_cpm_names.count(cpm_name)) continue;  // Already added
+
+    if (match_fcb_pattern(pattern_name, pattern_ext, file_name, file_ext)) {
+      search_results.push_back(pair.second);
+      added_cpm_names.insert(cpm_name);
+    }
+  }
+
+  // Scan current directory for files with valid CP/M names
+  DIR* dir = opendir(".");
+  if (!dir) {
+    if (search_results.empty()) {
+      cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
+      return;
+    }
+    // Fall through - we have results from mappings
+  } else {
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != nullptr) {
+      // Skip directories and hidden files
+      if (entry->d_name[0] == '.') continue;
+
+      // Skip directories
+      struct stat st;
+      if (stat(entry->d_name, &st) == 0 && S_ISDIR(st.st_mode)) continue;
+
+      // Convert to CP/M format - skip files with invalid characters
+      char file_name[8], file_ext[3];
+      if (!unix_to_cpm_83(entry->d_name, file_name, file_ext)) continue;
+
+      // Check if this CP/M name was already added via mapping
+      std::string cpm_name = std::string(file_name, 8) + std::string(file_ext, 3);
+      if (added_cpm_names.count(cpm_name)) continue;
+
+      if (match_fcb_pattern(pattern_name, pattern_ext, file_name, file_ext)) {
+        search_results.push_back(entry->d_name);
+        added_cpm_names.insert(cpm_name);
+      }
+    }
+    closedir(dir);
+  }
+
+  if (debug || debug_bdos_funcs.count(17)) {
+    fprintf(stderr, "Search First: found %zu files\n", search_results.size());
+  }
+
+  // Return first result
+  if (search_results.empty()) {
+    cpu->set_reg8(0xFF, qkz80::reg_A);  // Not found
+    return;
+  }
+
+  // Build directory entry at DMA address
+  // CP/M directory entry: 32 bytes
+  // Byte 0: user number (0-15)
+  // Bytes 1-8: filename (space padded)
+  // Bytes 9-11: extension (space padded)
+  // Bytes 12-15: extent info (EX, S1, S2, RC)
+  // Bytes 16-31: allocation map
+
+  char file_name[8], file_ext[3];
+  unix_to_cpm_83(search_results[0], file_name, file_ext);
+
+  // Get file size for extent calculation
+  struct stat st;
+  long file_size = 0;
+  if (stat(search_results[0].c_str(), &st) == 0) {
+    file_size = st.st_size;
+  }
+  int records = (file_size + 127) / 128;  // Number of 128-byte records
+  int rc = records > 128 ? 128 : records; // Record count in this extent
+
+  // Write directory entry at DMA
+  memset(&mem[current_dma], 0, 32);
+  mem[current_dma + 0] = search_user;  // User number
+  memcpy(&mem[current_dma + 1], file_name, 8);
+  memcpy(&mem[current_dma + 9], file_ext, 3);
+  mem[current_dma + 12] = 0;  // EX (extent)
+  mem[current_dma + 13] = 0;  // S1
+  mem[current_dma + 14] = 0;  // S2
+  mem[current_dma + 15] = rc; // RC (record count)
+  // Allocation map bytes 16-31 can be any non-zero value for existing file
+  for (int i = 16; i < 32; i++) {
+    mem[current_dma + i] = (i - 16 < (records + 7) / 8) ? 0x01 : 0x00;
+  }
+
+  search_index = 1;  // Next call returns second result
+
+  // Return 0 (directory code) to indicate entry found in first 32 bytes of DMA
+  cpu->set_reg8(0, qkz80::reg_A);
 }
 
 void CPMEmulator::bdos_search_next() {
-  // Simple implementation: return not found
-  cpu->set_reg8(0xFF, qkz80::reg_A);
+  if (debug || debug_bdos_funcs.count(18)) {
+    fprintf(stderr, "Search Next: index=%zu/%zu\n", search_index, search_results.size());
+  }
+
+  if (search_index >= search_results.size()) {
+    cpu->set_reg8(0xFF, qkz80::reg_A);  // No more files
+    return;
+  }
+
+  char* mem = cpu->get_mem();
+
+  // Build directory entry for next file
+  char file_name[8], file_ext[3];
+  unix_to_cpm_83(search_results[search_index], file_name, file_ext);
+
+  // Get file size
+  struct stat st;
+  long file_size = 0;
+  if (stat(search_results[search_index].c_str(), &st) == 0) {
+    file_size = st.st_size;
+  }
+  int records = (file_size + 127) / 128;
+  int rc = records > 128 ? 128 : records;
+
+  // Write directory entry at DMA
+  memset(&mem[current_dma], 0, 32);
+  mem[current_dma + 0] = search_user;
+  memcpy(&mem[current_dma + 1], file_name, 8);
+  memcpy(&mem[current_dma + 9], file_ext, 3);
+  mem[current_dma + 12] = 0;
+  mem[current_dma + 13] = 0;
+  mem[current_dma + 14] = 0;
+  mem[current_dma + 15] = rc;
+  for (int i = 16; i < 32; i++) {
+    mem[current_dma + i] = (i - 16 < (records + 7) / 8) ? 0x01 : 0x00;
+  }
+
+  search_index++;
+
+  // Return directory code 0
+  cpu->set_reg8(0, qkz80::reg_A);
 }
 
 void CPMEmulator::bdos_get_login_vector() {
@@ -1847,9 +2182,8 @@ void CPMEmulator::bdos_get_login_vector() {
 
 void CPMEmulator::bdos_get_allocation_vector() {
   // Return address of allocation vector
-  // Return a dummy address (not actually used by most programs)
-  cpu->set_reg8(0x00, qkz80::reg_L);
-  cpu->set_reg8(0xF0, qkz80::reg_H);
+  cpu->set_reg8(ALV_ADDR & 0xFF, qkz80::reg_L);
+  cpu->set_reg8((ALV_ADDR >> 8) & 0xFF, qkz80::reg_H);
 }
 
 void CPMEmulator::bdos_write_protect_disk() {
@@ -1872,9 +2206,8 @@ void CPMEmulator::bdos_set_file_attributes() {
 
 void CPMEmulator::bdos_get_dpb() {
   // Get Disk Parameter Block address
-  // Return a dummy address
-  cpu->set_reg8(0x00, qkz80::reg_L);
-  cpu->set_reg8(0xF1, qkz80::reg_H);
+  cpu->set_reg8(DPB_ADDR & 0xFF, qkz80::reg_L);
+  cpu->set_reg8((DPB_ADDR >> 8) & 0xFF, qkz80::reg_H);
 }
 
 void CPMEmulator::bdos_reset_drive() {
@@ -1933,9 +2266,26 @@ void CPMEmulator::bios_call(int offset) {
     exit(0);
     break;
 
-  // Disk I/O functions - behavior controlled by bios_disk_mode
+  // BIOS SELDSK - Select Disk, returns HL=DPH address or 0 if invalid
+  case BIOS_SELDSK: {
+    qkz80_uint8 drive = cpu->get_reg8(qkz80::reg_C);
+    if (debug || debug_bios_offsets.count(offset)) {
+      fprintf(stderr, "BIOS SELDSK: drive %c\n", 'A' + drive);
+    }
+    if (drive == 0) {
+      // Drive A: - return DPH address in HL
+      cpu->set_reg8(DPH_ADDR & 0xFF, qkz80::reg_L);
+      cpu->set_reg8((DPH_ADDR >> 8) & 0xFF, qkz80::reg_H);
+    } else {
+      // Invalid drive - return 0
+      cpu->set_reg8(0x00, qkz80::reg_L);
+      cpu->set_reg8(0x00, qkz80::reg_H);
+    }
+    break;
+  }
+
+  // Other disk I/O functions - behavior controlled by bios_disk_mode
   case BIOS_HOME:
-  case BIOS_SELDSK:
   case BIOS_SETTRK:
   case BIOS_SETSEC:
   case BIOS_SETDMA:
@@ -1956,7 +2306,7 @@ void CPMEmulator::bios_call(int offset) {
       }
     } else {
       // OK mode (default) - return success
-      cpu->set_reg8(0xFF, qkz80::reg_A);  // Return success
+      cpu->set_reg8(0x00, qkz80::reg_A);  // Return success (0 = OK for BIOS disk)
       if (debug || debug_bios_offsets.count(offset)) {
         fprintf(stderr, "BIOS disk function at offset %d - returning success\n", offset);
       }
