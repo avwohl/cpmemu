@@ -314,11 +314,12 @@ struct OpenFile {
   bool eol_convert;
   int position;  // Current record position
   bool eof_seen;
+  bool pending_lf;  // LF pending from EOL conversion (when \r\n split across reads)
   bool write_mode;
   std::vector<uint8_t> write_buffer;  // Buffer for EOL conversion on write
 
   OpenFile() : fp(nullptr), mode(MODE_BINARY), eol_convert(false),
-    position(0), eof_seen(false), write_mode(false) {}
+    position(0), eof_seen(false), pending_lf(false), write_mode(false) {}
 };
 
 class CPMEmulator {
@@ -415,6 +416,8 @@ private:
   size_t read_with_conversion(OpenFile& of, uint8_t* buffer, size_t size);
   size_t write_with_conversion(OpenFile& of, const uint8_t* buffer, size_t size);
   void pad_to_128(uint8_t* buffer, size_t actual_size);
+  long get_converted_file_size(const std::string& unix_path, FileMode mode, bool eol_convert);
+  void get_file_mode_for_name(const std::string& cpm_name, FileMode* mode_out, bool* eol_out);
 
 private:
   // BDOS functions
@@ -799,18 +802,40 @@ std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode
     lowercase += tolower(c);
   }
 
-  // First pass: check for explicit file mappings (exact CP/M name to Unix path)
-  // These have priority over wildcard patterns
+  // First, check file_mappings for mode-only patterns (e.g., "*.SYM = text")
+  // These apply to all files matching the pattern, regardless of how they're mapped
+  FileMode pattern_mode = MODE_AUTO;
+  bool pattern_eol = default_eol_convert;
+  bool has_mode_pattern = false;
+
+  for (const auto& mapping : file_mappings) {
+    if (mapping.unix_pattern.empty() && match_pattern(mapping.cpm_pattern, normalized)) {
+      // Mode-only pattern found
+      has_mode_pattern = true;
+      pattern_mode = mapping.mode;
+      pattern_eol = mapping.eol_convert;
+      break;
+    }
+  }
+
+  // Check for explicit file mappings (exact CP/M name to Unix path)
+  // These have priority over wildcard patterns for path resolution
   auto it = file_map.find(normalized);
   if (it != file_map.end()) {
     if (access(it->second.c_str(), F_OK) == 0) {
-      *mode_out = detect_file_mode(normalized, it->second);
-      *eol_out = default_eol_convert;
+      // Use pattern-based mode if found, otherwise detect
+      if (has_mode_pattern) {
+        *mode_out = (pattern_mode == MODE_AUTO) ? detect_file_mode(normalized, it->second) : pattern_mode;
+        *eol_out = pattern_eol;
+      } else {
+        *mode_out = detect_file_mode(normalized, it->second);
+        *eol_out = default_eol_convert;
+      }
       return it->second;
     }
   }
 
-  // Check file mappings with patterns
+  // Check file mappings with patterns (for path resolution)
   // Pattern types:
   // 1. Exact mapping: "TEST.BAS = /path/to/test.bas" - maps specific file
   // 2. Extension pattern: "*.BAS = text" - sets mode for all .BAS files (no path)
@@ -912,6 +937,12 @@ size_t CPMEmulator::read_with_conversion(OpenFile& of, uint8_t* buffer, size_t s
   // Text mode with EOL conversion: Unix \n -> CP/M \r\n
   size_t out_pos = 0;
 
+  // Check if we have a pending LF from previous read
+  if (of.pending_lf) {
+    buffer[out_pos++] = '\n';
+    of.pending_lf = false;
+  }
+
   while (out_pos < size) {
     int ch = fgetc(of.fp);
 
@@ -924,8 +955,12 @@ size_t CPMEmulator::read_with_conversion(OpenFile& of, uint8_t* buffer, size_t s
       if (out_pos + 1 < size) {
         buffer[out_pos++] = '\r';
         buffer[out_pos++] = '\n';
+      } else if (out_pos < size) {
+        // Only room for \r, save \n for next read
+        buffer[out_pos++] = '\r';
+        of.pending_lf = true;
       } else {
-        // Not enough space, put back
+        // No room at all, put back
         ungetc(ch, of.fp);
         break;
       }
@@ -980,6 +1015,57 @@ void CPMEmulator::pad_to_128(uint8_t* buffer, size_t actual_size) {
   if (actual_size < 128) {
     // Pad with ^Z for CP/M compatibility
     memset(buffer + actual_size, CPM_EOF, 128 - actual_size);
+  }
+}
+
+long CPMEmulator::get_converted_file_size(const std::string& unix_path, FileMode mode, bool eol_convert) {
+  struct stat st;
+  if (stat(unix_path.c_str(), &st) != 0) {
+    return 0;
+  }
+
+  long file_size = st.st_size;
+
+  // If text mode with EOL conversion, count newlines to add extra bytes
+  if (mode == MODE_TEXT && eol_convert) {
+    FILE* fp = fopen(unix_path.c_str(), "rb");
+    if (fp) {
+      long newline_count = 0;
+      int ch;
+      while ((ch = fgetc(fp)) != EOF) {
+        if (ch == '\n') {
+          newline_count++;
+        }
+      }
+      fclose(fp);
+      file_size += newline_count;  // Each \n becomes \r\n
+      if (verbose >= 4) {
+        fprintf(stderr, "File size conversion: %s: %ld -> %ld (%ld newlines)\n",
+                unix_path.c_str(), st.st_size, file_size, newline_count);
+      }
+    }
+  }
+
+  return file_size;
+}
+
+void CPMEmulator::get_file_mode_for_name(const std::string& cpm_name, FileMode* mode_out, bool* eol_out) {
+  std::string normalized = normalize_cpm_filename(cpm_name);
+  *mode_out = default_mode;
+  *eol_out = default_eol_convert;
+
+  // Check file_mappings for mode-only patterns
+  for (const auto& mapping : file_mappings) {
+    if (mapping.unix_pattern.empty() && match_pattern(mapping.cpm_pattern, normalized)) {
+      *mode_out = mapping.mode;
+      *eol_out = mapping.eol_convert;
+      return;
+    }
+  }
+
+  // Auto-detect based on extension
+  if (*mode_out == MODE_AUTO) {
+    *mode_out = detect_file_mode(normalized, "");
   }
 }
 
@@ -1766,9 +1852,25 @@ void CPMEmulator::bdos_open_file() {
   of.write_mode = false;
   open_files[fcb_addr] = of;
 
-  // Clear extent and record count
-  mem[fcb_addr + 12] = 0;  // EX
-  mem[fcb_addr + 15] = 0x80;  // RC (128 records max per extent)
+  // Get file size accounting for EOL conversion
+  long file_size = get_converted_file_size(unix_path, mode, eol_convert);
+  int total_records = (file_size + 127) / 128;
+  int rc = total_records > 128 ? 128 : total_records;
+
+  // Set extent and record count
+  mem[fcb_addr + 12] = 0;  // EX (extent 0)
+  mem[fcb_addr + 13] = 0;  // S1
+  mem[fcb_addr + 14] = 0;  // S2
+  mem[fcb_addr + 15] = rc; // RC (record count in this extent)
+
+  // Set allocation map (bytes 16-31) - fake non-zero values for existing file
+  for (int i = 16; i < 32; i++) {
+    mem[fcb_addr + i] = (i - 16 < (total_records + 7) / 8) ? 0x01 : 0x00;
+  }
+
+  if (verbose >= 3 || debug_bdos_funcs.count(15)) {
+    fprintf(stderr, "  File opened: size=%ld, records=%d, RC=%d\n", file_size, total_records, rc);
+  }
 
   cpu->set_reg8(0, qkz80::reg_A);  // Success
 }
@@ -1821,12 +1923,36 @@ void CPMEmulator::bdos_read_sequential() {
   uint8_t buffer[128];
   size_t nread = read_with_conversion(it->second, buffer, 128);
 
+  if (verbose >= 3) {
+    fprintf(stderr, "BDOS Read: '%s' nread=%zu mode=%s eol=%s\n",
+            it->second.cpm_name.c_str(), nread,
+            it->second.mode == MODE_TEXT ? "text" : "binary",
+            it->second.eol_convert ? "yes" : "no");
+    if (nread > 0) {
+      fprintf(stderr, "  First bytes: ");
+      for (size_t i = 0; i < nread && i < 32; i++) {
+        fprintf(stderr, "%02X ", buffer[i]);
+      }
+      fprintf(stderr, "\n");
+    }
+  }
+
   if (nread == 0 || it->second.eof_seen) {
     cpu->set_reg8(1, qkz80::reg_A);  // EOF
   } else {
     // Pad to 128 bytes if needed
     if (nread < 128) {
-      pad_to_128(buffer, nread);
+      // Only pad with ^Z if at true EOF, otherwise pad with NUL
+      bool at_eof = feof(it->second.fp);
+      if (verbose >= 4) {
+        fprintf(stderr, "  Short read: %zu bytes, feof=%d\n", nread, at_eof);
+      }
+      if (at_eof) {
+        pad_to_128(buffer, nread);  // Pad with ^Z
+      } else {
+        // Pad with NUL (we'll get the rest on next read)
+        memset(buffer + nread, 0, 128 - nread);
+      }
     }
 
     // Copy to DMA
@@ -2017,19 +2143,36 @@ void CPMEmulator::bdos_file_size() {
   bool eol_convert;
   std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert, drive);
 
+  if (verbose >= 3 || debug_bdos_funcs.count(35)) {
+    fprintf(stderr, "BDOS File Size: '%s' -> '%s' (mode: %s, eol: %s)\n",
+            filename.c_str(),
+            unix_path.empty() ? "(not found)" : unix_path.c_str(),
+            mode == MODE_TEXT ? "text" : "binary",
+            eol_convert ? "yes" : "no");
+  }
+
   if (unix_path.empty()) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error: file not found
     return;
   }
 
-  struct stat st;
-  if (stat(unix_path.c_str(), &st) != 0) {
-    cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
-    return;
+  // Get file size, accounting for EOL conversion if applicable
+  long file_size = get_converted_file_size(unix_path, mode, eol_convert);
+  if (file_size == 0) {
+    struct stat st;
+    if (stat(unix_path.c_str(), &st) != 0) {
+      cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
+      return;
+    }
+    file_size = st.st_size;
   }
 
   // File size in 128-byte records (round up)
-  uint32_t records = (st.st_size + 127) / 128;
+  uint32_t records = (file_size + 127) / 128;
+
+  if (verbose >= 3 || debug_bdos_funcs.count(35)) {
+    fprintf(stderr, "  -> size=%ld bytes, %u records\n", file_size, records);
+  }
 
   // Store in FCB bytes 33-35 (r0, r1, r2)
   mem[fcb_addr + 33] = records & 0xFF;
@@ -2349,12 +2492,17 @@ void CPMEmulator::bdos_search_first() {
   char file_name[8], file_ext[3];
   unix_to_cpm_83(search_results[0], file_name, file_ext);
 
-  // Get file size for extent calculation
-  struct stat st;
-  long file_size = 0;
-  if (stat(search_results[0].c_str(), &st) == 0) {
-    file_size = st.st_size;
-  }
+  // Build CP/M name for mode lookup
+  std::string cpm_name;
+  for (int i = 0; i < 8 && file_name[i] != ' '; i++) cpm_name += file_name[i];
+  cpm_name += '.';
+  for (int i = 0; i < 3 && file_ext[i] != ' '; i++) cpm_name += file_ext[i];
+
+  // Get file size for extent calculation, accounting for EOL conversion
+  FileMode mode;
+  bool eol_convert;
+  get_file_mode_for_name(cpm_name, &mode, &eol_convert);
+  long file_size = get_converted_file_size(search_results[0], mode, eol_convert);
   int records = (file_size + 127) / 128;  // Number of 128-byte records
   int rc = records > 128 ? 128 : records; // Record count in this extent
 
@@ -2394,12 +2542,17 @@ void CPMEmulator::bdos_search_next() {
   char file_name[8], file_ext[3];
   unix_to_cpm_83(search_results[search_index], file_name, file_ext);
 
-  // Get file size
-  struct stat st;
-  long file_size = 0;
-  if (stat(search_results[search_index].c_str(), &st) == 0) {
-    file_size = st.st_size;
-  }
+  // Build CP/M name for mode lookup
+  std::string cpm_name;
+  for (int i = 0; i < 8 && file_name[i] != ' '; i++) cpm_name += file_name[i];
+  cpm_name += '.';
+  for (int i = 0; i < 3 && file_ext[i] != ' '; i++) cpm_name += file_ext[i];
+
+  // Get file size, accounting for EOL conversion
+  FileMode mode;
+  bool eol_convert;
+  get_file_mode_for_name(cpm_name, &mode, &eol_convert);
+  long file_size = get_converted_file_size(search_results[search_index], mode, eol_convert);
   int records = (file_size + 127) / 128;
   int rc = records > 128 ? 128 : records;
 
