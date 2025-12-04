@@ -327,7 +327,7 @@ private:
   qkz80_uint8 current_drive;
   qkz80_uint8 current_user;
   qkz80_uint16 current_dma;
-  bool debug;
+  int verbose;  // 0=quiet, 1=normal (load/exit msgs), 2+=debug
   FileMode default_mode;
   bool default_eol_convert;
 
@@ -370,9 +370,13 @@ public:
   // Disk BIOS behavior: 0=ok, 1=fail, 2=error
   int bios_disk_mode;
 
-  CPMEmulator(qkz80* acpu, bool adebug = false)
+  // Get/set verbose level
+  int get_verbose() const { return verbose; }
+  void set_verbose(int v) { verbose = v; }
+
+  CPMEmulator(qkz80* acpu, int averbose = 0)
     : cpu(acpu), current_drive(0), current_user(0),
-      current_dma(DEFAULT_DMA), debug(adebug),
+      current_dma(DEFAULT_DMA), verbose(averbose),
       default_mode(MODE_AUTO), default_eol_convert(true),
       printer_file(nullptr), aux_in_file(nullptr),
       aux_out_file(nullptr), iobyte(0),
@@ -667,7 +671,7 @@ void CPMEmulator::add_file_mapping(const std::string& cpm_name, const std::strin
   std::string normalized = normalize_cpm_filename(cpm_name);
   file_map[normalized] = unix_path;
 
-  if (debug) {
+  if (verbose >= 2) {
     fprintf(stderr, "File mapping: '%s' -> '%s'\n", normalized.c_str(), unix_path.c_str());
   }
 }
@@ -681,7 +685,7 @@ void CPMEmulator::add_file_mapping_ex(const std::string& cpm_pattern, const std:
   mapping.eol_convert = eol_convert;
   file_mappings.push_back(mapping);
 
-  if (debug) {
+  if (verbose >= 2) {
     fprintf(stderr, "File mapping: '%s' -> '%s' (mode: %s, eol: %s)\n",
             mapping.cpm_pattern.c_str(), unix_pattern.c_str(),
             mode == MODE_TEXT ? "text" : mode == MODE_BINARY ? "binary" : "auto",
@@ -1050,15 +1054,20 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
       if (chdir(value.c_str()) != 0) {
         fprintf(stderr, "Config line %d: Cannot change directory to '%s': %s\n",
                 line_num, value.c_str(), strerror(errno));
-      } else if (debug) {
+      } else if (verbose >= 2) {
         fprintf(stderr, "Changed directory to: %s\n", value.c_str());
       }
     } else if (key == "default_mode") {
       if (value == "text") default_mode = MODE_TEXT;
       else if (value == "binary") default_mode = MODE_BINARY;
       else default_mode = MODE_AUTO;
+    } else if (key == "verbose") {
+      verbose = atoi(value.c_str());
     } else if (key == "debug") {
-      debug = (value == "true" || value == "1" || value == "yes");
+      // Legacy: debug=true sets verbose=2
+      if (value == "true" || value == "1" || value == "yes") {
+        verbose = 2;
+      }
     } else if (key == "eol_convert") {
       default_eol_convert = (value == "true" || value == "1" || value == "yes");
     } else if (key == "printer") {
@@ -1074,7 +1083,7 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
       while (iss >> arg) {
         config_args.push_back(arg);
       }
-      if (debug) {
+      if (verbose >= 2) {
         fprintf(stderr, "Config args: %zu arguments\n", config_args.size());
       }
     } else if (key.length() == 7 && key.substr(0, 6) == "drive_") {
@@ -1083,7 +1092,7 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
       if (drive_letter >= 'A' && drive_letter <= 'P') {
         int drive_num = drive_letter - 'A';
         drive_paths[drive_num] = value;
-        if (debug) {
+        if (verbose >= 2) {
           fprintf(stderr, "Drive %c: mapped to %s\n", drive_letter, value.c_str());
         }
       } else {
@@ -1137,7 +1146,7 @@ void CPMEmulator::set_printer_file(const std::string& path) {
   if (!printer_file) {
     fprintf(stderr, "Warning: Cannot open printer file '%s': %s\n",
             path.c_str(), strerror(errno));
-  } else if (debug) {
+  } else if (verbose >= 2) {
     fprintf(stderr, "Printer output redirected to: %s\n", path.c_str());
   }
 }
@@ -1148,7 +1157,7 @@ void CPMEmulator::set_aux_input_file(const std::string& path) {
   if (!aux_in_file) {
     fprintf(stderr, "Warning: Cannot open aux input file '%s': %s\n",
             path.c_str(), strerror(errno));
-  } else if (debug) {
+  } else if (verbose >= 2) {
     fprintf(stderr, "Auxiliary input redirected from: %s\n", path.c_str());
   }
 }
@@ -1159,7 +1168,7 @@ void CPMEmulator::set_aux_output_file(const std::string& path) {
   if (!aux_out_file) {
     fprintf(stderr, "Warning: Cannot open aux output file '%s': %s\n",
             path.c_str(), strerror(errno));
-  } else if (debug) {
+  } else if (verbose >= 2) {
     fprintf(stderr, "Auxiliary output redirected to: %s\n", path.c_str());
   }
 }
@@ -1305,7 +1314,7 @@ std::string CPMEmulator::find_unix_file(const std::string& cpm_name) {
 bool CPMEmulator::handle_pc(qkz80_uint16 pc) {
   // Check for JMP 0 (exit)
   if (pc == 0) {
-    fprintf(stderr, "Program exit via JMP 0\n");
+    if (verbose >= 1) fprintf(stderr, "Program exit via JMP 0\n");
     do_save_memory();
     exit(0);
   }
@@ -1336,7 +1345,7 @@ bool CPMEmulator::handle_pc(qkz80_uint16 pc) {
 }
 
 void CPMEmulator::bdos_call(qkz80_uint8 func) {
-  if (debug || debug_bdos_funcs.count(func)) {
+  if (verbose >= 5 || debug_bdos_funcs.count(func)) {
     fprintf(stderr, "BDOS call %d\n", func);
   }
 
@@ -1679,7 +1688,7 @@ void CPMEmulator::bdos_get_version() {
 
 void CPMEmulator::bdos_get_set_dma() {
   current_dma = cpu->get_reg16(qkz80::regp_DE);
-  if (debug) {
+  if (verbose >= 3) {
     fprintf(stderr, "Set DMA to 0x%04X\n", current_dma);
   }
 }
@@ -1690,7 +1699,7 @@ void CPMEmulator::bdos_get_current_drive() {
 
 void CPMEmulator::bdos_set_drive() {
   current_drive = cpu->get_reg8(qkz80::reg_E) & 0x0F;
-  if (debug) {
+  if (verbose >= 3) {
     fprintf(stderr, "Set drive to %c:\n", 'A' + current_drive);
   }
 }
@@ -1720,7 +1729,7 @@ void CPMEmulator::bdos_open_file() {
   bool eol_convert;
   std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert, drive);
 
-  if (debug || debug_bdos_funcs.count(15)) {
+  if (verbose >= 3 || debug_bdos_funcs.count(15)) {
     fprintf(stderr, "BDOS Open: '%s' -> '%s' (mode: %s) [FCB@%04X: ",
             filename.c_str(),
             unix_path.empty() ? "(not found)" : unix_path.c_str(),
@@ -1767,7 +1776,7 @@ void CPMEmulator::bdos_open_file() {
 void CPMEmulator::bdos_close_file() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
 
-  if (debug || debug_bdos_funcs.count(16)) {
+  if (verbose >= 3 || debug_bdos_funcs.count(16)) {
     fprintf(stderr, "Close file: FCB at %04X\n", fcb_addr);
   }
 
@@ -1779,13 +1788,13 @@ void CPMEmulator::bdos_close_file() {
                             it->second.write_buffer.size());
     }
 
-    if (debug || debug_bdos_funcs.count(16)) {
+    if (verbose >= 3 || debug_bdos_funcs.count(16)) {
       fprintf(stderr, "Close file: closing '%s'\n", it->second.cpm_name.c_str());
     }
     fclose(it->second.fp);
     open_files.erase(it);
   } else {
-    if (debug || debug_bdos_funcs.count(16)) {
+    if (verbose >= 3 || debug_bdos_funcs.count(16)) {
       fprintf(stderr, "Close file: file not open (OK)\n");
     }
   }
@@ -1793,7 +1802,7 @@ void CPMEmulator::bdos_close_file() {
   // Only return 0xFF if there's an actual disk error writing the directory
   cpu->set_reg8(0, qkz80::reg_A);
 
-  if (debug || debug_bdos_funcs.count(16)) {
+  if (verbose >= 3 || debug_bdos_funcs.count(16)) {
     fprintf(stderr, "Close file: returning A=%02X\n", cpu->get_reg8(qkz80::reg_A));
   }
 }
@@ -1863,7 +1872,7 @@ void CPMEmulator::bdos_make_file() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
   std::string filename = fcb_to_filename(fcb_addr);
 
-  if (debug || debug_bdos_funcs.count(22)) {
+  if (verbose >= 3 || debug_bdos_funcs.count(22)) {
     fprintf(stderr, "Make file: %s\n", filename.c_str());
   }
 
@@ -1910,7 +1919,7 @@ void CPMEmulator::bdos_delete_file() {
   bool eol_convert;
   std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert, drive);
 
-  if (debug || debug_bdos_funcs.count(19)) {
+  if (verbose >= 3 || debug_bdos_funcs.count(19)) {
     fprintf(stderr, "Delete file: %s -> %s\n", filename.c_str(),
             unix_path.empty() ? "(not found)" : unix_path.c_str());
   }
@@ -2087,7 +2096,7 @@ void CPMEmulator::bdos_rename_file() {
     new_path += tolower(c);
   }
 
-  if (debug || debug_bdos_funcs.count(23)) {
+  if (verbose >= 3 || debug_bdos_funcs.count(23)) {
     fprintf(stderr, "Rename: %s -> %s\n", old_path.c_str(), new_path.c_str());
   }
 
@@ -2238,7 +2247,7 @@ void CPMEmulator::bdos_search_first() {
   // Store pattern for debug output
   search_pattern = std::string(pattern_name, 8) + "." + std::string(pattern_ext, 3);
 
-  if (debug || debug_bdos_funcs.count(17)) {
+  if (verbose >= 3 || debug_bdos_funcs.count(17)) {
     fprintf(stderr, "Search First: pattern='%s'\n", search_pattern.c_str());
   }
 
@@ -2319,7 +2328,7 @@ void CPMEmulator::bdos_search_first() {
     closedir(dir);
   }
 
-  if (debug || debug_bdos_funcs.count(17)) {
+  if (verbose >= 3 || debug_bdos_funcs.count(17)) {
     fprintf(stderr, "Search First: found %zu files\n", search_results.size());
   }
 
@@ -2370,7 +2379,7 @@ void CPMEmulator::bdos_search_first() {
 }
 
 void CPMEmulator::bdos_search_next() {
-  if (debug || debug_bdos_funcs.count(18)) {
+  if (verbose >= 3 || debug_bdos_funcs.count(18)) {
     fprintf(stderr, "Search Next: index=%zu/%zu\n", search_index, search_results.size());
   }
 
@@ -2468,7 +2477,7 @@ void CPMEmulator::bdos_write_random_zero_fill() {
 }
 
 void CPMEmulator::bios_call(int offset) {
-  if (debug || debug_bios_offsets.count(offset)) {
+  if (verbose >= 5 || debug_bios_offsets.count(offset)) {
     fprintf(stderr, "BIOS call offset %d\n", offset);
   }
 
@@ -2509,7 +2518,7 @@ void CPMEmulator::bios_call(int offset) {
   // BIOS SELDSK - Select Disk, returns HL=DPH address or 0 if invalid
   case BIOS_SELDSK: {
     qkz80_uint8 drive = cpu->get_reg8(qkz80::reg_C);
-    if (debug || debug_bios_offsets.count(offset)) {
+    if (verbose >= 5 || debug_bios_offsets.count(offset)) {
       fprintf(stderr, "BIOS SELDSK: drive %c\n", 'A' + drive);
     }
     if (drive == 0) {
@@ -2541,20 +2550,20 @@ void CPMEmulator::bios_call(int offset) {
     } else if (bios_disk_mode == 1) {
       // Fail mode - return error to caller
       cpu->set_reg8(0x00, qkz80::reg_A);  // Return failure
-      if (debug || debug_bios_offsets.count(offset)) {
+      if (verbose >= 5 || debug_bios_offsets.count(offset)) {
         fprintf(stderr, "BIOS disk function at offset %d - returning failure\n", offset);
       }
     } else {
       // OK mode (default) - return success
       cpu->set_reg8(0x00, qkz80::reg_A);  // Return success (0 = OK for BIOS disk)
-      if (debug || debug_bios_offsets.count(offset)) {
+      if (verbose >= 5 || debug_bios_offsets.count(offset)) {
         fprintf(stderr, "BIOS disk function at offset %d - returning success\n", offset);
       }
     }
     break;
 
   default:
-    if (debug) {
+    if (verbose >= 2) {
       fprintf(stderr, "Unimplemented BIOS function at offset %d\n", offset);
     }
     break;
@@ -2639,7 +2648,7 @@ static void print_config_help() {
   printf("  program = path/to/program.com    Program to run (required)\n");
   printf("  args = ARG1 ARG2 ...             Arguments to pass to program\n");
   printf("  cd = /path/to/dir                Change to directory before running\n");
-  printf("  debug = true|false               Enable debug output\n");
+  printf("  verbose = 0                      Verbosity: 0=quiet, 1=load/exit, 2=files, 3=FCB, 5=all\n");
   printf("  default_mode = auto|text|binary  Default file mode (default: auto)\n");
   printf("  eol_convert = true|false         Convert line endings (default: true)\n\n");
 
@@ -2805,7 +2814,6 @@ int main(int argc, char** argv) {
   qkz80_cpu_mem memory;
   qkz80 cpu(&memory);
   cpu.set_cpu_mode(mode_8080 ? qkz80::MODE_8080 : qkz80::MODE_Z80);
-  fprintf(stderr, "CPU mode: %s\n", mode_8080 ? "8080" : "Z80");
 
   // Set up memory save if requested
   save_memory_cpu = &cpu;
@@ -2818,7 +2826,7 @@ int main(int argc, char** argv) {
   }
 
   // Create emulator
-  CPMEmulator cpm(&cpu, false);
+  CPMEmulator cpm(&cpu);
 
   // Enable raw mode for console input (no echo, no line buffering)
   enable_raw_mode();
@@ -2984,7 +2992,10 @@ int main(int argc, char** argv) {
   size_t loaded = fread(&mem[TPA_START], 1, 0xE000, fp);
   fclose(fp);
 
-  fprintf(stderr, "Loaded %zu bytes from %s\n", loaded, program_path.c_str());
+  if (cpm.get_verbose() >= 1) {
+    fprintf(stderr, "CPU mode: %s\n", mode_8080 ? "8080" : "Z80");
+    fprintf(stderr, "Loaded %zu bytes from %s\n", loaded, program_path.c_str());
+  }
 
   // Set PC to start of TPA
   cpu.regs.PC.set_pair16(TPA_START);
