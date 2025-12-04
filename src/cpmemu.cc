@@ -75,6 +75,53 @@ static std::string expand_env_vars(const std::string& str) {
   return result;
 }
 
+// Helper function to expand tilde in paths
+static std::string expand_tilde(const std::string& path) {
+  if (path.empty() || path[0] != '~') {
+    return path;
+  }
+  const char* home = getenv("HOME");
+  if (!home) {
+    return path;
+  }
+  return std::string(home) + path.substr(1);
+}
+
+// Helper function to search for a program in CPMUTL_PATH
+// Returns the full path if found, or empty string if not found
+static std::string find_program_in_path(const char* program) {
+  const char* cpmutl_path = getenv("CPMUTL_PATH");
+  if (!cpmutl_path || strlen(cpmutl_path) == 0) {
+    return "";
+  }
+
+  std::string path_str(cpmutl_path);
+  std::stringstream ss(path_str);
+  std::string dir;
+
+  while (std::getline(ss, dir, ':')) {
+    if (dir.empty()) continue;
+
+    // Expand tilde
+    dir = expand_tilde(dir);
+
+    // Build full path
+    std::string full_path = dir;
+    if (full_path.back() != '/') {
+      full_path += '/';
+    }
+    full_path += program;
+
+    // Check if file exists
+    struct stat st;
+    if (stat(full_path.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
+      return full_path;
+    }
+  }
+
+  return "";
+}
+
 // Helper function to check if input is available
 static bool stdin_has_data() {
   if (!isatty(STDIN_FILENO)) {
@@ -2400,6 +2447,8 @@ int main(int argc, char** argv) {
     fprintf(stderr, "  --save-range=S-E    Save only range S to E (hex, e.g., DC00-FFFF)\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Environment variables:\n");
+    fprintf(stderr, "  CPMUTL_PATH         Colon-separated list of directories to search for programs\n");
+    fprintf(stderr, "                      (e.g., ~/com1:~/com2). Tilde expansion is supported.\n");
     fprintf(stderr, "  CPM_PROGRESS=N      Enable progress reporting every N million instructions\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Examples:\n");
@@ -2606,17 +2655,29 @@ int main(int argc, char** argv) {
   }
 
   // Load .COM file at 0x0100
+  // First try to open the program directly
+  std::string program_path = program;
   FILE* fp = fopen(program, "rb");
   if (!fp) {
-    fprintf(stderr, "Cannot open %s: %s\n", program, strerror(errno));
-    return 1;
+    // If not found and it's not an absolute path, search in CPMUTL_PATH
+    if (program[0] != '/' && strchr(program, '/') == nullptr) {
+      std::string found = find_program_in_path(program);
+      if (!found.empty()) {
+        program_path = found;
+        fp = fopen(program_path.c_str(), "rb");
+      }
+    }
+    if (!fp) {
+      fprintf(stderr, "Cannot open %s: %s\n", program, strerror(errno));
+      return 1;
+    }
   }
 
   char* mem = cpu.get_mem();
   size_t loaded = fread(&mem[TPA_START], 1, 0xE000, fp);
   fclose(fp);
 
-  fprintf(stderr, "Loaded %zu bytes from %s\n", loaded, program);
+  fprintf(stderr, "Loaded %zu bytes from %s\n", loaded, program_path.c_str());
 
   // Set PC to start of TPA
   cpu.regs.PC.set_pair16(TPA_START);
