@@ -356,8 +356,12 @@ private:
   qkz80_uint8 search_user;                   // User number for search
 
 public:
-  // Program name from config file
+  // Program name and arguments from config file
   std::string config_program;
+  std::vector<std::string> config_args;
+
+  // Drive directory mappings (A-P)
+  std::string drive_paths[16];
 
   // Public debug settings for selective debugging
   std::set<int> debug_bdos_funcs;  // Which BDOS functions to debug
@@ -384,6 +388,7 @@ public:
 
   void setup_memory();
   void setup_command_line(int argc, char** argv, int program_arg_index = 1);
+  void setup_command_line_from_args(const std::vector<std::string>& arg_list);
   void add_file_mapping(const std::string& cpm_name, const std::string& unix_path);
   void add_file_mapping_ex(const std::string& cpm_pattern, const std::string& unix_pattern,
                            FileMode mode = MODE_AUTO, bool eol_convert = true);
@@ -399,7 +404,7 @@ private:
   // File I/O helpers
   FileMode detect_file_mode(const std::string& filename, const std::string& unix_path);
   bool is_text_file_heuristic(const std::string& unix_path);
-  std::string find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out, bool* eol_out);
+  std::string find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out, bool* eol_out, int drive = -1);
   bool match_pattern(const std::string& pattern, const std::string& text);
 
   // EOL and EOF handling
@@ -608,6 +613,56 @@ void CPMEmulator::setup_command_line(int argc, char** argv, int program_arg_inde
   }
 }
 
+void CPMEmulator::setup_command_line_from_args(const std::vector<std::string>& arg_list) {
+  char* mem = cpu->get_mem();
+
+  if (arg_list.empty()) {
+    mem[DEFAULT_DMA] = 0;  // No command line
+    return;
+  }
+
+  // Build command line from arguments
+  std::string cmdline;
+  for (const auto& arg : arg_list) {
+    cmdline += " ";  // Space before each argument (CP/M convention)
+
+    // Get basename and convert to 8.3 format
+    size_t slash_pos = arg.rfind('/');
+    std::string arg_base = (slash_pos != std::string::npos) ? arg.substr(slash_pos + 1) : arg;
+    std::string arg_upper;
+    for (char c : arg_base) {
+      arg_upper += toupper(c);
+    }
+
+    // Truncate to 8.3 format for command line
+    size_t dot_pos = arg_upper.find('.');
+    if (dot_pos != std::string::npos && dot_pos > 8) {
+      std::string name_83 = arg_upper.substr(0, 8) + arg_upper.substr(dot_pos);
+      cmdline += name_83;
+    } else {
+      cmdline += arg_upper;
+    }
+
+    args.push_back(arg);
+  }
+
+  // Store command line at DEFAULT_DMA
+  mem[DEFAULT_DMA] = std::min((int)cmdline.length(), 127);
+  for (size_t i = 0; i < cmdline.length() && i < 127; i++) {
+    mem[DEFAULT_DMA + 1 + i] = toupper(cmdline[i]);
+  }
+
+  // Parse first filename into DEFAULT_FCB
+  if (arg_list.size() >= 1) {
+    filename_to_fcb(arg_list[0], DEFAULT_FCB);
+  }
+
+  // Parse second filename into DEFAULT_FCB2
+  if (arg_list.size() >= 2) {
+    filename_to_fcb(arg_list[1], DEFAULT_FCB2);
+  }
+}
+
 void CPMEmulator::add_file_mapping(const std::string& cpm_name, const std::string& unix_path) {
   std::string normalized = normalize_cpm_filename(cpm_name);
   file_map[normalized] = unix_path;
@@ -720,51 +775,109 @@ bool CPMEmulator::match_pattern(const std::string& pattern, const std::string& t
   return false;
 }
 
-std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out, bool* eol_out) {
+std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out, bool* eol_out, int drive) {
   std::string normalized = normalize_cpm_filename(cpm_name);
 
-  // Check new file mappings with patterns
-  for (const auto& mapping : file_mappings) {
-    if (match_pattern(mapping.cpm_pattern, normalized)) {
-      if (access(mapping.unix_pattern.c_str(), F_OK) == 0) {
-        *mode_out = mapping.mode;
-        *eol_out = mapping.eol_convert;
-
-        // Auto-detect if needed
-        if (*mode_out == MODE_AUTO) {
-          *mode_out = detect_file_mode(normalized, mapping.unix_pattern);
-        }
-
-        return mapping.unix_pattern;
-      }
+  // Determine which directory to search
+  // drive: -1 = current directory, 0-15 = drive A-P
+  std::string search_dir;
+  if (drive >= 0 && drive < 16 && !drive_paths[drive].empty()) {
+    search_dir = drive_paths[drive];
+    // Ensure trailing slash
+    if (!search_dir.empty() && search_dir.back() != '/') {
+      search_dir += '/';
     }
   }
 
-  // Check legacy file map
-  auto it = file_map.find(normalized);
-  if (it != file_map.end()) {
-    *mode_out = detect_file_mode(normalized, it->second);
-    *eol_out = default_eol_convert;
-    return it->second;
-  }
-
-  // Try lowercase version in current directory
+  // Lowercase version of filename for searching
   std::string lowercase;
   for (char c : normalized) {
     lowercase += tolower(c);
   }
 
-  if (access(lowercase.c_str(), F_OK) == 0) {
-    *mode_out = detect_file_mode(normalized, lowercase);
-    *eol_out = default_eol_convert;
-    return lowercase;
+  // First pass: check for explicit file mappings (exact CP/M name to Unix path)
+  // These have priority over wildcard patterns
+  auto it = file_map.find(normalized);
+  if (it != file_map.end()) {
+    if (access(it->second.c_str(), F_OK) == 0) {
+      *mode_out = detect_file_mode(normalized, it->second);
+      *eol_out = default_eol_convert;
+      return it->second;
+    }
   }
 
-  // Try as-is
-  if (access(normalized.c_str(), F_OK) == 0) {
-    *mode_out = detect_file_mode(normalized, normalized);
-    *eol_out = default_eol_convert;
-    return normalized;
+  // Check file mappings with patterns
+  // Pattern types:
+  // 1. Exact mapping: "TEST.BAS = /path/to/test.bas" - maps specific file
+  // 2. Extension pattern: "*.BAS = text" - sets mode for all .BAS files (no path)
+  // 3. Directory pattern: "*.BAS = /some/dir" - look for .BAS files in directory
+  FileMode matched_mode = MODE_AUTO;
+  bool matched_eol = default_eol_convert;
+  bool found_pattern = false;
+
+  for (const auto& mapping : file_mappings) {
+    if (match_pattern(mapping.cpm_pattern, normalized)) {
+      found_pattern = true;
+      matched_mode = mapping.mode;
+      matched_eol = mapping.eol_convert;
+
+      // If unix_pattern is empty, this is a mode-only mapping (e.g., "*.BAS = text")
+      // Just use the mode settings and fall through to normal file search
+      if (mapping.unix_pattern.empty()) {
+        break;
+      }
+
+      // Check if unix_pattern is a specific file/directory path (no wildcards)
+      if (mapping.unix_pattern.find('*') == std::string::npos) {
+        // Check if it's a directory
+        struct stat st;
+        if (stat(mapping.unix_pattern.c_str(), &st) == 0) {
+          if (S_ISDIR(st.st_mode)) {
+            // It's a directory - look for the file there
+            std::string dir_path = mapping.unix_pattern;
+            if (dir_path.back() != '/') dir_path += '/';
+
+            std::string try_path = dir_path + lowercase;
+            if (access(try_path.c_str(), F_OK) == 0) {
+              *mode_out = (matched_mode == MODE_AUTO) ? detect_file_mode(normalized, try_path) : matched_mode;
+              *eol_out = matched_eol;
+              return try_path;
+            }
+            try_path = dir_path + normalized;
+            if (access(try_path.c_str(), F_OK) == 0) {
+              *mode_out = (matched_mode == MODE_AUTO) ? detect_file_mode(normalized, try_path) : matched_mode;
+              *eol_out = matched_eol;
+              return try_path;
+            }
+          } else {
+            // It's a file - use it directly
+            *mode_out = (matched_mode == MODE_AUTO) ? detect_file_mode(normalized, mapping.unix_pattern) : matched_mode;
+            *eol_out = matched_eol;
+            return mapping.unix_pattern;
+          }
+        }
+      }
+      // If unix_pattern has wildcards, fall through to normal file search with mode
+      break;  // Use first matching pattern's mode
+    }
+  }
+
+  // Search in drive directory (or current directory)
+  std::string try_path = search_dir + lowercase;
+  if (access(try_path.c_str(), F_OK) == 0) {
+    *mode_out = found_pattern ? matched_mode : detect_file_mode(normalized, try_path);
+    if (*mode_out == MODE_AUTO) *mode_out = detect_file_mode(normalized, try_path);
+    *eol_out = found_pattern ? matched_eol : default_eol_convert;
+    return try_path;
+  }
+
+  // Try uppercase
+  try_path = search_dir + normalized;
+  if (access(try_path.c_str(), F_OK) == 0) {
+    *mode_out = found_pattern ? matched_mode : detect_file_mode(normalized, try_path);
+    if (*mode_out == MODE_AUTO) *mode_out = detect_file_mode(normalized, try_path);
+    *eol_out = found_pattern ? matched_eol : default_eol_convert;
+    return try_path;
   }
 
   return "";  // Not found
@@ -891,21 +1004,39 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
     if (start == std::string::npos) continue;  // Empty line
     line = line.substr(start, end - start + 1);
 
-    // Parse key = value
+    // Parse key = value OR "*.ext mode" shorthand
     size_t eq = line.find('=');
-    if (eq == std::string::npos) {
-      fprintf(stderr, "Config line %d: invalid format (missing =)\n", line_num);
-      continue;
-    }
+    std::string key, value;
 
-    std::string key = line.substr(0, eq);
-    std::string value = line.substr(eq + 1);
+    if (eq == std::string::npos) {
+      // No '=' found - check for shorthand "*.ext mode" format
+      size_t space = line.find(' ');
+      if (space != std::string::npos) {
+        key = line.substr(0, space);
+        value = line.substr(space + 1);
+        // Trim
+        while (!value.empty() && (value[0] == ' ' || value[0] == '\t')) value = value.substr(1);
+      } else {
+        fprintf(stderr, "Config line %d: invalid format (missing = or mode)\n", line_num);
+        continue;
+      }
+    } else {
+      key = line.substr(0, eq);
+      value = line.substr(eq + 1);
+    }
 
     // Trim key and value
     key = key.substr(0, key.find_last_not_of(" \t") + 1);
-    key = key.substr(key.find_first_not_of(" \t"));
-    value = value.substr(value.find_first_not_of(" \t"));
-    value = value.substr(0, value.find_last_not_of(" \t") + 1);
+    if (!key.empty()) key = key.substr(key.find_first_not_of(" \t"));
+    if (!value.empty()) {
+      size_t vstart = value.find_first_not_of(" \t");
+      if (vstart != std::string::npos) {
+        value = value.substr(vstart);
+        value = value.substr(0, value.find_last_not_of(" \t") + 1);
+      } else {
+        value = "";
+      }
+    }
 
     // Expand environment variables in value
     value = expand_env_vars(value);
@@ -936,26 +1067,64 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
       set_aux_input_file(value);
     } else if (key == "aux_output") {
       set_aux_output_file(value);
+    } else if (key == "args") {
+      // Parse space-separated arguments
+      std::istringstream iss(value);
+      std::string arg;
+      while (iss >> arg) {
+        config_args.push_back(arg);
+      }
+      if (debug) {
+        fprintf(stderr, "Config args: %zu arguments\n", config_args.size());
+      }
+    } else if (key.length() == 7 && key.substr(0, 6) == "drive_") {
+      // Drive mapping: drive_A, drive_B, etc.
+      char drive_letter = toupper(key[6]);
+      if (drive_letter >= 'A' && drive_letter <= 'P') {
+        int drive_num = drive_letter - 'A';
+        drive_paths[drive_num] = value;
+        if (debug) {
+          fprintf(stderr, "Drive %c: mapped to %s\n", drive_letter, value.c_str());
+        }
+      } else {
+        fprintf(stderr, "Config line %d: invalid drive letter '%c'\n", line_num, key[6]);
+      }
     } else {
-      // Assume it's a file mapping: pattern = path [mode]
+      // Assume it's a file mapping: pattern = [path] [mode]
+      // Formats supported:
+      //   *.BAS = text                    - mode only, find file normally
+      //   *.BAS = /path/to/dir text       - directory + mode
+      //   *.BAS = /path/to/file.bas text  - specific file + mode
+      //   TEST.BAS = /path/to/test.bas    - specific mapping (auto mode)
       FileMode mode = default_mode;
       bool eol_convert = default_eol_convert;
+      std::string path = value;
 
-      // Check for mode specification
-      size_t space = value.find_last_of(' ');
-      if (space != std::string::npos) {
-        std::string mode_str = value.substr(space + 1);
-        if (mode_str == "text") {
-          mode = MODE_TEXT;
-          value = value.substr(0, space);
-        } else if (mode_str == "binary") {
-          mode = MODE_BINARY;
-          value = value.substr(0, space);
-          eol_convert = false;
+      // Check if value is just a mode keyword
+      if (value == "text") {
+        mode = MODE_TEXT;
+        path = "";  // No path, just mode
+      } else if (value == "binary") {
+        mode = MODE_BINARY;
+        eol_convert = false;
+        path = "";  // No path, just mode
+      } else {
+        // Check for mode specification at end
+        size_t space = value.find_last_of(' ');
+        if (space != std::string::npos) {
+          std::string mode_str = value.substr(space + 1);
+          if (mode_str == "text") {
+            mode = MODE_TEXT;
+            path = value.substr(0, space);
+          } else if (mode_str == "binary") {
+            mode = MODE_BINARY;
+            path = value.substr(0, space);
+            eol_convert = false;
+          }
         }
       }
 
-      add_file_mapping_ex(key, value, mode, eol_convert);
+      add_file_mapping_ex(key, path, mode, eol_convert);
     }
   }
 
@@ -1540,16 +1709,27 @@ void CPMEmulator::bdos_get_set_user() {
 
 void CPMEmulator::bdos_open_file() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
+  char* mem = cpu->get_mem();
   std::string filename = fcb_to_filename(fcb_addr);
+
+  // Get drive from FCB byte 0 (0 = default/current, 1 = A:, etc.)
+  int fcb_drive = mem[fcb_addr] & 0x0F;
+  int drive = (fcb_drive == 0) ? current_drive : (fcb_drive - 1);
 
   FileMode mode;
   bool eol_convert;
-  std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert);
+  std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert, drive);
 
   if (debug || debug_bdos_funcs.count(15)) {
-    fprintf(stderr, "BDOS Open: '%s' -> '%s' (mode: %s)\n", filename.c_str(),
+    fprintf(stderr, "BDOS Open: '%s' -> '%s' (mode: %s) [FCB@%04X: ",
+            filename.c_str(),
             unix_path.empty() ? "(not found)" : unix_path.c_str(),
-            mode == MODE_TEXT ? "text" : "binary");
+            mode == MODE_TEXT ? "text" : "binary",
+            fcb_addr);
+    for (int i = 0; i < 12; i++) {
+      fprintf(stderr, "%02X ", (unsigned char)mem[fcb_addr + i]);
+    }
+    fprintf(stderr, "]\n");
   }
 
   if (unix_path.empty()) {
@@ -1578,7 +1758,6 @@ void CPMEmulator::bdos_open_file() {
   open_files[fcb_addr] = of;
 
   // Clear extent and record count
-  char* mem = cpu->get_mem();
   mem[fcb_addr + 12] = 0;  // EX
   mem[fcb_addr + 15] = 0x80;  // RC (128 records max per extent)
 
@@ -1720,11 +1899,16 @@ void CPMEmulator::bdos_make_file() {
 
 void CPMEmulator::bdos_delete_file() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
+  char* mem = cpu->get_mem();
   std::string filename = fcb_to_filename(fcb_addr);
+
+  // Get drive from FCB
+  int fcb_drive = mem[fcb_addr] & 0x0F;
+  int drive = (fcb_drive == 0) ? current_drive : (fcb_drive - 1);
 
   FileMode mode;
   bool eol_convert;
-  std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert);
+  std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert, drive);
 
   if (debug || debug_bdos_funcs.count(19)) {
     fprintf(stderr, "Delete file: %s -> %s\n", filename.c_str(),
@@ -1816,9 +2000,13 @@ void CPMEmulator::bdos_file_size() {
   char* mem = cpu->get_mem();
   std::string filename = fcb_to_filename(fcb_addr);
 
+  // Get drive from FCB
+  int fcb_drive = mem[fcb_addr] & 0x0F;
+  int drive = (fcb_drive == 0) ? current_drive : (fcb_drive - 1);
+
   FileMode mode;
   bool eol_convert;
-  std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert);
+  std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert, drive);
 
   if (unix_path.empty()) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error: file not found
@@ -1863,6 +2051,7 @@ void CPMEmulator::bdos_set_random_record() {
 
 void CPMEmulator::bdos_rename_file() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
+  char* mem = cpu->get_mem();
 
   // In CP/M, rename uses a special FCB format:
   // Bytes 0-15: old filename (standard FCB format)
@@ -1870,9 +2059,13 @@ void CPMEmulator::bdos_rename_file() {
 
   std::string old_name = fcb_to_filename(fcb_addr);
 
+  // Get drive from FCB
+  int fcb_drive = mem[fcb_addr] & 0x0F;
+  int drive = (fcb_drive == 0) ? current_drive : (fcb_drive - 1);
+
   FileMode mode;
   bool eol_convert;
-  std::string old_path = find_unix_file_ex(old_name, &mode, &eol_convert);
+  std::string old_path = find_unix_file_ex(old_name, &mode, &eol_convert, drive);
 
   if (old_path.empty()) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error: old file not found
@@ -2433,31 +2626,134 @@ void CPMEmulator::bios_listst() {
   cpu->set_reg8(0xFF, qkz80::reg_A);
 }
 
+// Print configuration file help
+static void print_config_help() {
+  printf("CP/M Emulator Configuration File Help\n");
+  printf("=====================================\n\n");
+
+  printf("Configuration files (.cfg) allow you to set up complex file mappings,\n");
+  printf("program arguments, and emulator options. Use: cpmemu config.cfg [args...]\n\n");
+
+  printf("DIRECTIVES:\n");
+  printf("-----------\n");
+  printf("  program = path/to/program.com    Program to run (required)\n");
+  printf("  args = ARG1 ARG2 ...             Arguments to pass to program\n");
+  printf("  cd = /path/to/dir                Change to directory before running\n");
+  printf("  debug = true|false               Enable debug output\n");
+  printf("  default_mode = auto|text|binary  Default file mode (default: auto)\n");
+  printf("  eol_convert = true|false         Convert line endings (default: true)\n\n");
+
+  printf("DRIVE MAPPINGS:\n");
+  printf("---------------\n");
+  printf("  drive_A = /path/to/dir           Map CP/M drive A: to Unix directory\n");
+  printf("  drive_B = /path/to/dir           Map CP/M drive B: to Unix directory\n");
+  printf("  ...                              (drives A-P supported)\n\n");
+
+  printf("FILE MAPPINGS:\n");
+  printf("--------------\n");
+  printf("File mappings specify how CP/M filenames map to Unix files and their modes.\n\n");
+
+  printf("  Syntax: CPM_PATTERN = [unix_path] [text|binary]\n\n");
+
+  printf("  Mode-only (applies to files found via normal search):\n");
+  printf("    *.BAS = text                   All .BAS files are text mode\n");
+  printf("    *.DAT = binary                 All .DAT files are binary mode\n");
+  printf("    *.SYM = text                   All .SYM files are text mode\n\n");
+
+  printf("  Directory mapping (look for files in specific directory):\n");
+  printf("    *.BAS = /home/user/basic text  Find .BAS files in /home/user/basic\n\n");
+
+  printf("  Exact file mapping:\n");
+  printf("    TEST.BAS = /path/to/test.bas text    Map specific file\n");
+  printf("    DATA.DAT = ./data/mydata.dat binary  Map to relative path\n\n");
+
+  printf("DEVICE REDIRECTION:\n");
+  printf("-------------------\n");
+  printf("  printer = /path/to/file          Redirect LST: device output\n");
+  printf("  aux_input = /path/to/file        Redirect RDR: device input\n");
+  printf("  aux_output = /path/to/file       Redirect PUN: device output\n\n");
+
+  printf("ENVIRONMENT VARIABLES:\n");
+  printf("----------------------\n");
+  printf("  Paths support ${VAR} and $VAR syntax for environment variable expansion.\n");
+  printf("  Example: program = ${HOME}/cpm/mbasic.com\n\n");
+
+  printf("EXAMPLE CONFIGURATION:\n");
+  printf("----------------------\n");
+  printf("  # mbasic.cfg - Run MBASIC with test files\n");
+  printf("  program = ${HOME}/cpm/mbasic.com\n");
+  printf("  args = TEST.BAS\n");
+  printf("  cd = /tmp\n");
+  printf("  \n");
+  printf("  # File type settings\n");
+  printf("  *.BAS = text\n");
+  printf("  *.DAT = binary\n");
+  printf("  \n");
+  printf("  # Drive mappings\n");
+  printf("  drive_A = .\n");
+  printf("  drive_B = ${HOME}/basic_programs\n");
+  printf("  \n");
+  printf("  # Map test files from a specific directory\n");
+  printf("  *.BAS = ${HOME}/mbasic/tests text\n\n");
+
+  printf("USAGE EXAMPLES:\n");
+  printf("---------------\n");
+  printf("  cpmemu config.cfg                Run with config file\n");
+  printf("  cpmemu config.cfg MYFILE.BAS     Run with config, override args\n");
+  printf("  cpmemu --8080 config.cfg         Run in 8080 mode with config\n\n");
+
+  printf("NOTES:\n");
+  printf("------\n");
+  printf("  - Command-line arguments after .cfg file are appended to config args\n");
+  printf("  - File patterns are case-insensitive (*.BAS matches test.bas)\n");
+  printf("  - Only *.EXT patterns are supported (not partial wildcards like TE*.BAS)\n");
+  printf("  - Lines starting with # are comments\n");
+}
+
+// Print usage/help
+static void print_usage(const char* progname) {
+  fprintf(stderr, "Usage: %s [options] <program.com|config.cfg> [args...]\n", progname);
+  fprintf(stderr, "\n");
+  fprintf(stderr, "Options:\n");
+  fprintf(stderr, "  --8080              Run in 8080 mode\n");
+  fprintf(stderr, "  --z80               Run in Z80 mode (default)\n");
+  fprintf(stderr, "  --progress[=N]      Enable progress reporting every N million instructions\n");
+  fprintf(stderr, "                      (default N=100 if not specified, off by default)\n");
+  fprintf(stderr, "  --save-memory=FILE  Save memory to FILE on exit (for MOVCPM/SYSGEN)\n");
+  fprintf(stderr, "  --save-range=S-E    Save only range S to E (hex, e.g., DC00-FFFF)\n");
+  fprintf(stderr, "  --help-cfg          Show configuration file help and examples\n");
+  fprintf(stderr, "  --help, -h          Show this help message\n");
+  fprintf(stderr, "\n");
+  fprintf(stderr, "Environment variables:\n");
+  fprintf(stderr, "  CPMUTL_PATH         Colon-separated list of directories to search for programs\n");
+  fprintf(stderr, "                      (e.g., ~/com1:~/com2). Tilde expansion is supported.\n");
+  fprintf(stderr, "  CPM_PROGRESS=N      Enable progress reporting every N million instructions\n");
+  fprintf(stderr, "\n");
+  fprintf(stderr, "Examples:\n");
+  fprintf(stderr, "  %s program.com              # Run CP/M program\n", progname);
+  fprintf(stderr, "  %s --z80 program.com        # Run in Z80 mode\n", progname);
+  fprintf(stderr, "  %s --progress program.com   # With progress reporting (every 100M)\n", progname);
+  fprintf(stderr, "  %s program.com file.dat     # With file arguments\n", progname);
+  fprintf(stderr, "  %s config.cfg               # With config file\n", progname);
+  fprintf(stderr, "  %s --help-cfg               # Show config file help\n", progname);
+}
+
 // Main program
 int main(int argc, char** argv) {
+  // Check for help options first
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--help-cfg") == 0) {
+      print_config_help();
+      return 0;
+    }
+    if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+      print_usage(argv[0]);
+      return 0;
+    }
+  }
+
   if (argc < 2) {
-    fprintf(stderr, "Usage: %s [options] <program.com|config.cfg> [args...]\n", argv[0]);
-    fprintf(stderr, "\n");
-    fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  --8080              Run in 8080 mode\n");
-    fprintf(stderr, "  --z80               Run in Z80 mode (default)\n");
-    fprintf(stderr, "  --progress[=N]      Enable progress reporting every N million instructions\n");
-    fprintf(stderr, "                      (default N=100 if not specified, off by default)\n");
-    fprintf(stderr, "  --save-memory=FILE  Save memory to FILE on exit (for MOVCPM/SYSGEN)\n");
-    fprintf(stderr, "  --save-range=S-E    Save only range S to E (hex, e.g., DC00-FFFF)\n");
-    fprintf(stderr, "\n");
-    fprintf(stderr, "Environment variables:\n");
-    fprintf(stderr, "  CPMUTL_PATH         Colon-separated list of directories to search for programs\n");
-    fprintf(stderr, "                      (e.g., ~/com1:~/com2). Tilde expansion is supported.\n");
-    fprintf(stderr, "  CPM_PROGRESS=N      Enable progress reporting every N million instructions\n");
-    fprintf(stderr, "\n");
-    fprintf(stderr, "Examples:\n");
-    fprintf(stderr, "  %s program.com              # Run CP/M program in 8080 mode\n", argv[0]);
-    fprintf(stderr, "  %s --z80 program.com        # Run in Z80 mode\n", argv[0]);
-    fprintf(stderr, "  %s --progress program.com   # With progress reporting (every 100M)\n", argv[0]);
-    fprintf(stderr, "  %s --progress=50 prog.com   # Report every 50M instructions\n", argv[0]);
-    fprintf(stderr, "  %s program.com file.dat     # With file arguments\n", argv[0]);
-    fprintf(stderr, "  %s config.cfg               # With config file\n", argv[0]);
+    print_usage(argv[0]);
     return 1;
   }
 
@@ -2547,7 +2843,18 @@ int main(int argc, char** argv) {
   cpm.setup_memory();
 
   // Parse command line arguments
-  cpm.setup_command_line(argc, argv, arg_offset);
+  // For config files: merge config_args with any extra command-line args
+  // Command line args after the .cfg file override/append to config args
+  if (is_config) {
+    std::vector<std::string> combined_args = cpm.config_args;
+    // Add any command line arguments after the config file
+    for (int i = arg_offset + 1; i < argc; i++) {
+      combined_args.push_back(argv[i]);
+    }
+    cpm.setup_command_line_from_args(combined_args);
+  } else {
+    cpm.setup_command_line(argc, argv, arg_offset);
+  }
 
   // Check for config file settings in environment or command line
   const char* printer_file = getenv("CPM_PRINTER");

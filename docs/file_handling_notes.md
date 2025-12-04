@@ -1,4 +1,4 @@
-# CP/M File Handling Issues and Solutions
+# CP/M File Handling and Configuration
 
 ## Key Differences Between CP/M and Unix Files
 
@@ -15,7 +15,7 @@
 - No special EOF marker
 - File ends at last byte
 
-**Solution Needed:**
+**Solution:**
 - When reading CP/M text files: stop at `^Z`
 - When writing CP/M text files: pad to 128 bytes with `^Z`
 - Track file type (text vs binary) per file
@@ -29,154 +29,207 @@
 **Unix:**
 - Uses `\n` (0x0A) only
 
-**Solution Needed:**
-- Convert `\n` → `\r\n` when reading Unix text files into CP/M
-- Convert `\r\n` → `\n` when writing CP/M text files to Unix
-- Only apply to text files, not binary
+**Solution:**
+- Convert `\n` -> `\r\n` when reading Unix text files into CP/M
+- Convert `\r\n` -> `\n` when writing CP/M text files to Unix
+- Only apply to text files, not binary (controlled by `eol_convert`)
 
-### 3. File Name Mapping
+## Configuration File Format
 
-**Current Implementation:**
-- Simple lowercase matching
-- File mapping dictionary
+Configuration files (`.cfg`) specify program settings, file mappings, and modes.
 
-**Issues:**
-- Can't handle deep directory structures
-- No wildcards
-- Must specify every file individually
-- No way to specify text vs binary mode
+### Basic Directives
 
-## Proposed Configuration File Format
+```ini
+# Program to run (required)
+program = /path/to/program.com
 
-Create a `.cfg` file to specify:
+# Command-line arguments to pass to program
+args = ARG1 ARG2 ARG3
 
-```
-# Example: mbasic.cfg
+# Change to directory before running
+cd = /path/to/working/directory
 
-# Program to run
-program = mbasic.com
+# Default file mode: auto, text, or binary
+default_mode = auto
 
-# File mappings with type specification
-# Format: cpm_pattern = unix_path [text|binary]
+# Enable EOL conversion for text files (default: true)
+eol_convert = true
 
-# Map all .BAS files from tests directory as text
-*.BAS = tests/**/*.bas text
-
-# Map specific files
-TEST.BAS = ~/basic_programs/test.bas text
-DATA.DAT = ./data/mydata.dat binary
-
-# Map assembler files
-*.MAC = src/**/*.mac text
-*.ASM = src/**/*.asm text
-*.HEX = build/*.hex binary
-
-# Default mode for unmapped files
-default_mode = text
-
-# Drive mappings (optional)
-drive_A = ./
-drive_B = /home/user/cpm_files/
-
-# Debug options
+# Enable debug output
 debug = false
 ```
 
-## Implementation Plan
+### Drive Mappings
 
-### Phase 1: EOF Handling
-1. Add file mode tracking (text/binary) to `OpenFile` structure
-2. Implement `^Z` detection in sequential read for text files
-3. Implement `^Z` padding in sequential write for text files
+Map CP/M drives (A:-P:) to Unix directories:
 
-### Phase 2: EOL Conversion
-1. Add line-ending conversion filters
-2. Apply during read/write for text-mode files
-3. Create buffer for conversion (may change byte count)
+```ini
+drive_A = .
+drive_B = /home/user/cpm_files
+drive_C = ${HOME}/cpm/programs
+```
 
-### Phase 3: Configuration File
-1. Design .cfg file parser
-2. Implement wildcard matching for file patterns
-3. Add file type (text/binary) specification
-4. Support glob patterns (`**/*.bas`)
+When a CP/M program accesses `B:TEST.BAS`, it will look for the file in `/home/user/cpm_files/test.bas`.
 
-### Phase 4: Auto-Detection Heuristics
-Since there's no foolproof way to detect text vs binary:
-- Check file extension (.BAS, .MAC, .ASM, .TXT → text)
-- Check for binary extensions (.COM, .OVL, .HEX → binary)
-- Scan first 512 bytes for control characters (heuristic)
-- Default to binary if unsure (safer)
+### File Mappings
 
-## Testing Resources
+File mappings specify how CP/M filenames map to Unix files and set their mode.
 
-### Available Test Files
+**Syntax:** `CPM_PATTERN = [unix_path] [text|binary]`
 
-1. **MBASIC Test Suite**: `/home/wohl/cl/mbasic/tests/`
-   - Over 100 .bas test files (2753 lines total)
-   - Already in CP/M format with `\r\n` line endings
-   - Written for testing modern MBASIC interpreter emulation
-   - Examples: printsep.bas, test_while_for_mix.bas, recurse.bas
+#### Mode-Only Mappings
 
-2. **Classic BASIC Programs**: `/home/wohl/cl/mbasic/site-dev/library/`
-   - Business applications (budget, finance, mortgage, etc.)
-   - Data management tools (database utilities)
-   - Utilities (sort, convert, charfreq, etc.)
-   - Organized by category
+Set the file mode for patterns without specifying a path. Files are found via normal search (current directory or drive mapping).
 
-3. **Notable Programs**:
-   - `/home/wohl/cl/mbasic/superstartrek.bas` - Classic Star Trek game
-   - `/home/wohl/cl/mbasic/com/trand.bas` - Random number test
+```ini
+# All .BAS files are text
+*.BAS = text
 
-### Testing Strategy
+# All .DAT files are binary
+*.DAT = binary
 
-1. Test with m80.com assembler (requires proper `\r\n`)
-2. Test MBASIC loading .BAS files from `/home/wohl/cl/mbasic/tests/`
-3. Test binary file operations (.COM files)
-4. Test file creation and round-trip (write then read)
-5. Run comprehensive test suite:
-   ```bash
-   # Simple test
-   ./cpm_emulator com/mbasic.com /home/wohl/cl/mbasic/tests/printsep.bas
+# Symbol files are text
+*.SYM = text
+```
 
-   # With configuration file mapping entire test directory
-   ./cpm_emulator mbasic_tests.cfg
-   ```
+#### Directory Mappings
 
-## Reference: tnylpo Approach
+Look for files matching the pattern in a specific directory:
 
-tnylpo includes `tnylpo-convert` utility:
-- Standalone tool for manual conversion
-- User explicitly converts files before use
-- Simple but requires extra steps
+```ini
+# Find .BAS files in this directory
+*.BAS = /home/user/basic text
 
-Our approach:
-- Automatic conversion based on configuration
-- More convenient for users
-- Requires careful configuration
+# Find any matching file in a specific location
+*.MAC = /home/user/asm text
+```
 
-## Edge Cases to Handle
+#### Exact File Mappings
 
-1. **Mixed line endings in source file**: Handle gracefully
-2. **Binary data that looks like text**: Use configuration
-3. **Files without extensions**: Default to binary
-4. **Large files**: Stream conversion, don't load all in memory
-5. **Partial record writes**: Pad correctly
+Map specific CP/M filenames to specific Unix paths:
+
+```ini
+# Map specific files
+TEST.BAS = /home/user/projects/test.bas text
+DATA.DAT = ./data/mydata.dat binary
+STARTREK.BAS = /home/user/games/superstartrek.bas text
+```
+
+### Device Redirection
+
+```ini
+printer = /tmp/printer.txt
+aux_input = /path/to/input.txt
+aux_output = /path/to/output.txt
+```
+
+### Environment Variables
+
+Paths support `${VAR}` and `$VAR` syntax:
+
+```ini
+program = ${HOME}/cpm/mbasic.com
+drive_B = $HOME/basic_programs
+```
+
+## Example Configuration Files
+
+### MBASIC with Test Suite
+
+```ini
+# mbasic_tests.cfg
+program = com/mbasic.com
+args = TEST.BAS
+
+# Text mode for BASIC files
+*.BAS = text
+
+# Drive mappings
+drive_A = .
+drive_B = /home/user/mbasic/tests
+
+# Map specific games
+STARTREK.BAS = /home/user/mbasic/superstartrek.bas text
+```
+
+### Assembler Setup
+
+```ini
+# asm.cfg
+program = com/m80.com
+cd = /tmp
+
+# Assembly source files are text
+*.MAC = text
+*.ASM = text
+*.LST = text
+
+# Object/binary files
+*.REL = binary
+*.COM = binary
+
+# Look for source in specific directory
+*.MAC = ${HOME}/asm/src text
+```
+
+### Compiler with Output Directory
+
+```ini
+# compile.cfg
+program = ${HOME}/cpm/compilers/hitech_c.com
+cd = /tmp/build
+
+# Source is text, output is binary
+*.C = text
+*.H = text
+*.OBJ = binary
+*.COM = binary
+
+# Drive B is the source directory
+drive_B = ${HOME}/projects/myapp/src
+```
 
 ## Command Line Usage
 
 ```bash
-# Simple mode (auto-detect, may not work for all programs)
-./cpm_emulator mbasic.com
+# Run with config file
+./cpmemu config.cfg
 
-# With configuration file
-./cpm_emulator mbasic.cfg
+# Run with config and additional arguments (appended to config args)
+./cpmemu config.cfg MYFILE.BAS
 
-# Configuration file specifies program and all mappings
+# Config with CPU mode option
+./cpmemu --8080 config.cfg
+
+# Show config file help
+./cpmemu --help-cfg
 ```
 
-## Notes for Future Enhancement
+## File Mode Detection
 
-- Consider supporting CP/M 3.0 timestamps
-- Add support for random access files (r0-r2 in FCB)
-- Support for user numbers (0-15)
-- Multiple drive support with directory mapping
+When `default_mode = auto`, the emulator uses these heuristics:
+
+**Known text extensions:** .BAS, .MAC, .ASM, .TXT, .DOC, .LST, .PRN
+**Known binary extensions:** .COM, .EXE, .OVL, .OVR, .SYS, .BIN, .DAT
+
+For other files, it scans the first 512 bytes:
+- If more than 5% are control characters (excluding CR, LF, TAB, ^Z), treat as binary
+- Otherwise treat as text
+
+## File Search Order
+
+When a CP/M program opens a file (e.g., `TEST.BAS`):
+
+1. Check explicit file mappings (exact CP/M name to Unix path)
+2. Check pattern mappings (e.g., `*.BAS = /some/dir`)
+3. Search in drive directory (if drive mapping exists)
+4. Search in current directory (lowercase, then uppercase)
+
+## Notes
+
+- Pattern matching is case-insensitive
+- Only `*.EXT` patterns are supported (not `TE*.BAS`)
+- Environment variables are expanded in all path values
+- Lines starting with `#` are comments
+- Blank lines are ignored

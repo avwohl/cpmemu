@@ -2,100 +2,112 @@
 
 This directory contains example configuration files for the CP/M emulator.
 
-## Current Status
+## Quick Start
 
-The basic emulator is working and can run `mbasic.com`. Configuration file support is **not yet implemented** but these examples show the planned functionality.
+```bash
+# Run with a config file
+./src/cpmemu examples/example.cfg
+
+# Show config file help
+./src/cpmemu --help-cfg
+```
 
 ## Example Files
 
-### simple_test.cfg
-Minimal configuration for testing a single BASIC program.
-```bash
-./cpm_emulator examples/simple_test.cfg
-```
+### example.cfg
+Basic configuration template showing all available options.
 
 ### mbasic_tests.cfg
-Comprehensive configuration mapping the entire MBASIC test suite.
-```bash
-./cpm_emulator examples/mbasic_tests.cfg
-```
+Run MBASIC with test files from multiple directories:
+- Maps drive B: to the test directory
+- Maps specific classic programs like STARTREK.BAS
+- Sets all .BAS files to text mode
 
-## Current Workaround
+### assembler.cfg
+M80 assembler workflow:
+- Source files on drive B:
+- Output to working directory
+- Proper text/binary modes for assembly files
 
-Until configuration files are implemented, you can:
+### compiler.cfg
+Hi-Tech C development setup:
+- Source on drive B:
+- Include files on drive C:
+- Build output in working directory
 
-1. **Direct execution** (limited):
-   ```bash
-   ./cpm_emulator com/mbasic.com
-   ```
-
-2. **Command line file mapping** (to be implemented):
-   ```bash
-   ./cpm_emulator com/mbasic.com TEST.BAS=/path/to/test.bas
-   ```
-
-3. **Copy files locally** (works now):
-   ```bash
-   cp /home/wohl/cl/mbasic/tests/printsep.bas ./test.bas
-   ./cpm_emulator com/mbasic.com test.bas
-   # In MBASIC: LOAD "TEST.BAS"
-   ```
-
-## Testing the Emulator
-
-### Test Files Available
-
-- **Test Suite**: `/home/wohl/cl/mbasic/tests/` - Over 100 .bas files with `\r\n` line endings
-- **Classic Programs**: `/home/wohl/cl/mbasic/site-dev/library/` - Games and utilities
-- **Notable**: `superstartrek.bas` - Classic Star Trek game
-
-### File Format Notes
-
-The test files in `/home/wohl/cl/mbasic/tests/` are **already in CP/M format**:
-- Line endings: `\r\n` (CR+LF)
-- EOF marker: May or may not have `^Z`
-- Can be used directly once file I/O is fully implemented
-
-## Future Enhancements
-
-See `docs/file_handling_notes.md` for details on planned features:
-
-1. ✅ Basic CP/M emulation (DONE)
-2. ✅ MBASIC runs and displays prompt (DONE)
-3. ⏳ File I/O (basic implementation, needs enhancement)
-4. ⏳ ^Z EOF handling for text files
-5. ⏳ EOL conversion for Unix files
-6. ⏳ Configuration file parser
-7. ⏳ Wildcard file mapping
-8. ⏳ Text/binary mode per file
-
-## Configuration File Format (Planned)
+## Configuration File Syntax
 
 ```ini
-# Program to run
-program = mbasic.com
+# Program to run (required)
+program = path/to/program.com
 
-# File mappings: CPM_NAME = unix_path [text|binary]
-*.BAS = /path/to/basic/**/*.bas text
-TEST.MAC = ~/asm/test.asm text
-DATA.BIN = ./data.bin binary
+# Arguments passed to program
+args = ARG1 ARG2
 
-# Settings
-default_mode = text
-eol_convert = true    # Convert Unix \n to CP/M \r\n
-eof_marker = true     # Add/recognize ^Z in text files
-debug = false
+# Working directory
+cd = /path/to/dir
+
+# File mode mappings
+*.BAS = text           # Mode only
+*.DAT = binary         # Mode only
+*.MAC = /path text     # Directory + mode
+TEST.BAS = /path/test.bas text  # Exact mapping
 
 # Drive mappings
 drive_A = .
-drive_B = /home/user/cpm_files
+drive_B = /path/to/files
+
+# Settings
+default_mode = auto    # auto, text, or binary
+eol_convert = true     # Convert \n <-> \r\n
+debug = false
+
+# Device redirection
+printer = /path/to/printer.txt
+aux_input = /path/to/input.txt
+aux_output = /path/to/output.txt
 ```
 
-## Todo List Priority
+## Usage Patterns
 
-See main todo list for implementation order:
-1. Handle ^Z EOF marker
-2. EOL conversion
-3. Config file parser
-4. Wildcard support
-5. Text/binary mode tracking
+### Pass arguments on command line
+```bash
+# Config args are used if no command-line args given
+./src/cpmemu config.cfg
+
+# Command-line args are appended to config args
+./src/cpmemu config.cfg MYFILE.BAS
+```
+
+### Multiple source directories
+Use drive mappings to access files from different locations:
+```ini
+drive_A = .                    # Current directory
+drive_B = ${HOME}/source       # Source code
+drive_C = ${HOME}/libraries    # Libraries
+```
+
+In CP/M program:
+```
+LOAD B:MYFILE.BAS       ; Load from source directory
+SAVE "A:OUTPUT.BAS"     ; Save to current directory
+```
+
+### Text vs Binary Files
+
+The emulator handles line ending conversion automatically:
+- **Text files**: Convert `\n` (Unix) <-> `\r\n` (CP/M)
+- **Binary files**: No conversion
+
+Set modes explicitly to avoid conversion issues:
+```ini
+*.BAS = text    # BASIC source
+*.MAC = text    # Assembly source
+*.COM = binary  # Executables
+*.REL = binary  # Object files
+```
+
+## See Also
+
+- `docs/file_handling_notes.md` - Detailed documentation
+- `./src/cpmemu --help-cfg` - Built-in configuration help

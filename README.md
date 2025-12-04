@@ -53,6 +53,7 @@ make
 | `--8080` | Run in 8080 mode (default) |
 | `--z80` | Run in Z80 mode with full instruction set |
 | `--progress[=N]` | Report progress every N million instructions (default: disabled; 100 if flag used without N) |
+| `--help-cfg` | Show configuration file help and examples |
 
 ### Examples
 
@@ -87,27 +88,55 @@ make
 
 ## Configuration Files
 
-For complex setups, use a `.cfg` file:
+For complex setups, use a `.cfg` file. Run `./src/cpmemu --help-cfg` for full documentation.
 
 ```ini
-# Program to run
+# Program to run (required)
 program = /path/to/program.com
+
+# Arguments passed to program
+args = TEST.BAS MYFILE.DAT
+
+# Working directory
+cd = /tmp
 
 # File mode settings
 default_mode = auto      # auto, text, or binary
 eol_convert = true       # Convert Unix \n <-> CP/M \r\n
 
+# File type mappings (set mode for file patterns)
+*.BAS = text             # All .BAS files are text
+*.DAT = binary           # All .DAT files are binary
+*.SYM = text             # Symbol files are text
+
+# Drive mappings (map CP/M drives to Unix directories)
+drive_A = .
+drive_B = ${HOME}/cpm_files
+
+# Exact file mappings
+TEST.BAS = /path/to/test.bas text
+DATA.DAT = ./data/mydata.dat binary
+
 # Device redirection
 printer = /tmp/printer.txt
 aux_input = /tmp/input.txt
 aux_output = /tmp/output.txt
-
-# File mappings (supports environment variables)
-# *.BAS = ${HOME}/basic/*.bas text
-# DATA.DAT = /path/to/data.dat binary
 ```
 
-Run with: `./src/cpmemu config.cfg`
+### Usage
+
+```bash
+# Run with config file
+./src/cpmemu config.cfg
+
+# Config with additional arguments (appended to config args)
+./src/cpmemu config.cfg EXTRA.BAS
+
+# Show configuration help
+./src/cpmemu --help-cfg
+```
+
+See `examples/` directory for more configuration examples.
 
 ## Supported CP/M Functions
 
