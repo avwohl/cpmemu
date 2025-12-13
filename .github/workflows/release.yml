@@ -1,0 +1,127 @@
+name: Build and Release Packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., 1.0.0)'
+        required: true
+        default: '0.0.1'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+            rpm_arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            rpm_arch: aarch64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ruby ruby-dev rubygems rpm
+          sudo gem install fpm
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build cpmemu
+        run: |
+          cd src
+          make clean || true
+          make STATIC=1
+
+      - name: Create staging directory
+        run: |
+          mkdir -p staging/usr/bin
+          mkdir -p staging/usr/share/doc/cpmemu
+          cp src/cpmemu staging/usr/bin/
+          cp README.md staging/usr/share/doc/cpmemu/
+          cp LICENSE staging/usr/share/doc/cpmemu/
+
+      - name: Build DEB package
+        run: |
+          fpm -s dir -t deb \
+            -n cpmemu \
+            -v ${{ steps.version.outputs.version }} \
+            -a ${{ matrix.arch }} \
+            --description "CP/M BDOS emulator - run CP/M .com files on Linux" \
+            --url "https://github.com/${{ github.repository }}" \
+            --license "GPL-3.0" \
+            --maintainer "Aaron Wohl" \
+            -C staging \
+            .
+
+      - name: Build RPM package
+        run: |
+          fpm -s dir -t rpm \
+            -n cpmemu \
+            -v ${{ steps.version.outputs.version }} \
+            -a ${{ matrix.rpm_arch }} \
+            --description "CP/M BDOS emulator - run CP/M .com files on Linux" \
+            --url "https://github.com/${{ github.repository }}" \
+            --license "GPL-3.0" \
+            --maintainer "Aaron Wohl" \
+            -C staging \
+            .
+
+      - name: Upload DEB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.arch }}
+          path: "*.deb"
+
+      - name: Upload RPM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-${{ matrix.rpm_arch }}
+          path: "*.rpm"
+
+      - name: Upload to Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            *.deb
+            *.rpm
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  collect:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+
+      - name: List packages
+        run: |
+          echo "Built packages:"
+          find packages -type f \( -name "*.deb" -o -name "*.rpm" \) | sort

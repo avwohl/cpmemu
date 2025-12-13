@@ -1,0 +1,60 @@
+We wrote:
+ - this project cpmemu 8080/z80 emulator and in
+    this project altair - bare machine emulator
+    web - run cpm in web assembly
+ - in ~/src/um80_and_friends we wrote a python
+   assembler linker library manager for building 8080/z80
+   code on linux
+ - in ~/src/uplm80 we wrote a python based compiler
+   of the pl/m languaged used for 8080/z80s
+
+In terms of content for the web cpm/altair virtual disks we
+only did the barest of content.  I think you borrowed a few programs
+from a cp/m install disk.
+
+Today I was planning on getting a lot more content.  There a github repository
+that supplies a large (512kb) rom image for cp/m systems to run many different
+z80/8080 oses see git@github.com:wwarthen/RomWBW.git I thoght we could liberate
+one of thier lage virtual disk setups.
+
+However, in reading the README it seems, if the two whole projects (our systems)
+and RomWBW got glued together it bring the full RomWBW world to a web browser.
+
+RomWBW has a small section of its rom to write for new hardware.  After that the
+rest of the system come for free.  We have this 8080/z80 emulator for the hardware.
+
+For virtual IO we have virtual character IO to the web and block level disk.
+
+What would need some adjustment is, the RomWBW world is trying to interface its
+world in software to real hardware which doesn't exist.  Most of the mapping
+to our fake hardware exists.  However more glue is needed:
+ - we recently added hardare intererupts maskable and non maskable
+ ROmWBW systems like mp/m need that for scheduling to be integrated
+ - The RomWBW world expacts to pack whole thing into one 512K byte image
+ it would be more convineint to have a virtual disk for each os (cp/m, mp/m
+ zeos etc (not a requirement)
+ - our existing bios is designed for cp/m 2.x the rom hardware system
+ implements something simular but not exactly the same
+
+RomWBW README begins:
+"By design, RomWBW isolates all of the hardware specific functions in the ROM chip itself. The ROM provides a hardware abstraction layer such that all of the operating systems and applications on a disk will run on any RomWBW-based system."
+
+Your job is to figure out how to emulate that hardware abstraction layer or let it run nativly
+in 8080/z80 and give it fake bios to trap into our virtual io.
+
+Note: see ~/esrc/RomWBW for a fresh checkout of https://github.com/wwarthen/RomWBW . use that rather than checking out a new copy
+
+Output:
+ - document describing our virtual io and RomWBW and how they are to work together
+ - the big bit of virtualness not present at all is memory banking.  RomWBW and
+   some of the OSes it runs (mp/m) need to map memory and virtual disk into and out
+   of an 8080/z80 address space.  the qkz80 emulator we wrote has a mem object that
+   is asked for each byte to read or write to an address.  So creating the right
+   subclass of the qkz80 mem object should make this easy
+ - an altair boot image the runs the full RomWBW
+ - a webassembly page to run the full RomWBW
+ - possible: almost all the work should be within this project cpmemu, however, mp/m uses
+   a new exeutable format.  The ul80 linker we wrote would probably like to output
+   .prl files as a new addition.
+
+
