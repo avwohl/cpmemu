@@ -1,0 +1,18 @@
+# Build artifacts
+*.o
+*.a
+*.so
+*.dylib
+
+# Executables
+src/cpmemu
+
+# Editor files
+*~
+*.swp
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

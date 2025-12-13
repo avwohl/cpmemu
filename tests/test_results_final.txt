@@ -1,0 +1,6 @@
+Loaded 4608 bytes from tests/8080EXM.COM
+8080 instruction exerciser
+dad <b,d,h,sp>................  PASS! crc is:14474ba6
+aluop nn......................  ERROR **** crc expected:9e922f9e found:08689e01
+aluop <b,c,d,e,h,l,m,a>.......  ERROR **** crc expected:cf762c86 found:f7a4fa68
+<daa,cma,stc,cmc>.............

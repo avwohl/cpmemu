@@ -1,0 +1,31 @@
+Extend the debugging of the emulators.
+For CP/M debugging ddt.com was the original hex debuger.
+Although you could step instructions it had no symbols.
+
+Sid.com added symbolic debugging.  zsid.com was for z80
+debug.  Both sid and zsid used the .sym files from a linker
+to provide names for addresses.
+
+But here were two problems. 1- both debuggers shared address
+space with the target being debugged. So you could not debug
+a big program. and 2-there was no per source line debug info.
+A byte in the program had no mapping back to its source line.
+Also there was no multi level mapping.  We wrote ~/cl/mbasic
+it can compile a .bas basic program to c. that is then
+comppiled via z88dk to make .com file.  So even if the c line
+number info was preserved the basic info and file names are not.
+
+Look into, as in research and propose plans to add full symbolic
+debug info to this emulator.
+- for the alair based emulator, the sym info can be loaded with the program
+into the emulator address space. that way large progams can be debugged.
+- for cpmemu emulator make shim porgram luke usid.com or uzsid.com that
+gets the executable name and traps out to the emulator to get the sym info
+
+The sources and manuals for sid and zsid are on the web for ideas of
+functionality needed (other than the full symbols).
+
+We could emulate zsid/sid.  Or I have heard gdb supporting all manner of debugging
+for multi layer (basic->c->asm) and all sorts of processors. Some sort of gdb
+integration might be good.
+
