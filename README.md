@@ -28,11 +28,43 @@ each file.
 - **Configuration files**: Support for complex setups and file mappings
 - **^C handling**: Ctrl+C passes through to CP/M programs (e.g., to interrupt BASIC); press 5 times consecutively to exit emulator
 
-## Building
+## Installation
+
+### From Packages (Recommended)
+
+Download the latest release from [GitHub Releases](https://github.com/avwohl/cpmemu/releases).
+
+**Debian/Ubuntu (amd64):**
+```bash
+wget https://github.com/avwohl/cpmemu/releases/download/v1.0.0/cpmemu_1.0.0_amd64.deb
+sudo dpkg -i cpmemu_1.0.0_amd64.deb
+```
+
+**Debian/Ubuntu (arm64):**
+```bash
+wget https://github.com/avwohl/cpmemu/releases/download/v1.0.0/cpmemu_1.0.0_arm64.deb
+sudo dpkg -i cpmemu_1.0.0_arm64.deb
+```
+
+**RHEL/Fedora (x86_64):**
+```bash
+wget https://github.com/avwohl/cpmemu/releases/download/v1.0.0/cpmemu-1.0.0-1.x86_64.rpm
+sudo rpm -i cpmemu-1.0.0-1.x86_64.rpm
+```
+
+**RHEL/Fedora (aarch64):**
+```bash
+wget https://github.com/avwohl/cpmemu/releases/download/v1.0.0/cpmemu-1.0.0-1.aarch64.rpm
+sudo rpm -i cpmemu-1.0.0-1.aarch64.rpm
+```
+
+### From Source
 
 ```bash
-cd src/
+git clone https://github.com/avwohl/cpmemu.git
+cd cpmemu/src
 make
+sudo cp cpmemu /usr/local/bin/
 ```
 
 **Requirements:**
