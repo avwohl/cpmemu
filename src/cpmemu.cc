@@ -118,7 +118,7 @@ static qkz80* save_memory_cpu = nullptr;
 static void do_save_memory() {
   if (!save_memory_file || !save_memory_cpu) return;
 
-  char* mem = save_memory_cpu->get_mem();
+  qkz80_uint8* mem = save_memory_cpu->get_mem();
   uint16_t start = save_memory_start;
   uint16_t end = save_memory_end ? save_memory_end : 0xFFFF;
   size_t size = (end >= start) ? (end - start + 1) : (0x10000 - start);
@@ -423,7 +423,7 @@ private:
 };
 
 void CPMEmulator::setup_memory() {
-  char* mem = cpu->get_mem();
+  qkz80_uint8* mem = cpu->get_mem();
 
   // Setup jump at 0x0000 to WBOOT (warm boot)
   mem[0x0000] = 0xC3;  // JMP opcode
@@ -508,7 +508,7 @@ void CPMEmulator::setup_memory() {
 }
 
 void CPMEmulator::setup_command_line(int argc, char** argv, int program_arg_index) {
-  char* mem = cpu->get_mem();
+  qkz80_uint8* mem = cpu->get_mem();
 
   if (argc < program_arg_index + 1) {
     mem[DEFAULT_DMA] = 0;  // No command line
@@ -599,16 +599,12 @@ bool CPMEmulator::is_text_file_heuristic(const std::string& unix_path) {
 
   // Count control characters (excluding \r, \n, \t, \f, ^Z)
   unsigned int control_chars = 0;
-  unsigned int printable_chars = 0;
 
   for (size_t i = 0; i < nread; i++) {
     uint8_t ch = buffer[i];
     if (ch == '\r' || ch == '\n' || ch == '\t' || ch == '\f' || ch == CPM_EOF) {
-      printable_chars++;
     } else if (ch < 32 || ch == 127) {
       control_chars++;
-    } else if (ch >= 32 && ch < 127) {
-      printable_chars++;
     }
   }
 
@@ -962,7 +958,7 @@ std::string CPMEmulator::normalize_cpm_filename(const std::string& name) {
 }
 
 std::string CPMEmulator::fcb_to_filename(qkz80_uint16 fcb_addr) {
-  char* mem = cpu->get_mem();
+  qkz80_uint8* mem = cpu->get_mem();
   std::string filename;
 
   // Extract name (8 chars)
@@ -996,7 +992,7 @@ std::string CPMEmulator::fcb_to_filename(qkz80_uint16 fcb_addr) {
 }
 
 void CPMEmulator::filename_to_fcb(const std::string& filename, qkz80_uint16 fcb_addr) {
-  char* mem = cpu->get_mem();
+  qkz80_uint8* mem = cpu->get_mem();
 
   // Clear FCB
   memset(&mem[fcb_addr], 0, 36);
@@ -1305,7 +1301,7 @@ void CPMEmulator::bdos_write_console(qkz80_uint8 ch) {
 
 void CPMEmulator::bdos_write_string() {
   qkz80_uint16 addr = cpu->get_reg16(qkz80::regp_DE);
-  char* mem = cpu->get_mem();
+  qkz80_uint8* mem = cpu->get_mem();
 
   while (mem[addr] != '$') {
     putchar(mem[addr] & 0x7F);
@@ -1337,7 +1333,7 @@ void CPMEmulator::bdos_read_console_buffer() {
   //   ^H: Backspace (same as DEL)
 
   qkz80_uint16 buf_addr = cpu->get_reg16(qkz80::regp_DE);
-  char* mem = cpu->get_mem();
+  qkz80_uint8* mem = cpu->get_mem();
 
   qkz80_uint8 max_chars = mem[buf_addr] & 0xFF;
   if (max_chars == 0) {
@@ -1531,7 +1527,7 @@ void CPMEmulator::bdos_open_file() {
   open_files[fcb_addr] = of;
 
   // Clear extent and record count
-  char* mem = cpu->get_mem();
+  qkz80_uint8* mem = cpu->get_mem();
   mem[fcb_addr + 12] = 0;  // EX
   mem[fcb_addr + 15] = 0x80;  // RC (128 records max per extent)
 
@@ -1574,7 +1570,7 @@ void CPMEmulator::bdos_close_file() {
 
 void CPMEmulator::bdos_read_sequential() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
-  char* mem = cpu->get_mem();
+  qkz80_uint8* mem = cpu->get_mem();
 
   auto it = open_files.find(fcb_addr);
   if (it == open_files.end()) {
@@ -1605,7 +1601,7 @@ void CPMEmulator::bdos_read_sequential() {
 
 void CPMEmulator::bdos_write_sequential() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
-  char* mem = cpu->get_mem();
+  qkz80_uint8* mem = cpu->get_mem();
 
   auto it = open_files.find(fcb_addr);
   if (it == open_files.end()) {
@@ -1664,7 +1660,7 @@ void CPMEmulator::bdos_make_file() {
   of.write_mode = true;
   open_files[fcb_addr] = of;
 
-  char* mem = cpu->get_mem();
+  qkz80_uint8* mem = cpu->get_mem();
   mem[fcb_addr + 12] = 0;  // EX
   mem[fcb_addr + 15] = 0;  // RC
 
@@ -1693,7 +1689,7 @@ void CPMEmulator::bdos_delete_file() {
 
 void CPMEmulator::bdos_read_random() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
-  char* mem = cpu->get_mem();
+  qkz80_uint8* mem = cpu->get_mem();
 
   auto it = open_files.find(fcb_addr);
   if (it == open_files.end()) {
@@ -1731,7 +1727,7 @@ void CPMEmulator::bdos_read_random() {
 
 void CPMEmulator::bdos_write_random() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
-  char* mem = cpu->get_mem();
+  qkz80_uint8* mem = cpu->get_mem();
 
   auto it = open_files.find(fcb_addr);
   if (it == open_files.end()) {
@@ -1766,7 +1762,7 @@ void CPMEmulator::bdos_write_random() {
 
 void CPMEmulator::bdos_file_size() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
-  char* mem = cpu->get_mem();
+  qkz80_uint8* mem = cpu->get_mem();
   std::string filename = fcb_to_filename(fcb_addr);
 
   FileMode mode;
@@ -1797,7 +1793,7 @@ void CPMEmulator::bdos_file_size() {
 
 void CPMEmulator::bdos_set_random_record() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
-  char* mem = cpu->get_mem();
+  qkz80_uint8* mem = cpu->get_mem();
 
   // Convert current sequential position to random record number
   // Record number = (EX * 128) + CR
@@ -1977,7 +1973,7 @@ static bool unix_to_cpm_83(const std::string& unix_name,
 
 void CPMEmulator::bdos_search_first() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
-  char* mem = cpu->get_mem();
+  qkz80_uint8* mem = cpu->get_mem();
 
   // Extract pattern from FCB
   char pattern_name[8], pattern_ext[3];
@@ -2139,7 +2135,7 @@ void CPMEmulator::bdos_search_next() {
     return;
   }
 
-  char* mem = cpu->get_mem();
+  qkz80_uint8* mem = cpu->get_mem();
 
   // Build directory entry for next file
   char file_name[8], file_ext[3];
@@ -2612,7 +2608,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  char* mem = cpu.get_mem();
+  qkz80_uint8* mem = cpu.get_mem();
   size_t loaded = fread(&mem[TPA_START], 1, 0xE000, fp);
   fclose(fp);
 

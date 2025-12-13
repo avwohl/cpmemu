@@ -54,7 +54,7 @@ class qkz80 {
     return cpu_mode;
   }
 
-  char *get_mem(void) {
+  qkz80_uint8 *get_mem(void) {
     return mem->get_mem();
   }
 

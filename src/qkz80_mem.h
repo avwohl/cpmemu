@@ -5,8 +5,8 @@
 class qkz80_cpu_mem {
   qkz80_uint8 *dat;
  public:
-  virtual char *get_mem(void) {
-    return (char *)dat;
+  virtual qkz80_uint8 *get_mem(void) {
+    return dat;
   }
   qkz80_cpu_mem();
   virtual ~qkz80_cpu_mem();
