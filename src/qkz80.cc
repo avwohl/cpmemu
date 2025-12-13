@@ -362,10 +362,13 @@ void qkz80::execute(void) {
 
   // Process prefix bytes
   // Note: DD and FD can chain - the last one wins (e.g., FD DD = DD, DD FD = FD)
-  while (opcode == 0xdd || opcode == 0xfd) {
+  // Limit iterations to prevent infinite loops from corrupted/unusual code
+  int prefix_count = 0;
+  while ((opcode == 0xdd || opcode == 0xfd) && prefix_count < 4) {
     if (cpu_mode == MODE_8080) {
       return;  // DD/FD acts as single-byte NOP in 8080 mode
     }
+    prefix_count++;
     // Reset any previous DD/FD prefix - last one wins
     has_dd_prefix = (opcode == 0xdd);
     has_fd_prefix = (opcode == 0xfd);
