@@ -361,31 +361,23 @@ void qkz80::execute(void) {
   qkz80_uint8 opcode(pull_byte_from_opcode_stream());
 
   // Process prefix bytes
-  if (opcode == 0xdd) {
-    // DD prefix (IX) is Z80-only, treat as NOP in 8080 mode
+  // Note: DD and FD can chain - the last one wins (e.g., FD DD = DD, DD FD = FD)
+  while (opcode == 0xdd || opcode == 0xfd) {
     if (cpu_mode == MODE_8080) {
-      return;  // DD acts as single-byte NOP
+      return;  // DD/FD acts as single-byte NOP in 8080 mode
     }
-    has_dd_prefix = true;
+    // Reset any previous DD/FD prefix - last one wins
+    has_dd_prefix = (opcode == 0xdd);
+    has_fd_prefix = (opcode == 0xfd);
     opcode = pull_byte_from_opcode_stream();
     if (opcode == 0xcb) {
       has_cb_prefix = true;
       index_offset = (qkz80_int8)pull_byte_from_opcode_stream();
       opcode = pull_byte_from_opcode_stream();
+      break;  // CB terminates the prefix chain
     }
-  } else if (opcode == 0xfd) {
-    // FD prefix (IY) is Z80-only, treat as NOP in 8080 mode
-    if (cpu_mode == MODE_8080) {
-      return;  // FD acts as single-byte NOP
-    }
-    has_fd_prefix = true;
-    opcode = pull_byte_from_opcode_stream();
-    if (opcode == 0xcb) {
-      has_cb_prefix = true;
-      index_offset = (qkz80_int8)pull_byte_from_opcode_stream();
-      opcode = pull_byte_from_opcode_stream();
-    }
-  } else if (opcode == 0xed) {
+  }
+  if (opcode == 0xed) {
     // ED prefix is Z80-only, treat as NOP NOP in 8080 mode
     if (cpu_mode == MODE_8080) {
       // In 8080, 0xED is just a 2-byte NOP (ED xx)
