@@ -66,23 +66,30 @@ test: cpmemu
 	@echo "All tests completed!"
 
 clean:
-	@rm -f cpmemu *.o *.pic.o *.a *.so *~
+	@rm -f cpmemu *.o *.pic.o *.a *.so *.pc *~
 
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 LIBDIR ?= $(PREFIX)/lib
 INCLUDEDIR ?= $(PREFIX)/include/qkz80
+PKGCONFIGDIR ?= $(LIBDIR)/pkgconfig
+
+# Generate pkg-config file
+qkz80.pc: qkz80.pc.in
+	sed 's|@PREFIX@|$(PREFIX)|g' $< > $@
 
 install: $(TARGET)
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
 
-install-lib: $(LIB_STATIC) $(LIB_SHARED)
+install-lib: $(LIB_STATIC) $(LIB_SHARED) qkz80.pc
 	install -d $(DESTDIR)$(LIBDIR)
 	install -d $(DESTDIR)$(INCLUDEDIR)
+	install -d $(DESTDIR)$(PKGCONFIGDIR)
 	install -m 644 $(LIB_STATIC) $(DESTDIR)$(LIBDIR)/
 	install -m 755 $(LIB_SHARED) $(DESTDIR)$(LIBDIR)/
 	install -m 644 $(LIB_HEADERS) $(DESTDIR)$(INCLUDEDIR)/
+	install -m 644 qkz80.pc $(DESTDIR)$(PKGCONFIGDIR)/
 
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
@@ -90,4 +97,5 @@ uninstall:
 uninstall-lib:
 	rm -f $(DESTDIR)$(LIBDIR)/$(LIB_STATIC)
 	rm -f $(DESTDIR)$(LIBDIR)/$(LIB_SHARED)
+	rm -f $(DESTDIR)$(PKGCONFIGDIR)/qkz80.pc
 	rm -rf $(DESTDIR)$(INCLUDEDIR)
