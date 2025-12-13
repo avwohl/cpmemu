@@ -53,17 +53,28 @@ jobs:
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Build cpmemu
+      - name: Build cpmemu and libraries
         run: |
           cd src
           make clean || true
           make STATIC=1
+          make libs
+          make qkz80.pc PREFIX=/usr
 
       - name: Create staging directory
         run: |
           mkdir -p staging/usr/bin
+          mkdir -p staging/usr/lib
+          mkdir -p staging/usr/lib/pkgconfig
+          mkdir -p staging/usr/include/qkz80
           mkdir -p staging/usr/share/doc/cpmemu
           cp src/cpmemu staging/usr/bin/
+          cp src/libqkz80.a staging/usr/lib/
+          cp src/libqkz80.so staging/usr/lib/
+          cp src/qkz80.pc staging/usr/lib/pkgconfig/
+          cp src/qkz80.h src/qkz80_cpu_flags.h src/qkz80_mem.h \
+             src/qkz80_reg_pair.h src/qkz80_reg_set.h src/qkz80_trace.h \
+             src/qkz80_types.h staging/usr/include/qkz80/
           cp README.md staging/usr/share/doc/cpmemu/
           cp LICENSE staging/usr/share/doc/cpmemu/
 
@@ -73,7 +84,7 @@ jobs:
             -n cpmemu \
             -v ${{ steps.version.outputs.version }} \
             -a ${{ matrix.arch }} \
-            --description "CP/M BDOS emulator - run CP/M .com files on Linux" \
+            --description "CP/M BDOS emulator - run CP/M .com files on Linux. Includes libqkz80 Z80/8080 emulator library." \
             --url "https://github.com/${{ github.repository }}" \
             --license "GPL-3.0" \
             --maintainer "Aaron Wohl" \
@@ -86,7 +97,7 @@ jobs:
             -n cpmemu \
             -v ${{ steps.version.outputs.version }} \
             -a ${{ matrix.rpm_arch }} \
-            --description "CP/M BDOS emulator - run CP/M .com files on Linux" \
+            --description "CP/M BDOS emulator - run CP/M .com files on Linux. Includes libqkz80 Z80/8080 emulator library." \
             --url "https://github.com/${{ github.repository }}" \
             --license "GPL-3.0" \
             --maintainer "Aaron Wohl" \
