@@ -62,6 +62,14 @@ void qkz80_reg_set::set_flags(qkz80_uint8 new_flags) {
   return AF.set_low(fix_flags(new_flags));  // Always fix flag bits when storing in 8080 mode
 }
 
+void qkz80_reg_set::set_flag_bits(qkz80_uint8 mask) {
+  set_flags(get_flags() | mask);
+}
+
+void qkz80_reg_set::clear_flag_bits(qkz80_uint8 mask) {
+  set_flags(get_flags() & ~mask);
+}
+
 void qkz80_reg_set::set_flags_from_logic8(qkz80_big_uint a,
     qkz80_uint8 new_carry,
     qkz80_uint8 new_half_carry) {

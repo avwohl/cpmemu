@@ -50,6 +50,8 @@ class qkz80_reg_set {
   void set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry, bool is_increment=true);
   qkz80_uint8 get_flags(void) const;
   void set_flags(qkz80_uint8 new_flags);
+  void set_flag_bits(qkz80_uint8 mask);    // Set specified flag bits
+  void clear_flag_bits(qkz80_uint8 mask);  // Clear specified flag bits
   qkz80_uint8 fix_flags(qkz80_uint8 new_flags) const;
 
   void set_carry_from_int(qkz80_big_uint x);
