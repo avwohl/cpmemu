@@ -1913,12 +1913,7 @@ void qkz80::execute(void) {
   {
     qkz80_uint8 port(pull_byte_from_opcode_stream());
     qkz80_uint8 rega(get_reg8(reg_A));
-    if (port == 0x11) {
-      char ch(rega);
-      std::cout << ch << std::flush;
-    } else {
-      std::cout << "output to port=" << std::hex << int(port) << " data= " << std::hex << int(rega) << std::endl;
-    }
+    port_out(port, rega);
     trace->asm_op("out 0x%0x",port);
     trace->add_reg8(reg_A);
     return;
@@ -1956,10 +1951,7 @@ void qkz80::execute(void) {
   {
     qkz80_uint8 port(pull_byte_from_opcode_stream());
     trace->asm_op("in 0x%0x",port);
-    // find input byte for 2sio
-    qkz80_uint8 dat(0);
-    if(port == 0x10)
-      dat=2; // transmit buffer empty
+    qkz80_uint8 dat = port_in(port);
     set_reg8(dat,reg_A);
     return;
   }
@@ -2150,4 +2142,16 @@ qkz80_uint8 qkz80::do_srl(qkz80_uint8 val) {
   return result;
 }
 
+// Default I/O port implementations - override for machine-specific behavior
+void qkz80::port_out(qkz80_uint8 port, qkz80_uint8 value) {
+  (void)port;
+  (void)value;
+  // No-op by default - subclass provides machine-specific I/O
+}
+
+qkz80_uint8 qkz80::port_in(qkz80_uint8 port) {
+  (void)port;
+  // Return 0xFF (floating bus) by default
+  return 0xFF;
+}
 
