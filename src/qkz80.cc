@@ -1,6 +1,5 @@
 #include "qkz80.h"
 #include "qkz80_cpu_flags.h"
-#include <iostream>
 
 static qkz80_trace dummy_trace;
 qkz80::qkz80(qkz80_cpu_mem *memory):
@@ -51,64 +50,18 @@ qkz80_uint8 qkz80::compute_subtract_half_carry(qkz80_uint16 rega,
 }
 
 void qkz80::debug_dump_regs(const char* label) {
-  // Print compact register state on one line for tracing
-  qkz80_uint8 flags = regs.get_flags();  // get_flags() now returns fixed flags
-
-  fprintf(stderr, "%s PC=%04X AF=%02X%02X BC=%02X%02X DE=%02X%02X HL=%02X%02X SP=%04X IX=%04X IY=%04X [",
-          label,
-          regs.PC.get_pair16(),
-          regs.AF.get_high(), flags,  // Show fixed flags (as PUSH PSW would)
-          regs.BC.get_high(), regs.BC.get_low(),
-          regs.DE.get_high(), regs.DE.get_low(),
-          regs.HL.get_high(), regs.HL.get_low(),
-          regs.SP.get_pair16(),
-          regs.IX.get_pair16(),
-          regs.IY.get_pair16());
-
-  fprintf(stderr, "%c%c%c%c%c%c%c%c]\n",
-          (flags & 0x80) ? 'S' : '-',
-          (flags & 0x40) ? 'Z' : '-',
-          (flags & 0x20) ? 'Y' : '-',
-          (flags & 0x10) ? 'H' : '-',
-          (flags & 0x08) ? 'X' : '-',
-          (flags & 0x04) ? 'P' : '-',
-          (flags & 0x02) ? 'N' : '-',
-          (flags & 0x01) ? 'C' : '-');
+  // Empty - override in subclass for debug output
+  (void)label;
 }
 
 void qkz80::halt(void) {
-  // Print all registers and flags for debugging
-  qkz80_uint8 flags = regs.get_flags();
+  // Empty - override in subclass to handle halt
+}
 
-  std::cerr << "=== HALT - Register Dump ===" << std::endl;
-  std::cerr << "AF: " << std::hex << std::uppercase
-            << (int)regs.AF.get_high() << (int)regs.AF.get_low() << std::endl;
-  std::cerr << "BC: " << (int)regs.BC.get_high() << (int)regs.BC.get_low() << std::endl;
-  std::cerr << "DE: " << (int)regs.DE.get_high() << (int)regs.DE.get_low() << std::endl;
-  std::cerr << "HL: " << (int)regs.HL.get_high() << (int)regs.HL.get_low() << std::endl;
-  std::cerr << "SP: " << (int)regs.SP.get_pair16() << std::endl;
-  std::cerr << "PC: " << (int)regs.PC.get_pair16() << std::endl;
-
-  std::cerr << "Flags (0x" << std::hex << (int)flags << "): ";
-  if (flags & 0x80) std::cerr << "S ";
-  else std::cerr << "- ";
-  if (flags & 0x40) std::cerr << "Z ";
-  else std::cerr << "- ";
-  if (flags & 0x20) std::cerr << "Y ";
-  else std::cerr << "- ";
-  if (flags & 0x10) std::cerr << "H ";
-  else std::cerr << "- ";
-  if (flags & 0x08) std::cerr << "X ";
-  else std::cerr << "- ";
-  if (flags & 0x04) std::cerr << "P ";
-  else std::cerr << "- ";
-  if (flags & 0x02) std::cerr << "N ";
-  else std::cerr << "- ";
-  if (flags & 0x01) std::cerr << "C";
-  else std::cerr << "-";
-  std::cerr << std::endl;
-
-  exit(1);
+void qkz80::unimplemented_opcode(qkz80_uint8 opcode, qkz80_uint16 pc) {
+  // Empty - override in subclass to handle unimplemented opcodes
+  (void)opcode;
+  (void)pc;
 }
 
 qkz80_uint16 qkz80::read_word(qkz80_uint16 addr) {
@@ -2074,11 +2027,8 @@ void qkz80::execute(void) {
   }
 
   default:
-  {
-    const qkz80_uint16 pc=regs.PC.get_pair16();
-    printf("unimplemented opcode opcode=%#02x pc=%#04x\n",opcode,pc);
-    exit(1);
-  }
+    unimplemented_opcode(opcode, regs.PC.get_pair16());
+    break;
   } // end switch(opcode)
 }
 
