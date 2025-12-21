@@ -73,6 +73,9 @@ class qkz80 {
   // HALT instruction - override in subclass to customize behavior
   virtual void halt(void);
 
+  // Unimplemented opcode handler - override in subclass to customize behavior
+  virtual void unimplemented_opcode(qkz80_uint8 opcode, qkz80_uint16 pc);
+
   void cpm_setup_memory(void);
 
   qkz80_uint8 compute_sum_half_carry(qkz80_uint16 rega,
