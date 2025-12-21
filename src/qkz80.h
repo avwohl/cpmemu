@@ -70,6 +70,9 @@ class qkz80 {
   virtual void port_out(qkz80_uint8 port, qkz80_uint8 value);
   virtual qkz80_uint8 port_in(qkz80_uint8 port);
 
+  // HALT instruction - override in subclass to customize behavior
+  virtual void halt(void);
+
   void cpm_setup_memory(void);
 
   qkz80_uint8 compute_sum_half_carry(qkz80_uint16 rega,
@@ -80,8 +83,6 @@ class qkz80 {
 						    qkz80_uint16 diff,
 						    qkz80_uint16 dat,
 						    qkz80_uint16 carry);
-
-  void halt(void);
   const char *name_condition_code(qkz80_uint8 cond);
   const char *name_reg8(qkz80_uint8 reg8);
   const char *name_reg16(qkz80_uint8 rpair);
