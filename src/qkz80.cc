@@ -629,7 +629,7 @@ void qkz80::execute(void) {
     // Block I/O - simplified (real implementation would need I/O port system)
     case 0xa2: case 0xb2: case 0xaa: case 0xba:
     case 0xa3: case 0xb3: case 0xab: case 0xbb:
-      trace->asm_op("ED %02x (block I/O - not implemented)", opcode);
+      block_io(opcode);
       return;
 
     // Many ED opcodes are just NOPs or duplicates
