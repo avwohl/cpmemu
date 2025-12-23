@@ -1,3 +1,6 @@
+#ifndef QKZ80_H
+#define QKZ80_H
+
 #include "qkz80_mem.h"
 #include "qkz80_reg_set.h"
 #include "qkz80_trace.h"
@@ -122,3 +125,4 @@ class qkz80 {
   qkz80_uint8 do_srl(qkz80_uint8 val);
 };
 
+#endif // QKZ80_H
