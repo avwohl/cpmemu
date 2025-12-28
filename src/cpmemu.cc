@@ -351,7 +351,6 @@ public:
 private:
   // File I/O helpers
   FileMode detect_file_mode(const std::string& filename, const std::string& unix_path);
-  bool is_text_file_heuristic(const std::string& unix_path);
   std::string find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out, bool* eol_out);
   bool match_pattern(const std::string& pattern, const std::string& text);
 
@@ -587,35 +586,6 @@ void CPMEmulator::add_file_mapping_ex(const std::string& cpm_pattern, const std:
   }
 }
 
-bool CPMEmulator::is_text_file_heuristic(const std::string& unix_path) {
-  FILE* fp = fopen(unix_path.c_str(), "rb");
-  if (!fp) return false;
-
-  uint8_t buffer[512];
-  size_t nread = fread(buffer, 1, sizeof(buffer), fp);
-  fclose(fp);
-
-  if (nread == 0) return true;  // Empty file, treat as text
-
-  // Count control characters (excluding \r, \n, \t, \f, ^Z)
-  unsigned int control_chars = 0;
-
-  for (size_t i = 0; i < nread; i++) {
-    uint8_t ch = buffer[i];
-    if (ch == '\r' || ch == '\n' || ch == '\t' || ch == '\f' || ch == CPM_EOF) {
-    } else if (ch < 32 || ch == 127) {
-      control_chars++;
-    }
-  }
-
-  // If more than 5% control characters, probably binary
-  if (nread > 20 && control_chars * 20 > nread) {
-    return false;
-  }
-
-  return true;
-}
-
 FileMode CPMEmulator::detect_file_mode(const std::string& filename, const std::string& unix_path) {
   // Check extension
   std::string upper = filename;
@@ -630,19 +600,17 @@ FileMode CPMEmulator::detect_file_mode(const std::string& filename, const std::s
   }
 
   // Known binary extensions
-  const char* binary_exts[] = {".COM", ".EXE", ".OVL", ".OVR", ".SYS", ".BIN", ".DAT", nullptr};
+  const char* binary_exts[] = {".COM", ".EXE", ".OVL", ".OVR", ".SYS", ".BIN", ".DAT",
+                               ".SPR", ".REL", ".PRL", ".RSP", nullptr};
   for (int i = 0; binary_exts[i]; i++) {
     if (upper.find(binary_exts[i]) != std::string::npos) {
       return MODE_BINARY;
     }
   }
 
-  // Try heuristic
-  if (is_text_file_heuristic(unix_path)) {
-    return MODE_TEXT;
-  }
-
-  return MODE_BINARY;  // Default to binary if unsure
+  // Default to binary for unknown extensions - safer than heuristic detection
+  // which can misidentify binary files with low control char counts
+  return MODE_BINARY;
 }
 
 bool CPMEmulator::match_pattern(const std::string& pattern, const std::string& text) {
