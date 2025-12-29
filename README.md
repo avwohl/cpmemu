@@ -32,31 +32,21 @@ each file.
 
 ### From Packages (Recommended)
 
-Download the latest release from [GitHub Releases](https://github.com/avwohl/cpmemu/releases).
-
-**Debian/Ubuntu (amd64):**
+**Debian/Ubuntu:**
 ```bash
-wget https://github.com/avwohl/cpmemu/releases/download/v1.0.0/cpmemu_1.0.0_amd64.deb
-sudo dpkg -i cpmemu_1.0.0_amd64.deb
+curl -LO https://github.com/avwohl/cpmemu/releases/latest/download/cpmemu_amd64.deb
+sudo dpkg -i cpmemu_amd64.deb
 ```
 
-**Debian/Ubuntu (arm64):**
+For ARM64 systems, use `cpmemu_arm64.deb` instead.
+
+**RHEL/Fedora:**
 ```bash
-wget https://github.com/avwohl/cpmemu/releases/download/v1.0.0/cpmemu_1.0.0_arm64.deb
-sudo dpkg -i cpmemu_1.0.0_arm64.deb
+curl -LO https://github.com/avwohl/cpmemu/releases/latest/download/cpmemu.x86_64.rpm
+sudo rpm -i cpmemu.x86_64.rpm
 ```
 
-**RHEL/Fedora (x86_64):**
-```bash
-wget https://github.com/avwohl/cpmemu/releases/download/v1.0.0/cpmemu-1.0.0-1.x86_64.rpm
-sudo rpm -i cpmemu-1.0.0-1.x86_64.rpm
-```
-
-**RHEL/Fedora (aarch64):**
-```bash
-wget https://github.com/avwohl/cpmemu/releases/download/v1.0.0/cpmemu-1.0.0-1.aarch64.rpm
-sudo rpm -i cpmemu-1.0.0-1.aarch64.rpm
-```
+For ARM64 systems, use `cpmemu.aarch64.rpm` instead.
 
 ### From Source
 

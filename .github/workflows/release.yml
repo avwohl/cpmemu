@@ -105,6 +105,12 @@ jobs:
             -C staging \
             .
 
+      - name: Create version-less copies for latest download
+        run: |
+          # Create version-less copies so /releases/latest/download/ URLs work
+          cp cpmemu_${{ steps.version.outputs.version }}_${{ matrix.arch }}.deb cpmemu_${{ matrix.arch }}.deb
+          cp cpmemu-${{ steps.version.outputs.version }}-1.${{ matrix.rpm_arch }}.rpm cpmemu.${{ matrix.rpm_arch }}.rpm
+
       - name: Upload DEB artifact
         uses: actions/upload-artifact@v4
         with:
