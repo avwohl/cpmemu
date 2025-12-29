@@ -2080,6 +2080,8 @@ void qkz80::execute(void) {
   }
 
   case 0xf3: // DI
+    regs.IFF1 = 0;
+    regs.IFF2 = 0;
     trace->asm_op("di");
     return;
 
@@ -2105,6 +2107,8 @@ void qkz80::execute(void) {
   }
 
   case 0xfb: // EI
+    regs.IFF1 = 1;
+    regs.IFF2 = 1;
     trace->asm_op("ei");
     return;
 
