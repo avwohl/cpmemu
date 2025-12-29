@@ -7,7 +7,10 @@ qkz80::qkz80(qkz80_cpu_mem *memory):
   trace(&dummy_trace),
   qkz80_debug(false),
   cpu_mode(MODE_Z80),
-  cycles(0) { // Default to Z80 mode
+  cycles(0),
+  int_pending(false),
+  nmi_pending(false),
+  int_vector(0xFF) { // Default to Z80 mode
   regs.cpu_mode = qkz80_reg_set::MODE_Z80;
 }
 
@@ -62,6 +65,102 @@ void qkz80::unimplemented_opcode(qkz80_uint8 opcode, qkz80_uint16 pc) {
   // Empty - override in subclass to handle unimplemented opcodes
   (void)opcode;
   (void)pc;
+}
+
+//=============================================================================
+// Interrupt support
+//=============================================================================
+
+void qkz80::request_int(qkz80_uint8 vector) {
+  int_pending = true;
+  int_vector = vector;
+}
+
+void qkz80::request_nmi(void) {
+  nmi_pending = true;
+}
+
+void qkz80::request_rst(qkz80_uint8 rst_num) {
+  // RST instructions are 11xxx111 where xxx is the RST number
+  // RST 0 = 0xC7, RST 1 = 0xCF, RST 2 = 0xD7, ... RST 7 = 0xFF
+  request_int(0xC7 | ((rst_num & 7) << 3));
+}
+
+bool qkz80::check_interrupts(void) {
+  // NMI has highest priority and cannot be disabled
+  if (nmi_pending) {
+    nmi_pending = false;
+
+    // Copy IFF1 to IFF2 (so RETN can restore interrupt state)
+    regs.IFF2 = regs.IFF1;
+    // Disable interrupts
+    regs.IFF1 = 0;
+
+    // Push current PC
+    push_word(regs.PC.get_pair16());
+
+    // Jump to NMI vector (0x0066)
+    regs.PC.set_pair16(0x0066);
+
+    cycles += 11;  // NMI takes 11 T-states
+    return true;
+  }
+
+  // Maskable interrupt - only if IFF1 is set
+  if (int_pending && regs.IFF1) {
+    int_pending = false;
+
+    // Disable interrupts
+    regs.IFF1 = 0;
+    regs.IFF2 = 0;
+
+    // Push current PC
+    push_word(regs.PC.get_pair16());
+
+    // Jump based on interrupt mode
+    switch (regs.IM) {
+      case 0:
+        // IM 0: Execute instruction on data bus
+        // For RST instructions (most common), the vector is the RST opcode
+        // RST n = 0xC7 | (n << 3), so address = (vector & 0x38)
+        if ((int_vector & 0xC7) == 0xC7) {
+          // It's an RST instruction
+          regs.PC.set_pair16(int_vector & 0x38);
+        } else {
+          // For other instructions, just jump to 0x0038 (IM 1 behavior)
+          regs.PC.set_pair16(0x0038);
+        }
+        cycles += 13;
+        break;
+
+      case 1:
+        // IM 1: Always jump to 0x0038 (RST 38H)
+        regs.PC.set_pair16(0x0038);
+        cycles += 13;
+        break;
+
+      case 2:
+        // IM 2: Vector table lookup
+        // Address = (I register << 8) | int_vector
+        {
+          qkz80_uint16 vector_addr = (regs.I << 8) | int_vector;
+          qkz80_uint16 jump_addr = read_word(vector_addr);
+          regs.PC.set_pair16(jump_addr);
+        }
+        cycles += 19;
+        break;
+
+      default:
+        // Unknown mode, treat as IM 1
+        regs.PC.set_pair16(0x0038);
+        cycles += 13;
+        break;
+    }
+
+    return true;
+  }
+
+  return false;
 }
 
 qkz80_uint16 qkz80::read_word(qkz80_uint16 addr) {

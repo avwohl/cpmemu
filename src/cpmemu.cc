@@ -2362,6 +2362,8 @@ int main(int argc, char** argv) {
     fprintf(stderr, "                      (default N=100 if not specified, off by default)\n");
     fprintf(stderr, "  --save-memory=FILE  Save memory to FILE on exit (for MOVCPM/SYSGEN)\n");
     fprintf(stderr, "  --save-range=S-E    Save only range S to E (hex, e.g., DC00-FFFF)\n");
+    fprintf(stderr, "  --int-cycles=N      Enable timer interrupt every N cycles (e.g., 50000)\n");
+    fprintf(stderr, "  --int-rst=N         RST number for interrupt (0-7, default 7 = RST 38H)\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Environment variables:\n");
     fprintf(stderr, "  CPM_PROGRESS=N      Enable progress reporting every N million instructions\n");
@@ -2380,6 +2382,8 @@ int main(int argc, char** argv) {
   int arg_offset = 1;
   bool mode_8080 = false;  // Default to Z80
   long long cli_progress_interval = 0;  // 0 = not set via CLI
+  unsigned long long int_cycles = 0;  // 0 = interrupts disabled
+  int int_rst = 7;  // Default RST 7 (address 0x38)
 
   while (arg_offset < argc && argv[arg_offset][0] == '-') {
     if (strcmp(argv[arg_offset], "--8080") == 0) {
@@ -2404,6 +2408,12 @@ int main(int argc, char** argv) {
         save_memory_start = start;
         save_memory_end = end;
       }
+      arg_offset++;
+    } else if (strncmp(argv[arg_offset], "--int-cycles=", 13) == 0) {
+      int_cycles = strtoull(argv[arg_offset] + 13, nullptr, 10);
+      arg_offset++;
+    } else if (strncmp(argv[arg_offset], "--int-rst=", 10) == 0) {
+      int_rst = atoi(argv[arg_offset] + 10) & 7;  // Clamp to 0-7
       arg_offset++;
     } else {
       break;  // Unknown option, assume it's the program
@@ -2600,6 +2610,16 @@ int main(int argc, char** argv) {
     fprintf(stderr, "Progress reporting enabled every %lldM instructions\n", progress_interval / 1000000);
   }
 
+  // Interrupt setup
+  unsigned long long next_tick_cycles_ = 0;
+  if (int_cycles > 0) {
+    fprintf(stderr, "Interrupts enabled: RST %d every %llu cycles\n", int_rst, int_cycles);
+    next_tick_cycles_ = int_cycles;
+    cpu.regs.IFF1 = 1;  // Enable interrupts
+    cpu.regs.IFF2 = 1;
+    cpu.regs.IM = 1;    // IM 1 mode (RST 38H style)
+  }
+
   // Run
   long long max_instructions = 9000000000LL;  // Safety limit (5B for Zexall/Zexdoc)
   long long instruction_count = 0;
@@ -2612,6 +2632,15 @@ int main(int argc, char** argv) {
     if (cpm.handle_pc(pc)) {
       continue;
     }
+
+    // Check for timer interrupt (cycle-based)
+    if (int_cycles > 0 && cpu.cycles >= next_tick_cycles_) {
+      next_tick_cycles_ = cpu.cycles + int_cycles;
+      cpu.request_rst(int_rst);
+    }
+
+    // Deliver any pending interrupts
+    cpu.check_interrupts();
 
     // Execute one instruction
     cpu.execute();

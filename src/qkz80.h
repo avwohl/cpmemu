@@ -44,6 +44,11 @@ class qkz80 {
   // Cycle counting for interrupt timing
   unsigned long long cycles;  // Total cycles executed
 
+  // Interrupt state (caller sets these, execute() checks them)
+  bool int_pending;       // Maskable interrupt pending
+  bool nmi_pending;       // Non-maskable interrupt pending
+  qkz80_uint8 int_vector; // Vector for IM0/IM2 (ignored in IM1)
+
   // Constructor takes a memory object pointer
   qkz80(qkz80_cpu_mem *memory);
   virtual ~qkz80() = default;
@@ -82,6 +87,28 @@ class qkz80 {
 
   // Unimplemented opcode handler - override in subclass to customize behavior
   virtual void unimplemented_opcode(qkz80_uint8 opcode, qkz80_uint16 pc);
+
+  // Interrupt support - portable, no timing dependencies
+  // Caller is responsible for deciding when to trigger interrupts
+
+  // Request a maskable interrupt (INT)
+  // vector: for IM0 this is the instruction to execute (e.g., 0xFF for RST 38H)
+  //         for IM2 this is the low byte of the interrupt vector address
+  //         for IM1 this is ignored (always jumps to 0x0038)
+  void request_int(qkz80_uint8 vector = 0xFF);
+
+  // Request a non-maskable interrupt (NMI)
+  // NMI cannot be disabled, always jumps to 0x0066
+  void request_nmi(void);
+
+  // Check and deliver pending interrupts
+  // Call this at instruction boundaries (e.g., in your main loop after execute())
+  // Returns true if an interrupt was delivered
+  bool check_interrupts(void);
+
+  // Convenience: request INT using RST number (0-7)
+  // RST n jumps to address n*8
+  void request_rst(qkz80_uint8 rst_num);
 
   void cpm_setup_memory(void);
 
