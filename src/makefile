@@ -81,6 +81,7 @@ qkz80.pc: qkz80.pc.in
 install: $(TARGET)
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
+	install -m 755 ../util/cpm_disk.py $(DESTDIR)$(BINDIR)/cpm_disk
 
 install-lib: $(LIB_STATIC) $(LIB_SHARED) qkz80.pc
 	install -d $(DESTDIR)$(LIBDIR)
@@ -93,6 +94,7 @@ install-lib: $(LIB_STATIC) $(LIB_SHARED) qkz80.pc
 
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
+	rm -f $(DESTDIR)$(BINDIR)/cpm_disk
 
 uninstall-lib:
 	rm -f $(DESTDIR)$(LIBDIR)/$(LIB_STATIC)
