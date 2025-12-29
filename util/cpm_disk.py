@@ -194,13 +194,14 @@ class Hd1kDisk:
                         max_block = block
         return max_block
 
-    def add_file(self, filename, file_data, sys_attr=False):
+    def add_file(self, filename, file_data, sys_attr=False, user=0):
         """Add a file to the disk image.
 
         Args:
             filename: Name of the file to add
             file_data: File contents as bytes
             sys_attr: If True, set the SYS attribute (makes file visible from any user area)
+            user: User number (0-15)
         """
         dir_offset = self.find_free_dir_entry()
         if dir_offset is None:
@@ -219,11 +220,12 @@ class Hd1kDisk:
         blocks_needed = (num_records + records_per_block - 1) // records_per_block
 
         sys_flag = " [SYS]" if sys_attr else ""
-        print(f"Adding {filename}{sys_flag}: {len(file_data)} bytes, {num_records} records, {blocks_needed} blocks starting at {next_block}")
+        user_flag = f" [U{user}]" if user != 0 else ""
+        print(f"Adding {filename}{sys_flag}{user_flag}: {len(file_data)} bytes, {num_records} records, {blocks_needed} blocks starting at {next_block}")
 
         # Create directory entry
         entry = bytearray(32)
-        entry[0] = 0  # User 0
+        entry[0] = user  # User number
         entry[1:9] = name.encode('ascii')
         ext_bytes = ext.encode('ascii')
         # SYS attribute is bit 7 of byte 9 (first char of extension)
@@ -554,12 +556,13 @@ def cmd_add(args):
         disk = Hd1kDisk(disk_data)
 
     sys_attr = getattr(args, 'sys', False)
+    user = getattr(args, 'user', 0)
 
     for filepath in args.files:
         filename = os.path.basename(filepath)
         with open(filepath, 'rb') as f:
             file_data = f.read()
-        if not disk.add_file(filename, file_data, sys_attr=sys_attr):
+        if not disk.add_file(filename, file_data, sys_attr=sys_attr, user=user):
             return 1
 
     with open(args.disk, 'wb') as f:
@@ -669,6 +672,8 @@ def main():
                            help='Disk is combo format (1MB prefix)')
     add_parser.add_argument('--sys', '-s', action='store_true',
                            help='Set SYS attribute on files (makes visible from any user area)')
+    add_parser.add_argument('--user', '-u', type=int, default=0,
+                           help='User number for files (0-15, default 0)')
     add_parser.add_argument('disk', help='Disk image file')
     add_parser.add_argument('files', nargs='+', help='Files to add')
     add_parser.set_defaults(func=cmd_add)
