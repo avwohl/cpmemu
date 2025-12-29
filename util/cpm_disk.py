@@ -178,8 +178,13 @@ class Hd1kDisk:
         return None
 
     def find_max_block(self):
-        """Find highest used block number in directory."""
-        max_block = 0
+        """Find highest used block number in directory.
+
+        Returns the highest block number in use, or 7 if no files exist
+        (blocks 0-7 are reserved for directory).
+        """
+        # Blocks 0-7 are reserved for directory (32KB = 8 blocks at 4KB each)
+        max_block = 7
         for i in range(self.DIR_ENTRIES):
             offset = self.DIR_START + (i * 32)
             if self.data[offset] != 0xE5:
