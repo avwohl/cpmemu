@@ -18,6 +18,7 @@ permissions:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -35,7 +36,7 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update || (sleep 30 && sudo apt-get update) || (sleep 60 && sudo apt-get update)
           sudo apt-get install -y build-essential ruby ruby-dev rubygems rpm
           sudo gem install fpm
 
