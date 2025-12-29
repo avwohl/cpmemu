@@ -228,9 +228,10 @@ class Hd1kDisk:
         entry[0] = user  # User number
         entry[1:9] = name.encode('ascii')
         ext_bytes = ext.encode('ascii')
-        # SYS attribute is bit 7 of byte 9 (first char of extension)
+        # SYS attribute is bit 7 of byte 10 (second char of extension)
+        # R/O is byte 9, SYS is byte 10, Archive is byte 11
         if sys_attr:
-            ext_bytes = bytes([ext_bytes[0] | 0x80]) + ext_bytes[1:]
+            ext_bytes = bytes([ext_bytes[0], ext_bytes[1] | 0x80, ext_bytes[2]])
         entry[9:12] = ext_bytes
         entry[12] = 0  # Extent low
         entry[13] = 0  # S1
