@@ -10,6 +10,7 @@ Usage:
   cpm_disk.py create --combo <disk.img>          # Create 51MB combo disk
   cpm_disk.py add <disk.img> <file1.com> [...]   # Add files to disk
   cpm_disk.py list <disk.img>                    # List files in disk
+  cpm_disk.py delete <disk.img> <file1.com> [...] # Delete files from disk
 
 Combo format is auto-detected for existing disks.
 """
@@ -22,6 +23,45 @@ import argparse
 # Common CP/M constants
 SECTOR_SIZE = 512
 BLOCK_SIZE = 4096  # 8 sectors per block
+
+
+def cpm_pattern_to_83(pattern):
+    """Convert a CP/M wildcard pattern to 8.3 format with ? expansion.
+
+    In CP/M, * fills the rest of the field with ?, and ? matches any char.
+    E.g., "*.COM" -> "????????COM", "A*.*" -> "A???????????"
+    """
+    pattern = pattern.upper()
+    if '.' in pattern:
+        name, ext = pattern.rsplit('.', 1)
+    else:
+        name, ext = pattern, ''
+
+    # Expand * to fill rest of field with ?
+    if '*' in name:
+        idx = name.index('*')
+        name = name[:idx] + '?' * (8 - idx)
+    name = name[:8].ljust(8, ' ')
+
+    if '*' in ext:
+        idx = ext.index('*')
+        ext = ext[:idx] + '?' * (3 - idx)
+    ext = ext[:3].ljust(3, ' ')
+
+    return name + ext
+
+
+def cpm_match(pattern_83, filename_83):
+    """Match a filename against a CP/M pattern (both in 8.3 format).
+
+    ? matches any character, other characters must match exactly.
+    """
+    if len(pattern_83) != 11 or len(filename_83) != 11:
+        return False
+    for p, f in zip(pattern_83, filename_83):
+        if p != '?' and p != f:
+            return False
+    return True
 
 # Disk format sizes
 HD1K_SINGLE_SIZE = 8388608      # 8 MB
@@ -235,6 +275,27 @@ class Hd1kDisk:
 
         return files
 
+    def delete_file(self, filename, user=0):
+        """Delete a file from the disk image by marking its directory entries as empty."""
+        # Parse filename (8.3 format)
+        name, ext = os.path.splitext(filename.upper())
+        name = name[:8].ljust(8)
+        ext = ext[1:4].ljust(3) if ext else '   '
+
+        deleted_count = 0
+        for i in range(self.DIR_ENTRIES):
+            offset = self.DIR_START + (i * 32)
+            entry_user = self.data[offset]
+            if entry_user == user:
+                entry_name = self.data[offset+1:offset+9].decode('ascii')
+                entry_ext = self.data[offset+9:offset+12].decode('ascii')
+                if entry_name == name and entry_ext == ext:
+                    # Mark entry as deleted
+                    self.data[offset] = 0xE5
+                    deleted_count += 1
+
+        return deleted_count
+
 
 class ComboDisk:
     """Combo disk with 1MB prefix."""
@@ -388,6 +449,27 @@ class ComboDisk:
 
         return files
 
+    def delete_file(self, filename, user=0):
+        """Delete a file from the disk image by marking its directory entries as empty."""
+        # Parse filename (8.3 format)
+        name, ext = os.path.splitext(filename.upper())
+        name = name[:8].ljust(8)
+        ext = ext[1:4].ljust(3) if ext else '   '
+
+        deleted_count = 0
+        for i in range(self.DIR_ENTRIES):
+            offset = self.dir_offset + (i * 32)
+            entry_user = self.data[offset]
+            if entry_user == user:
+                entry_name = self.data[offset+1:offset+9].decode('ascii')
+                entry_ext = self.data[offset+9:offset+12].decode('ascii')
+                if entry_name == name and entry_ext == ext:
+                    # Mark entry as deleted
+                    self.data[offset] = 0xE5
+                    deleted_count += 1
+
+        return deleted_count
+
 
 def cmd_create(args):
     """Create a new empty formatted disk image."""
@@ -479,6 +561,53 @@ def cmd_list(args):
     return 0
 
 
+def cmd_delete(args):
+    """Delete files from a disk image."""
+    with open(args.disk, 'rb') as f:
+        disk_data = bytearray(f.read())
+
+    combo = args.combo or is_combo_disk(disk_data)
+
+    if combo:
+        disk = ComboDisk(disk_data)
+    else:
+        disk = Hd1kDisk(disk_data)
+
+    # Get list of all files
+    files = disk.list_files()
+
+    any_deleted = False
+    for pattern in args.files:
+        pattern_83 = cpm_pattern_to_83(pattern)
+        matched = False
+
+        for (user, fullname), info in list(files.items()):
+            # Convert filename to 8.3 format for matching
+            if '.' in fullname:
+                name, ext = fullname.rsplit('.', 1)
+            else:
+                name, ext = fullname, ''
+            filename_83 = name.ljust(8) + ext.ljust(3)
+
+            if cpm_match(pattern_83, filename_83):
+                deleted = disk.delete_file(fullname, user)
+                if deleted > 0:
+                    print(f"Deleted {fullname} ({deleted} extent(s))")
+                    any_deleted = True
+                    matched = True
+                    del files[(user, fullname)]
+
+        if not matched:
+            print(f"No files matching: {pattern}")
+
+    if any_deleted:
+        with open(args.disk, 'wb') as f:
+            f.write(disk_data)
+        print(f"Successfully updated {args.disk}")
+
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='CP/M disk image utility',
@@ -511,6 +640,14 @@ def main():
                             help='Disk is combo format (1MB prefix)')
     list_parser.add_argument('disk', help='Disk image file')
     list_parser.set_defaults(func=cmd_list)
+
+    # Delete command
+    delete_parser = subparsers.add_parser('delete', help='Delete files from disk image')
+    delete_parser.add_argument('--combo', action='store_true',
+                               help='Disk is combo format (1MB prefix)')
+    delete_parser.add_argument('disk', help='Disk image file')
+    delete_parser.add_argument('files', nargs='+', help='Files to delete')
+    delete_parser.set_defaults(func=cmd_delete)
 
     args = parser.parse_args()
     return args.func(args)
