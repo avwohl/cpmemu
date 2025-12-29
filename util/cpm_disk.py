@@ -194,8 +194,14 @@ class Hd1kDisk:
                         max_block = block
         return max_block
 
-    def add_file(self, filename, file_data):
-        """Add a file to the disk image."""
+    def add_file(self, filename, file_data, sys_attr=False):
+        """Add a file to the disk image.
+
+        Args:
+            filename: Name of the file to add
+            file_data: File contents as bytes
+            sys_attr: If True, set the SYS attribute (makes file visible from any user area)
+        """
         dir_offset = self.find_free_dir_entry()
         if dir_offset is None:
             print(f"No free directory entry for {filename}")
@@ -212,13 +218,18 @@ class Hd1kDisk:
         records_per_block = BLOCK_SIZE // 128
         blocks_needed = (num_records + records_per_block - 1) // records_per_block
 
-        print(f"Adding {filename}: {len(file_data)} bytes, {num_records} records, {blocks_needed} blocks starting at {next_block}")
+        sys_flag = " [SYS]" if sys_attr else ""
+        print(f"Adding {filename}{sys_flag}: {len(file_data)} bytes, {num_records} records, {blocks_needed} blocks starting at {next_block}")
 
         # Create directory entry
         entry = bytearray(32)
         entry[0] = 0  # User 0
         entry[1:9] = name.encode('ascii')
-        entry[9:12] = ext.encode('ascii')
+        ext_bytes = ext.encode('ascii')
+        # SYS attribute is bit 7 of byte 9 (first char of extension)
+        if sys_attr:
+            ext_bytes = bytes([ext_bytes[0] | 0x80]) + ext_bytes[1:]
+        entry[9:12] = ext_bytes
         entry[12] = 0  # Extent low
         entry[13] = 0  # S1
         entry[14] = 0  # S2
@@ -249,8 +260,9 @@ class Hd1kDisk:
             user = self.data[offset]
             if user != 0xE5 and user < 32:
                 # Validate filename - must be printable ASCII (0x20-0x7E)
+                # Mask off attribute bits (high bit) from extension bytes
                 name_bytes = self.data[offset+1:offset+9]
-                ext_bytes = self.data[offset+9:offset+12]
+                ext_bytes = bytes([b & 0x7F for b in self.data[offset+9:offset+12]])
                 if not all(0x20 <= b <= 0x7E for b in name_bytes):
                     continue
                 if not all(0x20 <= b <= 0x7E for b in ext_bytes):
@@ -292,8 +304,10 @@ class Hd1kDisk:
             offset = self.DIR_START + (i * 32)
             entry_user = self.data[offset]
             if entry_user == user:
-                entry_name = self.data[offset+1:offset+9].decode('ascii')
-                entry_ext = self.data[offset+9:offset+12].decode('ascii')
+                entry_name = bytes(self.data[offset+1:offset+9]).decode('ascii')
+                # Mask off attribute bits (high bit) from extension bytes
+                entry_ext_bytes = bytes([b & 0x7F for b in self.data[offset+9:offset+12]])
+                entry_ext = entry_ext_bytes.decode('ascii')
                 if entry_name == name and entry_ext == ext:
                     # Mark entry as deleted
                     self.data[offset] = 0xE5
@@ -345,8 +359,15 @@ class ComboDisk:
                 return block
         return -1
 
-    def add_file(self, filename, file_data, user=0):
-        """Add a file to the disk image."""
+    def add_file(self, filename, file_data, user=0, sys_attr=False):
+        """Add a file to the disk image.
+
+        Args:
+            filename: Name of the file to add
+            file_data: File contents as bytes
+            user: User number (0-15)
+            sys_attr: If True, set the SYS attribute (makes file visible from any user area)
+        """
         name, ext = os.path.splitext(filename.upper())
         name = name[:8].ljust(8)
         ext = ext[1:4].ljust(3) if ext else '   '
@@ -380,6 +401,11 @@ class ComboDisk:
         extent_num = 0
         block_idx = 0
 
+        # Prepare extension bytes with optional SYS attribute
+        ext_bytes = ext.encode('ascii')
+        if sys_attr:
+            ext_bytes = bytes([ext_bytes[0] | 0x80]) + ext_bytes[1:]
+
         while block_idx < len(allocated_blocks):
             dir_idx = self.find_free_dir_entry()
             if dir_idx < 0:
@@ -391,7 +417,7 @@ class ComboDisk:
             entry = bytearray(32)
             entry[0] = user
             entry[1:9] = name.encode('ascii')
-            entry[9:12] = ext.encode('ascii')
+            entry[9:12] = ext_bytes
             entry[12] = extent_num & 0x1F
             entry[13] = 0
             entry[14] = (extent_num >> 5) & 0x3F
@@ -412,7 +438,8 @@ class ComboDisk:
             block_idx += blocks_per_extent
             extent_num += 1
 
-        print(f"Added {filename}: {len(file_data)} bytes, {num_blocks} blocks")
+        sys_flag = " [SYS]" if sys_attr else ""
+        print(f"Added {filename}{sys_flag}: {len(file_data)} bytes, {num_blocks} blocks")
         return True
 
     def list_files(self):
@@ -423,8 +450,9 @@ class ComboDisk:
             user = self.data[offset]
             if user != 0xE5 and user < 32:
                 # Validate filename - must be printable ASCII (0x20-0x7E)
+                # Mask off attribute bits (high bit) from extension bytes
                 name_bytes = self.data[offset+1:offset+9]
-                ext_bytes = self.data[offset+9:offset+12]
+                ext_bytes = bytes([b & 0x7F for b in self.data[offset+9:offset+12]])
                 if not all(0x20 <= b <= 0x7E for b in name_bytes):
                     continue
                 if not all(0x20 <= b <= 0x7E for b in ext_bytes):
@@ -466,8 +494,10 @@ class ComboDisk:
             offset = self.dir_offset + (i * 32)
             entry_user = self.data[offset]
             if entry_user == user:
-                entry_name = self.data[offset+1:offset+9].decode('ascii')
-                entry_ext = self.data[offset+9:offset+12].decode('ascii')
+                entry_name = bytes(self.data[offset+1:offset+9]).decode('ascii')
+                # Mask off attribute bits (high bit) from extension bytes
+                entry_ext_bytes = bytes([b & 0x7F for b in self.data[offset+9:offset+12]])
+                entry_ext = entry_ext_bytes.decode('ascii')
                 if entry_name == name and entry_ext == ext:
                     # Mark entry as deleted
                     self.data[offset] = 0xE5
@@ -523,11 +553,13 @@ def cmd_add(args):
     else:
         disk = Hd1kDisk(disk_data)
 
+    sys_attr = getattr(args, 'sys', False)
+
     for filepath in args.files:
         filename = os.path.basename(filepath)
         with open(filepath, 'rb') as f:
             file_data = f.read()
-        if not disk.add_file(filename, file_data):
+        if not disk.add_file(filename, file_data, sys_attr=sys_attr):
             return 1
 
     with open(args.disk, 'wb') as f:
@@ -635,6 +667,8 @@ def main():
     add_parser = subparsers.add_parser('add', help='Add files to disk image')
     add_parser.add_argument('--combo', action='store_true',
                            help='Disk is combo format (1MB prefix)')
+    add_parser.add_argument('--sys', '-s', action='store_true',
+                           help='Set SYS attribute on files (makes visible from any user area)')
     add_parser.add_argument('disk', help='Disk image file')
     add_parser.add_argument('files', nargs='+', help='Files to add')
     add_parser.set_defaults(func=cmd_add)
