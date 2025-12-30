@@ -1,6 +1,8 @@
 # CP/M Emulator
 
-A CP/M 2.2 operating system emulator that runs legacy 8-bit CP/M applications on modern Linux systems. Features both Intel 8080 and Zilog Z80 CPU emulation with  comprehensive BDOS/BIOS support.
+A CP/M 2.2 operating system emulator that runs legacy 8-bit CP/M applications on modern systems. Features both Intel 8080 and Zilog Z80 CPU emulation with comprehensive BDOS/BIOS support.
+
+**Supported Platforms:** Linux (x64, ARM64) and Windows (x64)
 
 cpmemu emulates BIOS and BDOs calls and translates them to Unix.  Most emulators
 have a file on the OS containing a native CP/M file system.  Then, when
@@ -30,9 +32,21 @@ each file.
 
 ## Installation
 
-### From Packages (Recommended)
+### Windows
 
-**Debian/Ubuntu:**
+Download and install the MSIX package:
+```powershell
+# Download
+curl -LO https://github.com/avwohl/cpmemu/releases/latest/download/cpmemu.msix
+
+# Install (double-click the file, or use PowerShell)
+Add-AppPackage cpmemu.msix
+```
+
+After installation, `cpmemu` is available from any command prompt or PowerShell window.
+
+### Linux (Debian/Ubuntu)
+
 ```bash
 curl -LO https://github.com/avwohl/cpmemu/releases/latest/download/cpmemu_amd64.deb
 sudo dpkg -i cpmemu_amd64.deb
@@ -40,7 +54,8 @@ sudo dpkg -i cpmemu_amd64.deb
 
 For ARM64 systems, use `cpmemu_arm64.deb` instead.
 
-**RHEL/Fedora:**
+### Linux (RHEL/Fedora)
+
 ```bash
 curl -LO https://github.com/avwohl/cpmemu/releases/latest/download/cpmemu.x86_64.rpm
 sudo rpm -i cpmemu.x86_64.rpm
@@ -50,6 +65,9 @@ For ARM64 systems, use `cpmemu.aarch64.rpm` instead.
 
 ### From Source
 
+See [docs/BUILDING.md](docs/BUILDING.md) for detailed build instructions.
+
+**Quick start (Linux):**
 ```bash
 git clone https://github.com/avwohl/cpmemu.git
 cd cpmemu/src
@@ -57,15 +75,17 @@ make
 sudo cp cpmemu /usr/local/bin/
 ```
 
-**Requirements:**
-- C++11 compatible compiler (gcc or clang)
-- POSIX-compatible system (Linux)
-- No external dependencies
+**Quick start (Windows with Visual Studio):**
+```cmd
+git clone https://github.com/avwohl/cpmemu.git
+cd cpmemu\src
+do_build.bat
+```
 
 ## Usage
 
-```bash
-./src/cpmemu [options] <program.com> [args...]
+```
+cpmemu [options] <program.com> [args...]
 ```
 
 ### Options
@@ -78,21 +98,33 @@ sudo cp cpmemu /usr/local/bin/
 
 ### Examples
 
+**Windows:**
+```cmd
+cpmemu program.com
+cpmemu --z80 program.com
+cpmemu mbasic.com myprogram.bas
+```
+
+**Linux:**
 ```bash
-# Run a CP/M program
-./src/cpmemu program.com
+cpmemu program.com
+cpmemu --z80 program.com
+cpmemu mbasic.com myprogram.bas
+```
 
-# Run with arguments
-./src/cpmemu program.com input.dat output.dat
+### Running Microsoft BASIC
 
-# Run in Z80 mode
-./src/cpmemu --z80 program.com
-
-# Run with progress reporting
-./src/cpmemu --progress program.com
-
-# Run Microsoft BASIC
-./src/cpmemu com/mbasic.com
+```
+> cpmemu mbasic.com
+BASIC-80 Rev. 5.21
+[CP/M Version]
+Ok
+10 PRINT "Hello, CP/M!"
+20 END
+RUN
+Hello, CP/M!
+Ok
+SYSTEM
 ```
 
 ## Environment Variables
@@ -207,11 +239,20 @@ cpmemu/
 │   ├── qkz80.h/cc         # Z80/8080 CPU core
 │   ├── qkz80_reg_set.*    # Register set implementation
 │   ├── qkz80_mem.*        # Memory management
-│   └── makefile           # Build configuration
+│   ├── os/
+│   │   ├── platform.h     # Platform abstraction interface
+│   │   ├── linux/         # Linux/POSIX implementation
+│   │   └── windows/       # Windows implementation
+│   ├── makefile           # Linux build
+│   ├── Makefile.win       # Windows/MinGW build
+│   ├── CMakeLists.txt     # CMake cross-platform build
+│   └── do_build.bat       # Windows/MSVC build script
+├── packaging/
+│   └── windows/           # MSIX packaging for Windows Store
 ├── tests/                 # Test programs (.com and .asm)
 ├── com/                   # Sample CP/M programs (mbasic.com)
 ├── examples/              # Configuration file examples
-└── docs/                  # Development documentation
+└── docs/                  # Documentation and references
 ```
 
 ## License
