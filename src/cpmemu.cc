@@ -1584,7 +1584,7 @@ void CPMEmulator::bdos_delete_file() {
             unix_path.empty() ? "(not found)" : unix_path.c_str());
   }
 
-  if (unix_path.empty() || unlink(unix_path.c_str()) != 0) {
+  if (unix_path.empty() || !platform::delete_file(unix_path.c_str())) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
   } else {
     cpu->set_reg8(0, qkz80::reg_A);  // Success

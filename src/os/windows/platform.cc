@@ -94,6 +94,10 @@ int64_t get_file_size(const char* path) {
     return static_cast<int64_t>(size.QuadPart);
 }
 
+bool delete_file(const char* path) {
+    return DeleteFileA(path) != 0;
+}
+
 std::vector<DirEntry> list_directory(const char* path) {
     std::vector<DirEntry> entries;
 

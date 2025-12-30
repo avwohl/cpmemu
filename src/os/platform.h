@@ -49,6 +49,9 @@ FileType get_file_type(const char* path);
 // Get the size of a file in bytes, returns -1 on error
 int64_t get_file_size(const char* path);
 
+// Delete a file, returns true on success
+bool delete_file(const char* path);
+
 // Directory entry information
 struct DirEntry {
     std::string name;
