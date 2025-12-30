@@ -10,25 +10,20 @@
  */
 
 #include "qkz80.h"
+#include "os/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
-#include <unistd.h>
-#include <sys/stat.h>
 #include <cstdint>
 #include <map>
 #include <set>
 #include <string>
 #include <vector>
 #include <algorithm>
-#include <fcntl.h>
 #include <fstream>
 #include <sstream>
-#include <termios.h>
-#include <dirent.h>
-#include <sys/select.h>
 
 // Helper function to expand environment variables in strings
 // Supports both $VAR and ${VAR} syntax
@@ -75,36 +70,6 @@ static std::string expand_env_vars(const std::string& str) {
   return result;
 }
 
-// Helper function to check if input is available
-static bool stdin_has_data() {
-  if (!isatty(STDIN_FILENO)) {
-    // If not a terminal, use select() to check for data
-    fd_set readfds;
-    struct timeval tv;
-    FD_ZERO(&readfds);
-    FD_SET(STDIN_FILENO, &readfds);
-    tv.tv_sec = 0;
-    tv.tv_usec = 0;
-    return select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv) > 0;
-  }
-
-  // For terminals, also use select()
-  fd_set readfds;
-  struct timeval tv;
-  FD_ZERO(&readfds);
-  FD_SET(STDIN_FILENO, &readfds);
-  tv.tv_sec = 0;
-  tv.tv_usec = 0;
-  return select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv) > 0;
-}
-
-// Terminal state management
-static struct termios original_termios;
-static bool termios_saved = false;
-
-// Forward declaration
-static void disable_raw_mode();
-
 // ^C exit handling - 5 consecutive ^C characters exit the emulator
 static int consecutive_ctrl_c = 0;
 static const int CTRL_C_EXIT_COUNT = 5;
@@ -144,7 +109,7 @@ static bool check_ctrl_c_exit(int ch) {
     if (consecutive_ctrl_c >= CTRL_C_EXIT_COUNT) {
       fprintf(stderr, "\n[Exiting: %d consecutive ^C received]\n", CTRL_C_EXIT_COUNT);
       do_save_memory();
-      disable_raw_mode();
+      platform::disable_raw_mode();
       exit(0);
     }
     return false;  // Pass ^C through to CP/M program
@@ -152,35 +117,6 @@ static bool check_ctrl_c_exit(int ch) {
     consecutive_ctrl_c = 0;  // Reset counter on any other input
     return false;
   }
-}
-
-static void disable_raw_mode() {
-  if (termios_saved) {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios);
-    termios_saved = false;
-  }
-}
-
-static void enable_raw_mode() {
-  if (!isatty(STDIN_FILENO)) {
-    // Not a terminal, don't try to set raw mode
-    return;
-  }
-
-  if (!termios_saved) {
-    tcgetattr(STDIN_FILENO, &original_termios);
-    termios_saved = true;
-    atexit(disable_raw_mode);
-  }
-
-  struct termios raw = original_termios;
-  // Disable canonical mode (line buffering), echo, and signal generation
-  // ISIG disabled so ^C passes through to CP/M program instead of killing emulator
-  raw.c_lflag &= ~(ICANON | ECHO | ISIG);
-  // Set minimum characters to 1 and timeout to 0
-  raw.c_cc[VMIN] = 1;
-  raw.c_cc[VTIME] = 0;
-  tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
 // CP/M Memory Layout Constants
@@ -643,7 +579,7 @@ std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode
   // Check new file mappings with patterns
   for (const auto& mapping : file_mappings) {
     if (match_pattern(mapping.cpm_pattern, normalized)) {
-      if (access(mapping.unix_pattern.c_str(), F_OK) == 0) {
+      if (platform::get_file_type(mapping.unix_pattern.c_str()) != platform::FileType::NotFound) {
         *mode_out = mapping.mode;
         *eol_out = mapping.eol_convert;
 
@@ -671,14 +607,14 @@ std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode
     lowercase += tolower(c);
   }
 
-  if (access(lowercase.c_str(), F_OK) == 0) {
+  if (platform::get_file_type(lowercase.c_str()) != platform::FileType::NotFound) {
     *mode_out = detect_file_mode(normalized, lowercase);
     *eol_out = default_eol_convert;
     return lowercase;
   }
 
   // Try as-is
-  if (access(normalized.c_str(), F_OK) == 0) {
+  if (platform::get_file_type(normalized.c_str()) != platform::FileType::NotFound) {
     *mode_out = detect_file_mode(normalized, normalized);
     *eol_out = default_eol_convert;
     return normalized;
@@ -833,7 +769,7 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
       config_program = value;
     } else if (key == "cd" || key == "chdir") {
       // Change working directory
-      if (chdir(value.c_str()) != 0) {
+      if (platform::change_directory(value.c_str()) != 0) {
         fprintf(stderr, "Config line %d: Cannot change directory to '%s': %s\n",
                 line_num, value.c_str(), strerror(errno));
       } else if (debug) {
@@ -1032,18 +968,18 @@ std::string CPMEmulator::find_unix_file(const std::string& cpm_name) {
   }
 
   // Check if file exists
-  if (access(lowercase.c_str(), F_OK) == 0) {
+  if (platform::get_file_type(lowercase.c_str()) != platform::FileType::NotFound) {
     return lowercase;
   }
 
   // Try as-is
-  if (access(normalized.c_str(), F_OK) == 0) {
+  if (platform::get_file_type(normalized.c_str()) != platform::FileType::NotFound) {
     return normalized;
   }
 
   // Try with ./ prefix
   std::string with_prefix = "./" + lowercase;
-  if (access(with_prefix.c_str(), F_OK) == 0) {
+  if (platform::get_file_type(with_prefix.c_str()) != platform::FileType::NotFound) {
     return with_prefix;
   }
 
@@ -1414,7 +1350,7 @@ void CPMEmulator::bdos_set_iobyte() {
 
 void CPMEmulator::bdos_console_status() {
   // Return 0xFF if character ready, 0x00 if not
-  cpu->set_reg8(stdin_has_data() ? 0xFF : 0x00, qkz80::reg_A);
+  cpu->set_reg8(platform::stdin_has_data() ? 0xFF : 0x00, qkz80::reg_A);
 }
 
 void CPMEmulator::bdos_get_version() {
@@ -1742,14 +1678,14 @@ void CPMEmulator::bdos_file_size() {
     return;
   }
 
-  struct stat st;
-  if (stat(unix_path.c_str(), &st) != 0) {
+  int64_t file_size = platform::get_file_size(unix_path.c_str());
+  if (file_size < 0) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
     return;
   }
 
   // File size in 128-byte records (round up)
-  uint32_t records = (st.st_size + 127) / 128;
+  uint32_t records = (file_size + 127) / 128;
 
   // Store in FCB bytes 33-35 (r0, r1, r2)
   mem[fcb_addr + 33] = records & 0xFF;
@@ -1829,7 +1765,7 @@ void CPMEmulator::bdos_direct_console_io() {
 
   if (e_reg == 0xFF) {
     // Input mode - return character if available, 0 if not
-    if (stdin_has_data()) {
+    if (platform::stdin_has_data()) {
       int ch = getchar();
       if (ch == EOF) ch = 0;
       check_ctrl_c_exit(ch);  // Track ^C for exit, pass through to program
@@ -1840,7 +1776,7 @@ void CPMEmulator::bdos_direct_console_io() {
     }
   } else if (e_reg == 0xFE) {
     // Status check - return 0xFF if char ready, 0 if not
-    cpu->set_reg8(stdin_has_data() ? 0xFF : 0, qkz80::reg_A);
+    cpu->set_reg8(platform::stdin_has_data() ? 0xFF : 0, qkz80::reg_A);
   } else {
     // Output mode - send character
     putchar(e_reg & 0x7F);
@@ -1971,12 +1907,9 @@ void CPMEmulator::bdos_search_first() {
 
   // First, check file mappings - these define explicit CP/M names
   for (const auto& mapping : file_mappings) {
-    // Check if the Unix file exists
-    if (access(mapping.unix_pattern.c_str(), F_OK) != 0) continue;
-
-    // Check if mapping is a directory
-    struct stat st;
-    if (stat(mapping.unix_pattern.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) continue;
+    // Check if the Unix file exists and is not a directory
+    platform::FileType ftype = platform::get_file_type(mapping.unix_pattern.c_str());
+    if (ftype != platform::FileType::Regular) continue;
 
     // Get the CP/M name from the mapping
     char file_name[8], file_ext[3];
@@ -1992,10 +1925,9 @@ void CPMEmulator::bdos_search_first() {
 
   // Also check legacy file_map
   for (const auto& pair : file_map) {
-    if (access(pair.second.c_str(), F_OK) != 0) continue;
-
-    struct stat st;
-    if (stat(pair.second.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) continue;
+    // Check if the file exists and is not a directory
+    platform::FileType ftype = platform::get_file_type(pair.second.c_str());
+    if (ftype != platform::FileType::Regular) continue;
 
     char file_name[8], file_ext[3];
     if (!unix_to_cpm_83(pair.first, file_name, file_ext)) continue;
@@ -2010,37 +1942,28 @@ void CPMEmulator::bdos_search_first() {
   }
 
   // Scan current directory for files with valid CP/M names
-  DIR* dir = opendir(".");
-  if (!dir) {
-    if (search_results.empty()) {
-      cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
-      return;
+  std::vector<platform::DirEntry> dir_entries = platform::list_directory(".");
+  if (dir_entries.empty() && search_results.empty()) {
+    cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
+    return;
+  }
+
+  for (const auto& entry : dir_entries) {
+    // Skip directories and hidden files
+    if (entry.name[0] == '.' || entry.is_directory) continue;
+
+    // Convert to CP/M format - skip files with invalid characters
+    char file_name[8], file_ext[3];
+    if (!unix_to_cpm_83(entry.name.c_str(), file_name, file_ext)) continue;
+
+    // Check if this CP/M name was already added via mapping
+    std::string cpm_name = std::string(file_name, 8) + std::string(file_ext, 3);
+    if (added_cpm_names.count(cpm_name)) continue;
+
+    if (match_fcb_pattern(pattern_name, pattern_ext, file_name, file_ext)) {
+      search_results.push_back(entry.name);
+      added_cpm_names.insert(cpm_name);
     }
-    // Fall through - we have results from mappings
-  } else {
-    struct dirent* entry;
-    while ((entry = readdir(dir)) != nullptr) {
-      // Skip directories and hidden files
-      if (entry->d_name[0] == '.') continue;
-
-      // Skip directories
-      struct stat st;
-      if (stat(entry->d_name, &st) == 0 && S_ISDIR(st.st_mode)) continue;
-
-      // Convert to CP/M format - skip files with invalid characters
-      char file_name[8], file_ext[3];
-      if (!unix_to_cpm_83(entry->d_name, file_name, file_ext)) continue;
-
-      // Check if this CP/M name was already added via mapping
-      std::string cpm_name = std::string(file_name, 8) + std::string(file_ext, 3);
-      if (added_cpm_names.count(cpm_name)) continue;
-
-      if (match_fcb_pattern(pattern_name, pattern_ext, file_name, file_ext)) {
-        search_results.push_back(entry->d_name);
-        added_cpm_names.insert(cpm_name);
-      }
-    }
-    closedir(dir);
   }
 
   if (debug || debug_bdos_funcs.count(17)) {
@@ -2065,11 +1988,8 @@ void CPMEmulator::bdos_search_first() {
   unix_to_cpm_83(search_results[0], file_name, file_ext);
 
   // Get file size for extent calculation
-  struct stat st;
-  long file_size = 0;
-  if (stat(search_results[0].c_str(), &st) == 0) {
-    file_size = st.st_size;
-  }
+  int64_t file_size = platform::get_file_size(search_results[0].c_str());
+  if (file_size < 0) file_size = 0;
   int records = (file_size + 127) / 128;  // Number of 128-byte records
   int rc = records > 128 ? 128 : records; // Record count in this extent
 
@@ -2110,11 +2030,8 @@ void CPMEmulator::bdos_search_next() {
   unix_to_cpm_83(search_results[search_index], file_name, file_ext);
 
   // Get file size
-  struct stat st;
-  long file_size = 0;
-  if (stat(search_results[search_index].c_str(), &st) == 0) {
-    file_size = st.st_size;
-  }
+  int64_t file_size = platform::get_file_size(search_results[search_index].c_str());
+  if (file_size < 0) file_size = 0;
   int records = (file_size + 127) / 128;
   int rc = records > 128 ? 128 : records;
 
@@ -2287,7 +2204,7 @@ void CPMEmulator::bios_call(int offset) {
 
 void CPMEmulator::bios_const() {
   // Console status - return 0xFF if character ready, 0x00 if not
-  cpu->set_reg8(stdin_has_data() ? 0xFF : 0x00, qkz80::reg_A);
+  cpu->set_reg8(platform::stdin_has_data() ? 0xFF : 0x00, qkz80::reg_A);
 }
 
 void CPMEmulator::bios_conin() {
@@ -2449,8 +2366,9 @@ int main(int argc, char** argv) {
   // Create emulator
   CPMEmulator cpm(&cpu, false);
 
-  // Enable raw mode for console input (no echo, no line buffering)
-  enable_raw_mode();
+  // Initialize platform and enable raw mode for console input
+  platform::init();
+  platform::enable_raw_mode();
 
   // If config file, load it first
   if (is_config) {
@@ -2543,16 +2461,14 @@ int main(int argc, char** argv) {
 
   // If there are additional files on command line, set up mappings
   for (int i = arg_offset + 1; i < argc; i++) {
-    struct stat st;
-    if (stat(argv[i], &st) == 0 && S_ISREG(st.st_mode)) {
+    if (platform::get_file_type(argv[i]) == platform::FileType::Regular) {
       // Extract basename for CP/M name
-      const char* base = strrchr(argv[i], '/');
-      base = base ? base + 1 : argv[i];
+      std::string base = platform::basename(argv[i]);
 
       // Create uppercase CP/M name (full)
       std::string cpm_name;
-      for (const char* p = base; *p; p++) {
-        cpm_name += toupper(*p);
+      for (size_t j = 0; j < base.length(); j++) {
+        cpm_name += toupper(base[j]);
       }
 
       // Add mapping for full name

@@ -13,6 +13,10 @@ LIB_SOURCES = qkz80.cc qkz80_errors.cc qkz80_mem.cc qkz80_reg_set.cc
 LIB_OBJECTS = $(LIB_SOURCES:.cc=.o)
 LIB_OBJECTS_PIC = $(LIB_SOURCES:.cc=.pic.o)
 
+# Platform-specific source
+PLATFORM_SOURCE = os/linux/platform.cc
+PLATFORM_OBJECT = platform.o
+
 # Library names
 LIB_NAME = qkz80
 LIB_STATIC = lib$(LIB_NAME).a
@@ -27,6 +31,10 @@ APP_SOURCES = cpmemu.cc
 APP_OBJECTS = $(APP_SOURCES:.cc=.o)
 TARGET = cpmemu
 
+# Build platform object
+$(PLATFORM_OBJECT): $(PLATFORM_SOURCE)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 # Build static library
 $(LIB_STATIC): $(LIB_OBJECTS)
 	$(AR) rcs $@ $(LIB_OBJECTS)
@@ -36,8 +44,8 @@ $(LIB_SHARED): $(LIB_OBJECTS_PIC)
 	$(CXX) -shared -o $@ $(LIB_OBJECTS_PIC)
 
 # Build cpmemu linking against static library
-$(TARGET): $(APP_OBJECTS) $(LIB_STATIC)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(APP_OBJECTS) $(LIB_STATIC) -o $(TARGET)
+$(TARGET): $(APP_OBJECTS) $(PLATFORM_OBJECT) $(LIB_STATIC)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(APP_OBJECTS) $(PLATFORM_OBJECT) $(LIB_STATIC) -o $(TARGET)
 
 # Regular object files
 %.o: %.cc

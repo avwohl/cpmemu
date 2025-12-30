@@ -1,0 +1,53 @@
+# Windows Makefile for cpmemu
+# Use with: mingw32-make -f Makefile.win
+# Or with MSVC: nmake /f Makefile.win (requires adjustments for cl.exe)
+
+# MinGW settings (default)
+CXX = g++
+CXXFLAGS = -std=c++11 -Wall -O2 -I.
+AR = ar
+
+# For static builds
+ifdef STATIC
+LDFLAGS = -static
+endif
+
+# Library sources and objects
+LIB_SOURCES = qkz80.cc qkz80_errors.cc qkz80_mem.cc qkz80_reg_set.cc
+LIB_OBJECTS = $(LIB_SOURCES:.cc=.o)
+
+# Platform-specific source (Windows)
+PLATFORM_SOURCE = os/windows/platform.cc
+PLATFORM_OBJECT = platform.o
+
+# Library names
+LIB_NAME = qkz80
+LIB_STATIC = lib$(LIB_NAME).a
+
+# Application
+APP_SOURCES = cpmemu.cc
+APP_OBJECTS = $(APP_SOURCES:.cc=.o)
+TARGET = cpmemu.exe
+
+all: $(TARGET)
+
+# Build platform object
+$(PLATFORM_OBJECT): $(PLATFORM_SOURCE)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# Build static library
+$(LIB_STATIC): $(LIB_OBJECTS)
+	$(AR) rcs $@ $(LIB_OBJECTS)
+
+# Build cpmemu linking against static library
+$(TARGET): $(APP_OBJECTS) $(PLATFORM_OBJECT) $(LIB_STATIC)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(APP_OBJECTS) $(PLATFORM_OBJECT) $(LIB_STATIC) -o $(TARGET)
+
+# Regular object files
+%.o: %.cc
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+clean:
+	del /Q $(TARGET) *.o *.a 2>nul || exit 0
+
+.PHONY: all clean

@@ -1,13 +1,26 @@
 # Build artifacts
 *.o
+*.obj
 *.a
 *.so
 *.dylib
 *.pc
+*.lib
+*.pdb
+*.ilk
 **__pycache__*
 
 # Executables
 src/cpmemu
+src/cpmemu.exe
+*.exe
+
+# Windows packaging artifacts
+dist/
+packaging/windows/Assets/
+*.msix
+*.pfx
+nul
 
 # Editor files
 *~
