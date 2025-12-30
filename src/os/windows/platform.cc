@@ -8,8 +8,10 @@
 #include <windows.h>
 #include <conio.h>
 #include <io.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <cstdlib>
+#include <cstdio>
 
 namespace platform {
 
@@ -66,6 +68,18 @@ bool stdin_has_data() {
 
     // For console, use _kbhit()
     return _kbhit() != 0;
+}
+
+int console_getchar() {
+    if (!is_terminal()) {
+        // For non-terminal, use standard getchar
+        return getchar();
+    }
+
+    // For console, use _getch() for unbuffered input
+    int ch = _getch();
+    if (ch == EOF) return -1;
+    return ch;
 }
 
 // ============================================================================
@@ -168,6 +182,11 @@ int change_directory(const char* path) {
 // ============================================================================
 
 void init() {
+    // Set stdin/stdout to binary mode to prevent CR/LF translation
+    // This is critical for proper CP/M console emulation
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+
     // Enable virtual terminal processing for ANSI escape codes (Windows 10+)
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     if (hOut != INVALID_HANDLE_VALUE) {

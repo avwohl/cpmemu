@@ -31,6 +31,10 @@ bool is_terminal();
 // Check if input is available on stdin without blocking
 bool stdin_has_data();
 
+// Read a single character from console (unbuffered)
+// Returns the character, or -1 on EOF
+int console_getchar();
+
 // ============================================================================
 // File System
 // ============================================================================

@@ -75,7 +75,8 @@ Copy-Item $ExePath $StagingDir
 # Update and copy manifest
 $ManifestPath = Join-Path $PackagingDir "AppxManifest.xml"
 $ManifestContent = Get-Content $ManifestPath -Raw
-$ManifestContent = $ManifestContent -replace 'Version="[^"]*"', "Version=`"$Version`""
+# Only replace the Version in the Identity element (not the xml declaration)
+$ManifestContent = $ManifestContent -replace '(<Identity[^>]*Version=)"[^"]*"', "`$1`"$Version`""
 $ManifestContent = $ManifestContent -replace 'Publisher="[^"]*"', "Publisher=`"$Publisher`""
 $ManifestContent | Set-Content (Join-Path $StagingDir "AppxManifest.xml")
 

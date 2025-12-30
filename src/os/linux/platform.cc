@@ -63,6 +63,12 @@ bool stdin_has_data() {
     return select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv) > 0;
 }
 
+int console_getchar() {
+    int ch = getchar();
+    if (ch == EOF) return -1;
+    return ch;
+}
+
 // ============================================================================
 // File System
 // ============================================================================

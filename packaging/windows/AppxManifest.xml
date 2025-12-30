@@ -10,7 +10,7 @@
   <Identity
     Name="CPMEmuTest.cpmemu"
     Publisher="CN=CPMEmuTest"
-    Version="1.0.1.0"
+    Version="1.0.2.0"
     ProcessorArchitecture="x64" />
 
   <Properties>

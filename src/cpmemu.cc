@@ -1215,8 +1215,8 @@ void CPMEmulator::bdos_write_string() {
 }
 
 void CPMEmulator::bdos_read_console() {
-  int ch = getchar();
-  if (ch == EOF) ch = 0x1A;  // EOF becomes ^Z
+  int ch = platform::console_getchar();
+  if (ch == -1 || ch == EOF) ch = 0x1A;  // EOF becomes ^Z
   check_ctrl_c_exit(ch);  // Track ^C for exit, pass through to program
   if (ch == '\n') ch = '\r';  // Convert LF to CR for CP/M
   cpu->set_reg8(ch & 0x7F, qkz80::reg_A);
@@ -1250,8 +1250,8 @@ void CPMEmulator::bdos_read_console_buffer() {
   int count = 0;
 
   while (count < max_chars) {
-    int ch = getchar();
-    if (ch == EOF) {
+    int ch = platform::console_getchar();
+    if (ch == -1 || ch == EOF) {
       ch = 0x1A;  // ^Z
     }
 
@@ -1766,8 +1766,8 @@ void CPMEmulator::bdos_direct_console_io() {
   if (e_reg == 0xFF) {
     // Input mode - return character if available, 0 if not
     if (platform::stdin_has_data()) {
-      int ch = getchar();
-      if (ch == EOF) ch = 0;
+      int ch = platform::console_getchar();
+      if (ch == -1 || ch == EOF) ch = 0;
       check_ctrl_c_exit(ch);  // Track ^C for exit, pass through to program
       if (ch == '\n') ch = '\r';  // Convert LF to CR for CP/M
       cpu->set_reg8(ch & 0x7F, qkz80::reg_A);
@@ -2209,8 +2209,8 @@ void CPMEmulator::bios_const() {
 
 void CPMEmulator::bios_conin() {
   // Console input
-  int ch = getchar();
-  if (ch == EOF) ch = 0x1A;
+  int ch = platform::console_getchar();
+  if (ch == -1 || ch == EOF) ch = 0x1A;
   check_ctrl_c_exit(ch);  // Track ^C for exit, pass through to program
   if (ch == '\n') ch = '\r';  // Convert LF to CR for CP/M
   cpu->set_reg8(ch & 0x7F, qkz80::reg_A);
@@ -2265,6 +2265,41 @@ void CPMEmulator::bios_listst() {
   // List (printer) status - return 0xFF if ready, 0x00 if not
   // Always return ready (0xFF)
   cpu->set_reg8(0xFF, qkz80::reg_A);
+}
+
+// Resolve program name with extension
+// If name has extension, use as-is
+// If no extension, try .com then .COM
+static std::string resolve_program_name(const char* name) {
+  std::string base(name);
+
+  // Check if already has an extension (contains '.' after last path separator)
+  size_t last_sep = base.find_last_of("/\\");
+  size_t dot_pos = base.rfind('.');
+
+  // Has extension if dot exists and is after any path separator
+  bool has_extension = (dot_pos != std::string::npos &&
+                        (last_sep == std::string::npos || dot_pos > last_sep));
+
+  if (has_extension) {
+    // Use as-is
+    return base;
+  }
+
+  // Try .com first
+  std::string with_com = base + ".com";
+  if (platform::get_file_type(with_com.c_str()) == platform::FileType::Regular) {
+    return with_com;
+  }
+
+  // Try .COM
+  std::string with_COM = base + ".COM";
+  if (platform::get_file_type(with_COM.c_str()) == platform::FileType::Regular) {
+    return with_COM;
+  }
+
+  // Return original (will fail with appropriate error later)
+  return base;
 }
 
 // Main program
@@ -2345,7 +2380,7 @@ int main(int argc, char** argv) {
 
   const char* arg1 = argv[arg_offset];
   bool is_config = (strstr(arg1, ".cfg") != nullptr);
-  const char* program = nullptr;
+  std::string program;
 
   // Create memory and CPU
   qkz80_cpu_mem memory;
@@ -2381,9 +2416,9 @@ int main(int argc, char** argv) {
       fprintf(stderr, "No 'program' directive in config file\n");
       return 1;
     }
-    program = cpm.config_program.c_str();
+    program = resolve_program_name(cpm.config_program.c_str());
   } else {
-    program = arg1;
+    program = resolve_program_name(arg1);
   }
 
   // Setup CP/M memory
@@ -2496,9 +2531,9 @@ int main(int argc, char** argv) {
   }
 
   // Load .COM file at 0x0100
-  FILE* fp = fopen(program, "rb");
+  FILE* fp = fopen(program.c_str(), "rb");
   if (!fp) {
-    fprintf(stderr, "Cannot open %s: %s\n", program, strerror(errno));
+    fprintf(stderr, "Cannot open %s: %s\n", program.c_str(), strerror(errno));
     return 1;
   }
 
@@ -2506,7 +2541,7 @@ int main(int argc, char** argv) {
   size_t loaded = fread(&mem[TPA_START], 1, 0xE000, fp);
   fclose(fp);
 
-  fprintf(stderr, "Loaded %zu bytes from %s\n", loaded, program);
+  fprintf(stderr, "Loaded %zu bytes from %s\n", loaded, program.c_str());
 
   // Set PC to start of TPA
   cpu.regs.PC.set_pair16(TPA_START);
