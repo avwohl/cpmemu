@@ -36,6 +36,37 @@ SSSD_DIR_ENTRIES = 64
 SSSD_BOOT_TRACKS = 2
 SSSD_SIZE = SSSD_TRACKS * SSSD_SECTORS_PER_TRACK * SSSD_SECTOR_SIZE  # 256,256 bytes
 SSSD_DIR_START = SSSD_BOOT_TRACKS * SSSD_SECTORS_PER_TRACK * SSSD_SECTOR_SIZE  # 6656 bytes
+SSSD_SKEW = 6  # Standard ibm-3740 sector skew (boot tracks have no skew)
+
+
+def generate_skew_table(sectors, skew):
+    """Generate sector translation table for given skew factor.
+
+    Returns a list where table[logical_sector] = physical_sector (0-indexed).
+    Uses the standard CP/M algorithm to avoid sector collisions.
+    """
+    if skew == 0:
+        return list(range(sectors))
+
+    # table[physical] = logical during construction
+    table = [None] * sectors
+    physical = 0
+    for logical in range(sectors):
+        # Find next free physical sector
+        while table[physical] is not None:
+            physical = (physical + 1) % sectors
+        table[physical] = logical
+        physical = (physical + skew) % sectors
+
+    # Invert: we want logical_to_physical
+    logical_to_physical = [0] * sectors
+    for phys, log in enumerate(table):
+        logical_to_physical[log] = phys
+    return logical_to_physical
+
+
+# Pre-computed skew table for ibm-3740
+SSSD_SKEW_TABLE = generate_skew_table(SSSD_SECTORS_PER_TRACK, SSSD_SKEW)
 
 # hd1k format constants
 BLOCK_SIZE = 4096  # 4KB blocks for hd1k
@@ -216,15 +247,104 @@ class SssdDisk:
     BLOCKS_PER_EXTENT = 16
     RECORDS_PER_BLOCK = BLOCK_SIZE // 128  # 8 records per 1KB block
 
-    def __init__(self, disk_data):
+    def __init__(self, disk_data, use_skew=True):
         self.data = disk_data
+        self.use_skew = use_skew
+        self.skew_table = SSSD_SKEW_TABLE if use_skew else list(range(self.SECTORS_PER_TRACK))
+
+    def logical_sector_to_offset(self, track, logical_sector):
+        """Convert (track, logical_sector) to byte offset in disk image.
+
+        Boot tracks (0-1) have no skew; data tracks use skew table.
+        logical_sector is 0-indexed.
+        """
+        if track < self.BOOT_TRACKS:
+            # Boot tracks: no skew
+            physical_sector = logical_sector
+        else:
+            # Data tracks: apply skew
+            physical_sector = self.skew_table[logical_sector]
+        return (track * self.SECTORS_PER_TRACK + physical_sector) * self.SECTOR_SIZE
+
+    def read_sector(self, track, logical_sector):
+        """Read a single logical sector from disk."""
+        offset = self.logical_sector_to_offset(track, logical_sector)
+        return bytes(self.data[offset:offset + self.SECTOR_SIZE])
+
+    def write_sector(self, track, logical_sector, data):
+        """Write a single logical sector to disk."""
+        offset = self.logical_sector_to_offset(track, logical_sector)
+        self.data[offset:offset + self.SECTOR_SIZE] = data[:self.SECTOR_SIZE]
+
+    def read_block(self, block_num):
+        """Read a block (8 consecutive logical sectors) from the data area.
+
+        Block 0 starts at track BOOT_TRACKS (directory), blocks are numbered
+        sequentially across tracks.
+        """
+        # Calculate starting track and sector for this block
+        sectors_per_block = self.BLOCK_SIZE // self.SECTOR_SIZE  # 8
+        logical_sector_num = block_num * sectors_per_block
+        track = self.BOOT_TRACKS + (logical_sector_num // self.SECTORS_PER_TRACK)
+        sector_in_track = logical_sector_num % self.SECTORS_PER_TRACK
+
+        result = bytearray()
+        for i in range(sectors_per_block):
+            current_sector = sector_in_track + i
+            current_track = track
+            # Handle track crossing
+            while current_sector >= self.SECTORS_PER_TRACK:
+                current_sector -= self.SECTORS_PER_TRACK
+                current_track += 1
+            result.extend(self.read_sector(current_track, current_sector))
+        return bytes(result)
+
+    def write_block(self, block_num, data):
+        """Write a block (8 consecutive logical sectors) to the data area."""
+        sectors_per_block = self.BLOCK_SIZE // self.SECTOR_SIZE  # 8
+        logical_sector_num = block_num * sectors_per_block
+        track = self.BOOT_TRACKS + (logical_sector_num // self.SECTORS_PER_TRACK)
+        sector_in_track = logical_sector_num % self.SECTORS_PER_TRACK
+
+        # Pad data to block size if needed
+        if len(data) < self.BLOCK_SIZE:
+            data = data + bytes([0x1A] * (self.BLOCK_SIZE - len(data)))
+
+        for i in range(sectors_per_block):
+            current_sector = sector_in_track + i
+            current_track = track
+            while current_sector >= self.SECTORS_PER_TRACK:
+                current_sector -= self.SECTORS_PER_TRACK
+                current_track += 1
+            sector_data = data[i * self.SECTOR_SIZE:(i + 1) * self.SECTOR_SIZE]
+            self.write_sector(current_track, current_sector, sector_data)
+
+    def read_dir_entry(self, entry_num):
+        """Read a directory entry (32 bytes) by entry number."""
+        # Directory entries are in blocks 0 and 1
+        # Each block = 1024 bytes = 32 entries
+        block_num = entry_num // 32
+        offset_in_block = (entry_num % 32) * 32
+        block_data = self.read_block(block_num)
+        return bytes(block_data[offset_in_block:offset_in_block + 32])
+
+    def write_dir_entry(self, entry_num, entry_data):
+        """Write a directory entry (32 bytes) by entry number."""
+        block_num = entry_num // 32
+        offset_in_block = (entry_num % 32) * 32
+        block_data = bytearray(self.read_block(block_num))
+        block_data[offset_in_block:offset_in_block + 32] = entry_data[:32]
+        self.write_block(block_num, bytes(block_data))
 
     def find_free_dir_entry(self):
-        """Find first free directory entry (starts with 0xE5)."""
+        """Find first free directory entry (starts with 0xE5).
+
+        Returns entry number (not byte offset).
+        """
         for i in range(self.DIR_ENTRIES):
-            offset = self.DIR_START + (i * 32)
-            if self.data[offset] == 0xE5:
-                return offset
+            entry = self.read_dir_entry(i)
+            if entry[0] == 0xE5:
+                return i
         return None
 
     def find_max_block(self):
@@ -236,11 +356,11 @@ class SssdDisk:
         # Directory = 64 entries * 32 bytes = 2048 bytes = 2 blocks
         max_block = 1
         for i in range(self.DIR_ENTRIES):
-            offset = self.DIR_START + (i * 32)
-            if self.data[offset] != 0xE5:
+            entry = self.read_dir_entry(i)
+            if entry[0] != 0xE5:
                 # 8-bit block pointers for SSSD (16 pointers per entry)
                 for j in range(16):
-                    block = self.data[offset + 16 + j]
+                    block = entry[16 + j]
                     if block > max_block and block != 0:
                         max_block = block
         return max_block
@@ -276,12 +396,9 @@ class SssdDisk:
         # Write file data to blocks first
         for i in range(blocks_needed):
             block_num = next_block + i
-            block_offset = self.DIR_START + (block_num * self.BLOCK_SIZE)
             data_offset = i * self.BLOCK_SIZE
             chunk = file_data[data_offset:data_offset + self.BLOCK_SIZE]
-            if len(chunk) < self.BLOCK_SIZE:
-                chunk = chunk + bytes([0x1A] * (self.BLOCK_SIZE - len(chunk)))
-            self.data[block_offset:block_offset + self.BLOCK_SIZE] = chunk
+            self.write_block(block_num, chunk)
 
         # Create directory entries
         # For SSSD: EXM=0, each extent = 128 records, 16 blocks max per entry
@@ -289,8 +406,8 @@ class SssdDisk:
         block_idx = 0
 
         while block_idx < blocks_needed:
-            dir_offset = self.find_free_dir_entry()
-            if dir_offset is None:
+            dir_entry_num = self.find_free_dir_entry()
+            if dir_entry_num is None:
                 print(f"No free directory entry for {filename} extent {extent_num}")
                 return False
 
@@ -323,7 +440,7 @@ class SssdDisk:
             for i, block in enumerate(extent_blocks):
                 entry[16 + i] = block & 0xFF
 
-            self.data[dir_offset:dir_offset + 32] = entry
+            self.write_dir_entry(dir_entry_num, entry)
 
             block_idx += len(extent_blocks)
             extent_num += 1
@@ -334,12 +451,12 @@ class SssdDisk:
         """List all files in the directory."""
         files = {}
         for i in range(self.DIR_ENTRIES):
-            offset = self.DIR_START + (i * 32)
-            user = self.data[offset]
+            entry = self.read_dir_entry(i)
+            user = entry[0]
             if user != 0xE5 and user < 32:
                 # Mask off attribute bits from extension bytes
-                name_bytes = self.data[offset + 1:offset + 9]
-                ext_bytes = bytes([b & 0x7F for b in self.data[offset + 9:offset + 12]])
+                name_bytes = entry[1:9]
+                ext_bytes = bytes([b & 0x7F for b in entry[9:12]])
                 if not all(0x20 <= b <= 0x7E for b in name_bytes):
                     continue
                 if not all(0x20 <= b <= 0x7E for b in ext_bytes):
@@ -347,10 +464,10 @@ class SssdDisk:
 
                 name = name_bytes.decode('ascii').rstrip()
                 ext = ext_bytes.decode('ascii').rstrip()
-                extent_lo = self.data[offset + 12]
-                extent_hi = self.data[offset + 14]
+                extent_lo = entry[12]
+                extent_hi = entry[14]
                 extent = extent_lo + (extent_hi << 5)
-                records = self.data[offset + 15]
+                records = entry[15]
 
                 fullname = f"{name}.{ext}" if ext else name
                 key = (user, fullname)
@@ -364,7 +481,7 @@ class SssdDisk:
 
                 # 8-bit block pointers
                 for j in range(16):
-                    block = self.data[offset + 16 + j]
+                    block = entry[16 + j]
                     if block > 0:
                         files[key]['blocks'].append(block)
 
@@ -378,14 +495,17 @@ class SssdDisk:
 
         deleted_count = 0
         for i in range(self.DIR_ENTRIES):
-            offset = self.DIR_START + (i * 32)
-            entry_user = self.data[offset]
+            entry = self.read_dir_entry(i)
+            entry_user = entry[0]
             if entry_user == user:
-                entry_name = bytes(self.data[offset + 1:offset + 9]).decode('ascii')
-                entry_ext_bytes = bytes([b & 0x7F for b in self.data[offset + 9:offset + 12]])
+                entry_name = bytes(entry[1:9]).decode('ascii')
+                entry_ext_bytes = bytes([b & 0x7F for b in entry[9:12]])
                 entry_ext = entry_ext_bytes.decode('ascii')
                 if entry_name == name and entry_ext == ext:
-                    self.data[offset] = 0xE5
+                    # Mark entry as deleted
+                    deleted_entry = bytearray(entry)
+                    deleted_entry[0] = 0xE5
+                    self.write_dir_entry(i, deleted_entry)
                     deleted_count += 1
 
         return deleted_count
@@ -402,26 +522,26 @@ class SssdDisk:
         # Collect all extents for this file
         extents = {}
         for i in range(self.DIR_ENTRIES):
-            offset = self.DIR_START + (i * 32)
-            entry_user = self.data[offset]
+            entry = self.read_dir_entry(i)
+            entry_user = entry[0]
             if entry_user == user:
                 # Mask off attribute bits from name bytes too (high bit can be set)
-                entry_name_bytes = bytes([b & 0x7F for b in self.data[offset + 1:offset + 9]])
-                entry_ext_bytes = bytes([b & 0x7F for b in self.data[offset + 9:offset + 12]])
+                entry_name_bytes = bytes([b & 0x7F for b in entry[1:9]])
+                entry_ext_bytes = bytes([b & 0x7F for b in entry[9:12]])
                 try:
                     entry_name = entry_name_bytes.decode('ascii')
                     entry_ext = entry_ext_bytes.decode('ascii')
                 except UnicodeDecodeError:
                     continue
                 if entry_name == name and entry_ext == ext:
-                    extent_lo = self.data[offset + 12]
-                    extent_hi = self.data[offset + 14]
+                    extent_lo = entry[12]
+                    extent_hi = entry[14]
                     extent_num = extent_lo + (extent_hi << 5)
-                    records = self.data[offset + 15]
+                    records = entry[15]
                     blocks = []
                     # 8-bit block pointers
                     for j in range(16):
-                        block = self.data[offset + 16 + j]
+                        block = entry[16 + j]
                         if block > 0:
                             blocks.append(block)
                     extents[extent_num] = (records, blocks)
@@ -434,8 +554,7 @@ class SssdDisk:
         for ext_num in sorted(extents.keys()):
             records, blocks = extents[ext_num]
             for block in blocks:
-                block_offset = self.DIR_START + (block * self.BLOCK_SIZE)
-                file_data.extend(self.data[block_offset:block_offset + self.BLOCK_SIZE])
+                file_data.extend(self.read_block(block))
 
         # Trim to actual size
         last_ext = max(extents.keys())
@@ -990,7 +1109,11 @@ def get_disk_object(disk_data, format_hint=None):
 
     Args:
         disk_data: The disk image data
-        format_hint: Optional format override ('sssd', 'hd1k', 'combo')
+        format_hint: Optional format override. Values:
+            'sssd' - ibm-3740 with skew (default for 256KB disks)
+            'sssd-noskew' - ibm-3740 without skew
+            'hd1k' - standard hd1k format
+            'combo' - combo disk with MBR
 
     Returns:
         Disk object (SssdDisk, Hd1kDisk, or ComboDisk)
@@ -1001,7 +1124,9 @@ def get_disk_object(disk_data, format_hint=None):
         fmt = detect_disk_format(disk_data)
 
     if fmt == 'sssd':
-        return SssdDisk(disk_data)
+        return SssdDisk(disk_data, use_skew=True)
+    elif fmt == 'sssd-noskew':
+        return SssdDisk(disk_data, use_skew=False)
     elif fmt == 'combo':
         return ComboDisk(disk_data)
     else:
@@ -1013,19 +1138,25 @@ def is_combo_disk(disk_data):
     return detect_disk_format(disk_data) == 'combo'
 
 
+def get_format_hint(args, disk_data):
+    """Determine format hint from args and disk data."""
+    if getattr(args, 'sssd', False):
+        return 'sssd-noskew' if getattr(args, 'no_skew', False) else 'sssd'
+    elif getattr(args, 'combo', False):
+        return 'combo'
+    elif getattr(args, 'no_skew', False):
+        # Auto-detect but force no-skew for SSSD
+        if detect_disk_format(disk_data) == 'sssd':
+            return 'sssd-noskew'
+    return None
+
+
 def cmd_add(args):
     """Add files to a disk image."""
     with open(args.disk, 'rb') as f:
         disk_data = bytearray(f.read())
 
-    # Determine format (explicit flags override auto-detect)
-    format_hint = None
-    if getattr(args, 'sssd', False):
-        format_hint = 'sssd'
-    elif getattr(args, 'combo', False):
-        format_hint = 'combo'
-
-    disk = get_disk_object(disk_data, format_hint)
+    disk = get_disk_object(disk_data, get_format_hint(args, disk_data))
 
     sys_attr = getattr(args, 'sys', False)
     user = getattr(args, 'user', 0)
@@ -1049,14 +1180,7 @@ def cmd_list(args):
     with open(args.disk, 'rb') as f:
         disk_data = bytearray(f.read())
 
-    # Determine format (explicit flags override auto-detect)
-    format_hint = None
-    if getattr(args, 'sssd', False):
-        format_hint = 'sssd'
-    elif getattr(args, 'combo', False):
-        format_hint = 'combo'
-
-    disk = get_disk_object(disk_data, format_hint)
+    disk = get_disk_object(disk_data, get_format_hint(args, disk_data))
     files = disk.list_files()
 
     if not files:
@@ -1079,14 +1203,7 @@ def cmd_delete(args):
     with open(args.disk, 'rb') as f:
         disk_data = bytearray(f.read())
 
-    # Determine format (explicit flags override auto-detect)
-    format_hint = None
-    if getattr(args, 'sssd', False):
-        format_hint = 'sssd'
-    elif getattr(args, 'combo', False):
-        format_hint = 'combo'
-
-    disk = get_disk_object(disk_data, format_hint)
+    disk = get_disk_object(disk_data, get_format_hint(args, disk_data))
 
     # Get list of all files
     files = disk.list_files()
@@ -1128,14 +1245,7 @@ def cmd_extract(args):
     with open(args.disk, 'rb') as f:
         disk_data = bytearray(f.read())
 
-    # Determine format (explicit flags override auto-detect)
-    format_hint = None
-    if getattr(args, 'sssd', False):
-        format_hint = 'sssd'
-    elif getattr(args, 'combo', False):
-        format_hint = 'combo'
-
-    disk = get_disk_object(disk_data, format_hint)
+    disk = get_disk_object(disk_data, get_format_hint(args, disk_data))
 
     user = getattr(args, 'user', 0)
     output_dir = getattr(args, 'output', '.')
@@ -1173,6 +1283,8 @@ def main():
                               help='Create SSSD (ibm-3740) format (250KB)')
     create_group.add_argument('--combo', action='store_true',
                               help='Create combo format (51MB) instead of single hd1k (8MB)')
+    create_parser.add_argument('--no-skew', action='store_true',
+                               help='SSSD: create without sector interleave (for emulators)')
     create_parser.add_argument('--force', '-f', action='store_true',
                                help='Overwrite existing file')
     create_parser.add_argument('disk', help='Disk image file to create')
@@ -1185,6 +1297,8 @@ def main():
                             help='Disk is SSSD (ibm-3740) format')
     add_format.add_argument('--combo', action='store_true',
                             help='Disk is combo format (1MB prefix)')
+    add_parser.add_argument('--no-skew', action='store_true',
+                           help='Disable sector skew (SSSD only)')
     add_parser.add_argument('--sys', '-s', action='store_true',
                            help='Set SYS attribute on files (makes visible from any user area)')
     add_parser.add_argument('--user', '-u', type=int, default=0,
@@ -1200,6 +1314,8 @@ def main():
                              help='Disk is SSSD (ibm-3740) format')
     list_format.add_argument('--combo', action='store_true',
                              help='Disk is combo format (1MB prefix)')
+    list_parser.add_argument('--no-skew', action='store_true',
+                             help='Disable sector skew (SSSD only)')
     list_parser.add_argument('disk', help='Disk image file')
     list_parser.set_defaults(func=cmd_list)
 
@@ -1210,6 +1326,8 @@ def main():
                                help='Disk is SSSD (ibm-3740) format')
     delete_format.add_argument('--combo', action='store_true',
                                help='Disk is combo format (1MB prefix)')
+    delete_parser.add_argument('--no-skew', action='store_true',
+                               help='Disable sector skew (SSSD only)')
     delete_parser.add_argument('disk', help='Disk image file')
     delete_parser.add_argument('files', nargs='+', help='Files to delete')
     delete_parser.set_defaults(func=cmd_delete)
@@ -1221,6 +1339,8 @@ def main():
                                 help='Disk is SSSD (ibm-3740) format')
     extract_format.add_argument('--combo', action='store_true',
                                 help='Disk is combo format (1MB prefix)')
+    extract_parser.add_argument('--no-skew', action='store_true',
+                                help='Disable sector skew (SSSD only)')
     extract_parser.add_argument('--user', '-u', type=int, default=0,
                                 help='User number to extract from (0-15, default 0)')
     extract_parser.add_argument('--output', '-o', default='.',
