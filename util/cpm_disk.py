@@ -14,6 +14,13 @@ Usage:
   cpm_disk.py list <disk.img>                      # List files in disk
   cpm_disk.py delete <disk.img> <file1.com> [...]  # Delete files from disk
   cpm_disk.py extract <disk.img> <file1.com> [...] # Extract files from disk
+  cpm_disk.py read-boot <disk.img> <output.bin>    # Read boot area to file
+  cpm_disk.py write-boot <disk.img> <input.bin>    # Write boot area from file
+
+Boot area sizes:
+  - SSSD:  6656 bytes  (2 tracks x 26 sectors x 128 bytes, no skew)
+  - hd1k:  16384 bytes (2 tracks x 16 sectors x 512 bytes)
+  - combo: 16384 bytes (after 1MB prefix)
 
 Format is auto-detected for existing disks based on file size.
 """
@@ -562,6 +569,39 @@ class SssdDisk:
         actual_size = total_records * 128
         return bytes(file_data[:actual_size])
 
+    def read_boot_area(self):
+        """Read the boot area (first 2 tracks) from the disk.
+
+        Boot tracks have no sector skew applied - they are read sequentially.
+        Returns 6656 bytes (2 tracks × 26 sectors × 128 bytes).
+        """
+        boot_size = self.BOOT_TRACKS * self.SECTORS_PER_TRACK * self.SECTOR_SIZE
+        result = bytearray()
+        for track in range(self.BOOT_TRACKS):
+            for sector in range(self.SECTORS_PER_TRACK):
+                result.extend(self.read_sector(track, sector))
+        return bytes(result)
+
+    def write_boot_area(self, data):
+        """Write data to the boot area (first 2 tracks) of the disk.
+
+        Boot tracks have no sector skew applied - they are written sequentially.
+        Data is padded or truncated to exactly 6656 bytes.
+        """
+        boot_size = self.BOOT_TRACKS * self.SECTORS_PER_TRACK * self.SECTOR_SIZE
+        # Pad or truncate to boot area size
+        if len(data) < boot_size:
+            data = data + bytes(boot_size - len(data))
+        elif len(data) > boot_size:
+            data = data[:boot_size]
+
+        offset = 0
+        for track in range(self.BOOT_TRACKS):
+            for sector in range(self.SECTORS_PER_TRACK):
+                sector_data = data[offset:offset + self.SECTOR_SIZE]
+                self.write_sector(track, sector, sector_data)
+                offset += self.SECTOR_SIZE
+
 
 class Hd1kDisk:
     """Standard hd1k disk format (RomWBW compatible)."""
@@ -809,6 +849,29 @@ class Hd1kDisk:
         actual_size = total_records * 128
         return bytes(file_data[:actual_size])
 
+    def read_boot_area(self):
+        """Read the boot area (first 2 tracks) from the disk.
+
+        Returns 16384 bytes (2 tracks × 16 sectors × 512 bytes).
+        No skew is applied to hard disk formats.
+        """
+        boot_size = self.BOOT_TRACKS * self.SECTORS_PER_TRACK * SECTOR_SIZE_HD
+        return bytes(self.data[:boot_size])
+
+    def write_boot_area(self, data):
+        """Write data to the boot area (first 2 tracks) of the disk.
+
+        Data is padded or truncated to exactly 16384 bytes.
+        No skew is applied to hard disk formats.
+        """
+        boot_size = self.BOOT_TRACKS * self.SECTORS_PER_TRACK * SECTOR_SIZE_HD
+        # Pad or truncate to boot area size
+        if len(data) < boot_size:
+            data = data + bytes(boot_size - len(data))
+        elif len(data) > boot_size:
+            data = data[:boot_size]
+        self.data[:boot_size] = data
+
 
 class ComboDisk:
     """Combo disk with 1MB prefix."""
@@ -1048,6 +1111,33 @@ class ComboDisk:
         actual_size = total_records * 128
         return bytes(file_data[:actual_size])
 
+    def read_boot_area(self):
+        """Read the boot area (first 2 tracks) from the first slice.
+
+        Returns 16384 bytes (2 tracks × 16 sectors × 512 bytes).
+        Boot area starts after the 1MB MBR prefix.
+        No skew is applied to hard disk formats.
+        """
+        boot_size = self.BOOT_TRACKS * self.TRACK_SIZE
+        start = self.PREFIX_SIZE
+        return bytes(self.data[start:start + boot_size])
+
+    def write_boot_area(self, data):
+        """Write data to the boot area (first 2 tracks) of the first slice.
+
+        Data is padded or truncated to exactly 16384 bytes.
+        Boot area starts after the 1MB MBR prefix.
+        No skew is applied to hard disk formats.
+        """
+        boot_size = self.BOOT_TRACKS * self.TRACK_SIZE
+        # Pad or truncate to boot area size
+        if len(data) < boot_size:
+            data = data + bytes(boot_size - len(data))
+        elif len(data) > boot_size:
+            data = data[:boot_size]
+        start = self.PREFIX_SIZE
+        self.data[start:start + boot_size] = data
+
 
 def cmd_create(args):
     """Create a new empty formatted disk image."""
@@ -1267,6 +1357,42 @@ def cmd_extract(args):
     return 0
 
 
+def cmd_read_boot(args):
+    """Read boot area from disk image to a file."""
+    with open(args.disk, 'rb') as f:
+        disk_data = bytearray(f.read())
+
+    disk = get_disk_object(disk_data, get_format_hint(args, disk_data))
+    boot_data = disk.read_boot_area()
+
+    with open(args.output, 'wb') as f:
+        f.write(boot_data)
+
+    fmt = detect_disk_format(disk_data)
+    print(f"Read {len(boot_data)} bytes boot area from {args.disk} ({fmt}) -> {args.output}")
+    return 0
+
+
+def cmd_write_boot(args):
+    """Write boot area to disk image from a file."""
+    with open(args.disk, 'rb') as f:
+        disk_data = bytearray(f.read())
+
+    disk = get_disk_object(disk_data, get_format_hint(args, disk_data))
+
+    with open(args.input, 'rb') as f:
+        boot_data = f.read()
+
+    disk.write_boot_area(boot_data)
+
+    with open(args.disk, 'wb') as f:
+        f.write(disk_data)
+
+    fmt = detect_disk_format(disk_data)
+    print(f"Wrote {len(boot_data)} bytes to boot area of {args.disk} ({fmt})")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='CP/M disk image utility',
@@ -1348,6 +1474,32 @@ def main():
     extract_parser.add_argument('disk', help='Disk image file')
     extract_parser.add_argument('files', nargs='+', help='Files to extract')
     extract_parser.set_defaults(func=cmd_extract)
+
+    # Read-boot command
+    read_boot_parser = subparsers.add_parser('read-boot', help='Read boot area from disk image')
+    read_boot_format = read_boot_parser.add_mutually_exclusive_group()
+    read_boot_format.add_argument('--sssd', action='store_true',
+                                  help='Disk is SSSD (ibm-3740) format')
+    read_boot_format.add_argument('--combo', action='store_true',
+                                  help='Disk is combo format (1MB prefix)')
+    read_boot_parser.add_argument('--no-skew', action='store_true',
+                                  help='Disable sector skew (SSSD only)')
+    read_boot_parser.add_argument('disk', help='Disk image file')
+    read_boot_parser.add_argument('output', help='Output file for boot area')
+    read_boot_parser.set_defaults(func=cmd_read_boot)
+
+    # Write-boot command
+    write_boot_parser = subparsers.add_parser('write-boot', help='Write boot area to disk image')
+    write_boot_format = write_boot_parser.add_mutually_exclusive_group()
+    write_boot_format.add_argument('--sssd', action='store_true',
+                                   help='Disk is SSSD (ibm-3740) format')
+    write_boot_format.add_argument('--combo', action='store_true',
+                                   help='Disk is combo format (1MB prefix)')
+    write_boot_parser.add_argument('--no-skew', action='store_true',
+                                   help='Disable sector skew (SSSD only)')
+    write_boot_parser.add_argument('disk', help='Disk image file')
+    write_boot_parser.add_argument('input', help='Input file containing boot area data')
+    write_boot_parser.set_defaults(func=cmd_write_boot)
 
     args = parser.parse_args()
     return args.func(args)
