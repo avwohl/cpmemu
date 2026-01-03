@@ -10,7 +10,8 @@ qkz80::qkz80(qkz80_cpu_mem *memory):
   cycles(0),
   int_pending(false),
   nmi_pending(false),
-  int_vector(0xFF) { // Default to Z80 mode
+  int_vector(0xFF),
+  ei_delay(false) { // Default to Z80 mode
   regs.cpu_mode = qkz80_reg_set::MODE_Z80;
 }
 
@@ -87,6 +88,13 @@ void qkz80::request_rst(qkz80_uint8 rst_num) {
 }
 
 bool qkz80::check_interrupts(void) {
+  // Z80 EI delay: after EI, one more instruction must execute before
+  // interrupts are accepted. This is critical for EI; RET sequences.
+  if (ei_delay) {
+    ei_delay = false;
+    return false;  // Skip this check, let the next instruction execute
+  }
+
   // NMI has highest priority and cannot be disabled
   if (nmi_pending) {
     nmi_pending = false;
@@ -2109,6 +2117,7 @@ void qkz80::execute(void) {
   case 0xfb: // EI
     regs.IFF1 = 1;
     regs.IFF2 = 1;
+    ei_delay = true;  // Z80: next instruction executes before interrupts are accepted
     trace->asm_op("ei");
     return;
 
