@@ -14,8 +14,10 @@ Usage:
   cpm_disk.py list <disk.img>                      # List files in disk
   cpm_disk.py delete <disk.img> <file1.com> [...]  # Delete files from disk
   cpm_disk.py extract <disk.img> <file1.com> [...] # Extract files from disk
-  cpm_disk.py read-boot <disk.img> <output.bin>    # Read boot area to file
-  cpm_disk.py write-boot <disk.img> <input.bin>    # Write boot area from file
+  cpm_disk.py read-boot <disk.img> <output.bin>       # Read boot area to file
+  cpm_disk.py write-boot <disk.img> <input.bin>       # Write to sector 0
+  cpm_disk.py write-boot <disk.img> <input.bin> 4     # Write starting at sector 4
+  cpm_disk.py write-boot <disk.img> <input.bin> 4 2   # Write at sector 4, pad to 2 sectors
 
 Boot area sizes:
   - SSSD:  6656 bytes  (2 tracks x 26 sectors x 128 bytes, no skew)
@@ -606,6 +608,7 @@ class SssdDisk:
 class Hd1kDisk:
     """Standard hd1k disk format (RomWBW compatible)."""
 
+    SECTOR_SIZE = SECTOR_SIZE_HD  # 512 bytes
     SECTORS_PER_TRACK = 16
     DIR_ENTRIES = 1024
     BOOT_TRACKS = 2
@@ -876,6 +879,7 @@ class Hd1kDisk:
 class ComboDisk:
     """Combo disk with 1MB prefix."""
 
+    SECTOR_SIZE = SECTOR_SIZE_HD  # 512 bytes
     SECTORS_PER_TRACK = 16
     TRACK_SIZE = SECTOR_SIZE_HD * SECTORS_PER_TRACK
     DIR_ENTRIES = 1024
@@ -1379,17 +1383,55 @@ def cmd_write_boot(args):
         disk_data = bytearray(f.read())
 
     disk = get_disk_object(disk_data, get_format_hint(args, disk_data))
+    fmt = detect_disk_format(disk_data)
 
     with open(args.input, 'rb') as f:
-        boot_data = f.read()
+        file_data = f.read()
 
-    disk.write_boot_area(boot_data)
+    sector_size = disk.SECTOR_SIZE
+    total_boot_sectors = disk.BOOT_TRACKS * disk.SECTORS_PER_TRACK
+    start_sector = getattr(args, 'sector', 0) or 0
+    length_sectors = getattr(args, 'length', None)
+
+    # Validate start sector
+    if start_sector < 0 or start_sector >= total_boot_sectors:
+        print(f"Error: sector {start_sector} out of range (0-{total_boot_sectors - 1})")
+        return 1
+
+    # Calculate how many sectors the file needs
+    file_sectors = (len(file_data) + sector_size - 1) // sector_size
+
+    # If length specified, pad or check bounds
+    if length_sectors is not None:
+        if length_sectors < file_sectors:
+            print(f"Error: file needs {file_sectors} sectors but length is only {length_sectors}")
+            return 1
+        # Pad file to specified length
+        target_size = length_sectors * sector_size
+        file_data = file_data + bytes(target_size - len(file_data))
+        file_sectors = length_sectors
+
+    # Check if it fits in boot area
+    if start_sector + file_sectors > total_boot_sectors:
+        print(f"Error: {file_sectors} sector(s) at sector {start_sector} exceeds boot area ({total_boot_sectors} sectors)")
+        return 1
+
+    # Read current boot area, overlay file data, write back
+    boot_area = bytearray(disk.read_boot_area())
+    offset = start_sector * sector_size
+    # Pad file_data to sector boundary
+    if len(file_data) % sector_size != 0:
+        file_data = file_data + bytes(sector_size - (len(file_data) % sector_size))
+    boot_area[offset:offset + len(file_data)] = file_data
+    disk.write_boot_area(bytes(boot_area))
 
     with open(args.disk, 'wb') as f:
         f.write(disk_data)
 
-    fmt = detect_disk_format(disk_data)
-    print(f"Wrote {len(boot_data)} bytes to boot area of {args.disk} ({fmt})")
+    if length_sectors is not None:
+        print(f"Wrote {len(file_data)} bytes ({file_sectors} sectors) to sector {start_sector} of {args.disk} ({fmt})")
+    else:
+        print(f"Wrote {len(file_data)} bytes to sector {start_sector} of {args.disk} ({fmt})")
     return 0
 
 
@@ -1499,6 +1541,10 @@ def main():
                                    help='Disable sector skew (SSSD only)')
     write_boot_parser.add_argument('disk', help='Disk image file')
     write_boot_parser.add_argument('input', help='Input file containing boot area data')
+    write_boot_parser.add_argument('sector', nargs='?', type=int, default=0,
+                                   help='Starting sector in boot area (default: 0)')
+    write_boot_parser.add_argument('length', nargs='?', type=int, default=None,
+                                   help='Length in sectors (pads with zeros if file is shorter)')
     write_boot_parser.set_defaults(func=cmd_write_boot)
 
     if len(sys.argv) == 1:
