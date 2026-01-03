@@ -48,6 +48,7 @@ class qkz80 {
   bool int_pending;       // Maskable interrupt pending
   bool nmi_pending;       // Non-maskable interrupt pending
   qkz80_uint8 int_vector; // Vector for IM0/IM2 (ignored in IM1)
+  bool ei_delay;          // EI delay: Z80 executes one more instruction after EI before accepting interrupts
 
   // Constructor takes a memory object pointer
   qkz80(qkz80_cpu_mem *memory);
