@@ -1501,6 +1501,10 @@ def main():
     write_boot_parser.add_argument('input', help='Input file containing boot area data')
     write_boot_parser.set_defaults(func=cmd_write_boot)
 
+    if len(sys.argv) == 1:
+        parser.print_help()
+        return 0
+
     args = parser.parse_args()
     return args.func(args)
 
