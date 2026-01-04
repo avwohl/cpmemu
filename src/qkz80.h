@@ -49,6 +49,7 @@ class qkz80 {
   bool nmi_pending;       // Non-maskable interrupt pending
   qkz80_uint8 int_vector; // Vector for IM0/IM2 (ignored in IM1)
   bool ei_delay;          // EI delay: Z80 executes one more instruction after EI before accepting interrupts
+  bool halted_;           // CPU is halted (waiting for interrupt)
 
   // Constructor takes a memory object pointer
   qkz80(qkz80_cpu_mem *memory);
@@ -83,8 +84,13 @@ class qkz80 {
   virtual void port_out(qkz80_uint8 port, qkz80_uint8 value);
   virtual qkz80_uint8 port_in(qkz80_uint8 port);
 
-  // HALT instruction - override in subclass to customize behavior
+  // HALT instruction - sets halted_ flag
   virtual void halt(void);
+
+  // Check if CPU is halted (waiting for interrupt)
+  bool is_halted() const { return halted_; }
+  void clear_halted() { halted_ = false; }
+  void set_halted() { halted_ = true; }
 
   // Unimplemented opcode handler - override in subclass to customize behavior
   virtual void unimplemented_opcode(qkz80_uint8 opcode, qkz80_uint16 pc);

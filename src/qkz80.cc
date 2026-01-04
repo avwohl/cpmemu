@@ -11,7 +11,8 @@ qkz80::qkz80(qkz80_cpu_mem *memory):
   int_pending(false),
   nmi_pending(false),
   int_vector(0xFF),
-  ei_delay(false) { // Default to Z80 mode
+  ei_delay(false),
+  halted_(false) { // Default to Z80 mode
   regs.cpu_mode = qkz80_reg_set::MODE_Z80;
 }
 
@@ -59,7 +60,7 @@ void qkz80::debug_dump_regs(const char* label) {
 }
 
 void qkz80::halt(void) {
-  // Empty - override in subclass to handle halt
+  halted_ = true;
 }
 
 void qkz80::unimplemented_opcode(qkz80_uint8 opcode, qkz80_uint16 pc) {
