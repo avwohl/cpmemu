@@ -651,10 +651,16 @@ class Hd1kDisk:
             sys_attr: If True, set the SYS attribute (makes file visible from any user area)
             user: User number (0-15)
         """
-        # Parse filename (8.3 format)
+        # Parse filename (8.3 format) - uppercase for CP/M compatibility
         name, ext = os.path.splitext(filename.upper())
         name = name[:8].ljust(8)
         ext = ext[1:4].ljust(3) if ext else '   '
+
+        # Delete existing file with same name to avoid duplicates
+        cpm_filename = (name.rstrip() + '.' + ext.rstrip()).rstrip('.')
+        deleted = self.delete_file(cpm_filename, user)
+        if deleted:
+            print(f"  (replaced existing {cpm_filename})")
 
         num_records = (len(file_data) + 127) // 128
         records_per_block = BLOCK_SIZE // 128  # 32 records per 4KB block
@@ -1153,12 +1159,24 @@ def cmd_create(args):
     if getattr(args, 'sssd', False):
         disk_data = create_sssd_disk()
         size_desc = f"{len(disk_data) // 1024}KB SSSD (ibm-3740)"
+        fmt = 'sssd'
     elif getattr(args, 'combo', False):
         disk_data = create_hd1k_disk(combo=True)
         size_desc = f"{len(disk_data) // 1048576}MB combo (6 slices)"
+        fmt = 'combo'
     else:
         disk_data = create_hd1k_disk(combo=False)
         size_desc = f"{len(disk_data) // 1048576}MB hd1k"
+        fmt = 'hd1k'
+
+    # Verify the newly created disk
+    disk = get_disk_object(disk_data)
+    errors, warnings = verify_disk(disk, disk_data, fmt)
+    if errors:
+        print(f"VERIFY FAILED after create:")
+        for e in errors:
+            print(f"  {e}")
+        return 1
 
     with open(args.disk, 'wb') as f:
         f.write(disk_data)
@@ -1250,6 +1268,7 @@ def cmd_add(args):
     with open(args.disk, 'rb') as f:
         disk_data = bytearray(f.read())
 
+    fmt = detect_disk_format(disk_data)
     disk = get_disk_object(disk_data, get_format_hint(args, disk_data))
 
     sys_attr = getattr(args, 'sys', False)
@@ -1260,6 +1279,14 @@ def cmd_add(args):
         with open(filepath, 'rb') as f:
             file_data = f.read()
         if not disk.add_file(filename, file_data, sys_attr=sys_attr, user=user):
+            return 1
+
+        # Verify after each add
+        errors, warnings = verify_disk(disk, disk_data, fmt)
+        if errors:
+            print(f"VERIFY FAILED after adding {filename}:")
+            for e in errors:
+                print(f"  {e}")
             return 1
 
     with open(args.disk, 'wb') as f:
@@ -1297,6 +1324,7 @@ def cmd_delete(args):
     with open(args.disk, 'rb') as f:
         disk_data = bytearray(f.read())
 
+    fmt = detect_disk_format(disk_data)
     disk = get_disk_object(disk_data, get_format_hint(args, disk_data))
 
     # Get list of all files
@@ -1322,6 +1350,14 @@ def cmd_delete(args):
                     any_deleted = True
                     matched = True
                     del files[(user, fullname)]
+
+                    # Verify after each delete
+                    errors, warnings = verify_disk(disk, disk_data, fmt)
+                    if errors:
+                        print(f"VERIFY FAILED after deleting {fullname}:")
+                        for e in errors:
+                            print(f"  {e}")
+                        return 1
 
         if not matched:
             print(f"No files matching: {pattern}")
@@ -1432,6 +1468,198 @@ def cmd_write_boot(args):
         print(f"Wrote {len(file_data)} bytes ({file_sectors} sectors) to sector {start_sector} of {args.disk} ({fmt})")
     else:
         print(f"Wrote {len(file_data)} bytes to sector {start_sector} of {args.disk} ({fmt})")
+    return 0
+
+
+def verify_disk(disk, disk_data, fmt):
+    """Verify disk image consistency.
+
+    Checks:
+    1. Extent numbering: if extent N exists, extents 0..N-1 must exist
+    2. Block allocation: no block used by more than one file
+    3. Block range: all blocks within valid disk bounds
+
+    Note: CP/M random I/O can create sparse files with holes (block ptr = 0),
+    so zero block pointers in the middle of an extent are allowed.
+
+    Returns:
+        (errors, warnings) - lists of error/warning messages
+    """
+    errors = []
+    warnings = []
+
+    # Determine format-specific parameters
+    if fmt == 'sssd':
+        dir_entries = SSSD_DIR_ENTRIES
+        block_size = SSSD_BLOCK_SIZE
+        blocks_per_extent = 16  # 8-bit pointers
+        pointer_size = 1
+        # Calculate max block: (disk_size - boot_tracks) / block_size
+        data_start = SSSD_BOOT_TRACKS * SSSD_SECTORS_PER_TRACK * SSSD_SECTOR_SIZE
+        max_block = (len(disk_data) - data_start) // block_size
+        dir_blocks = 2  # 64 entries * 32 bytes = 2KB = 2 blocks
+    else:
+        dir_entries = 1024
+        block_size = BLOCK_SIZE
+        blocks_per_extent = 8  # 16-bit pointers
+        pointer_size = 2
+        max_block = (len(disk_data) - 16384) // block_size  # After boot tracks
+        dir_blocks = 8  # 1024 entries * 32 bytes = 32KB = 8 blocks
+
+    # Collect all directory entries by file
+    files = {}  # (user, name) -> {extent_num: (dir_entry_idx, blocks)}
+    block_usage = {}  # block_num -> [(user, name, extent, entry_idx), ...]
+
+    for i in range(dir_entries):
+        if fmt == 'sssd':
+            entry = disk.read_dir_entry(i)
+        else:
+            offset = disk.DIR_START + (i * 32)
+            entry = bytes(disk_data[offset:offset + 32])
+
+        user = entry[0]
+        if user == 0xE5:
+            continue  # Deleted entry - OK
+
+        # Check for garbage in user byte
+        if user >= 32:
+            # Not deleted and not valid user - garbage
+            errors.append(f"Entry {i}: Invalid user byte 0x{user:02X} (expected 0-31 or 0xE5)")
+            continue
+
+        # Parse filename (mask attribute bits)
+        name_bytes = bytes([b & 0x7F for b in entry[1:9]])
+        ext_bytes = bytes([b & 0x7F for b in entry[9:12]])
+
+        # Check for non-printable characters in filename
+        has_garbage = False
+        for j, b in enumerate(name_bytes):
+            if b != 0x20 and (b < 0x21 or b > 0x7E):
+                errors.append(f"Entry {i}: Garbage char 0x{b:02X} at name position {j}")
+                has_garbage = True
+        for j, b in enumerate(ext_bytes):
+            if b != 0x20 and (b < 0x21 or b > 0x7E):
+                errors.append(f"Entry {i}: Garbage char 0x{b:02X} at ext position {j}")
+                has_garbage = True
+
+        if has_garbage:
+            continue
+
+        try:
+            name = name_bytes.decode('ascii').rstrip()
+            ext = ext_bytes.decode('ascii').rstrip()
+        except UnicodeDecodeError:
+            errors.append(f"Entry {i}: Invalid filename bytes")
+            continue
+
+        fullname = f"{name}.{ext}" if ext else name
+        key = (user, fullname)
+
+        # Parse extent number
+        extent_lo = entry[12] & 0x1F
+        extent_hi = entry[14] & 0x3F
+        extent_num = extent_lo + (extent_hi << 5)
+
+        # Collect blocks from this entry
+        blocks = []
+        for j in range(blocks_per_extent):
+            if pointer_size == 1:
+                block = entry[16 + j]
+            else:
+                block = struct.unpack('<H', entry[16 + j*2:18 + j*2])[0]
+
+            if block > 0:
+                blocks.append(block)
+
+                # Track block usage
+                if block not in block_usage:
+                    block_usage[block] = []
+                block_usage[block].append((user, fullname, extent_num, i))
+
+                # Check block range
+                if block >= max_block:
+                    errors.append(f"U{user}:{fullname} extent {extent_num}: "
+                                  f"block {block} exceeds max ({max_block})")
+
+        # Store extent info
+        if key not in files:
+            files[key] = {}
+        if extent_num in files[key]:
+            errors.append(f"U{user}:{fullname}: duplicate extent {extent_num} "
+                          f"(entries {files[key][extent_num][0]} and {i})")
+        files[key][extent_num] = (i, blocks)
+
+    # Check extent numbering
+    # For EXM=0: extents are 0, 1, 2, 3, ... (each entry = 1 logical extent)
+    # For EXM=1: extents are 0 or 1, 2 or 3, 4 or 5, ... (each entry = 2 logical extents)
+    # The extent number is the LAST logical extent in that physical extent
+    # So with EXM=1, extent 1 covers logical extents 0-1, extent 3 covers 2-3, etc.
+    exm = 1 if fmt != 'sssd' else 0  # hd1k has EXM=1, SSSD has EXM=0
+
+    for (user, fullname), extents in files.items():
+        if not extents:
+            continue
+
+        # Group extents by physical extent
+        # Physical extent N covers logical extents N*(exm+1) to N*(exm+1)+exm
+        physical_extents = set()
+        for ext_num in extents.keys():
+            phys_ext = ext_num // (exm + 1)
+            physical_extents.add(phys_ext)
+
+        # Check that physical extents are contiguous from 0
+        if physical_extents:
+            max_phys = max(physical_extents)
+            for n in range(max_phys):
+                if n not in physical_extents:
+                    errors.append(f"U{user}:{fullname}: missing physical extent {n} "
+                                  f"(has physical extent {max_phys})")
+
+    # Check for blocks used by multiple files
+    for block, usages in block_usage.items():
+        if len(usages) > 1:
+            usage_strs = [f"U{u}:{f} ext{e}" for u, f, e, _ in usages]
+            errors.append(f"Block {block} used by multiple files: {', '.join(usage_strs)}")
+
+        # Check if block is in directory area (reserved)
+        if block < dir_blocks:
+            for u, f, e, entry_idx in usages:
+                errors.append(f"U{u}:{f} extent {e}: block {block} overlaps directory area")
+
+    return errors, warnings
+
+
+def cmd_verify(args):
+    """Verify disk image consistency."""
+    with open(args.disk, 'rb') as f:
+        disk_data = bytearray(f.read())
+
+    fmt = detect_disk_format(disk_data)
+    disk = get_disk_object(disk_data, get_format_hint(args, disk_data))
+
+    print(f"Verifying {args.disk} ({fmt} format, {len(disk_data)} bytes)")
+
+    errors, warnings = verify_disk(disk, disk_data, fmt)
+
+    # Also list file count and block usage
+    files = disk.list_files()
+    total_files = len(files)
+    total_blocks = sum(len(info['blocks']) for info in files.values())
+
+    print(f"Files: {total_files}, Blocks used: {total_blocks}")
+
+    if warnings:
+        print(f"\nWarnings ({len(warnings)}):")
+        for w in warnings:
+            print(f"  {w}")
+
+    if errors:
+        print(f"\nErrors ({len(errors)}):")
+        for e in errors:
+            print(f"  {e}")
+        return 1
+
+    print("\nDisk image OK")
     return 0
 
 
@@ -1546,6 +1774,18 @@ def main():
     write_boot_parser.add_argument('length', nargs='?', type=int, default=None,
                                    help='Length in sectors (pads with zeros if file is shorter)')
     write_boot_parser.set_defaults(func=cmd_write_boot)
+
+    # Verify command
+    verify_parser = subparsers.add_parser('verify', help='Verify disk image consistency')
+    verify_format = verify_parser.add_mutually_exclusive_group()
+    verify_format.add_argument('--sssd', action='store_true',
+                               help='Disk is SSSD (ibm-3740) format')
+    verify_format.add_argument('--combo', action='store_true',
+                               help='Disk is combo format (1MB prefix)')
+    verify_parser.add_argument('--no-skew', action='store_true',
+                               help='Disable sector skew (SSSD only)')
+    verify_parser.add_argument('disk', help='Disk image file')
+    verify_parser.set_defaults(func=cmd_verify)
 
     if len(sys.argv) == 1:
         parser.print_help()
