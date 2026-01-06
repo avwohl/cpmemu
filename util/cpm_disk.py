@@ -25,6 +25,41 @@ Boot area sizes:
   - combo: 16384 bytes (after 1MB prefix)
 
 Format is auto-detected for existing disks based on file size.
+
+CP/M Extent Handling
+--------------------
+CP/M directory entries are 32 bytes and can only track a limited amount of file
+data. For files larger than this limit, multiple directory entries called
+"extents" are used. Key concepts:
+
+1. RECORDS: CP/M measures file size in 128-byte records (not bytes).
+
+2. EXTENT CAPACITY: Each directory entry can track up to 128 records (16KB).
+   The actual capacity depends on block size and the EXM (Extent Mask) value
+   from the Disk Parameter Block:
+   - EXM=0: Each entry = 1 logical extent = 128 records = 16KB max
+   - EXM=1: Each entry = 2 logical extents = 256 records = 32KB max
+
+3. EXTENT NUMBERING: The EX field (byte 12, bits 0-4) and S2 field (byte 14,
+   bits 0-5) combine to form an 11-bit extent number:
+     extent_num = (S2 << 5) | EX
+   For EXM=1, the extent number is the LAST logical extent in that physical
+   directory entry (e.g., extent 1 covers logical extents 0-1).
+
+4. RECORD COUNT (RC): Byte 15 contains the number of records used in the
+   LAST logical extent of this directory entry (1-128).
+
+5. BLOCK POINTERS: Bytes 16-31 contain pointers to disk blocks:
+   - 8-bit pointers (16 per entry): Used when DSM < 256 (small disks)
+   - 16-bit pointers (8 per entry): Used when DSM >= 256 (large disks)
+
+Example: A 50KB file on an hd1k disk (EXM=1, 16-bit pointers):
+  - 50KB = 400 records = 2 physical extents
+  - Extent 0: directory entry with extent_num=1, RC=128 (covers records 0-255)
+  - Extent 1: directory entry with extent_num=3, RC=16 (covers records 256-399)
+
+When reading files, extents must be processed in order by extent number.
+When writing files, new directory entries are allocated for each extent.
 """
 
 import sys
