@@ -284,6 +284,9 @@ public:
   void set_aux_input_file(const std::string& path);
   void set_aux_output_file(const std::string& path);
 
+  // Debug mode
+  void set_debug(bool d) { debug = d; }
+
 private:
   // File I/O helpers
   FileMode detect_file_mode(const std::string& filename, const std::string& unix_path);
@@ -457,23 +460,26 @@ void CPMEmulator::setup_command_line(int argc, char** argv, int program_arg_inde
   for (int i = program_arg_index + 1; i < argc; i++) {  // Skip program name and any switches
     cmdline += " ";  // Space before each argument (CP/M convention)
 
-    // Get basename and convert to 8.3 format
-    const char* arg_base = strrchr(argv[i], '/');
-    arg_base = arg_base ? arg_base + 1 : argv[i];
+    // Check if argument looks like a Unix path (starts with / or ./)
+    // vs a CP/M filename with options (like "TEST,TEST.COM/N/E")
+    const char* arg_base = argv[i];
+    bool looks_like_path = (argv[i][0] == '/') ||
+                           (argv[i][0] == '.' && argv[i][1] == '/');
+    if (looks_like_path) {
+      // Extract basename for Unix paths
+      const char* slash = strrchr(argv[i], '/');
+      arg_base = slash ? slash + 1 : argv[i];
+    }
+
+    // Convert to uppercase
     std::string arg_upper;
     for (const char* p = arg_base; *p; p++) {
       arg_upper += toupper(*p);
     }
 
-    // Truncate to 8.3 format for command line
-    size_t dot_pos = arg_upper.find('.');
-    if (dot_pos != std::string::npos && dot_pos > 8) {
-      // Long filename - truncate to 8.3
-      std::string name_83 = arg_upper.substr(0, 8) + arg_upper.substr(dot_pos);
-      cmdline += name_83;
-    } else {
-      cmdline += arg_upper;
-    }
+    // For CP/M arguments, don't truncate - pass as-is
+    // CP/M programs expect the full command line string
+    cmdline += arg_upper;
 
     args.push_back(argv[i]);
   }
@@ -482,6 +488,10 @@ void CPMEmulator::setup_command_line(int argc, char** argv, int program_arg_inde
   mem[DEFAULT_DMA] = std::min((int)cmdline.length(), 127);
   for (size_t i = 0; i < cmdline.length() && i < 127; i++) {
     mem[DEFAULT_DMA + 1 + i] = toupper(cmdline[i]);
+  }
+
+  if (debug) {
+    fprintf(stderr, "Command line (%d bytes): '%s'\n", (int)cmdline.length(), cmdline.c_str());
   }
 
 
@@ -528,7 +538,7 @@ FileMode CPMEmulator::detect_file_mode(const std::string& filename, const std::s
   for (char& c : upper) c = toupper(c);
 
   // Known text extensions
-  const char* text_exts[] = {".BAS", ".MAC", ".ASM", ".TXT", ".DOC", ".LST", ".PRN", nullptr};
+  const char* text_exts[] = {".BAS", ".MAC", ".ASM", ".TXT", ".DOC", ".LST", ".PRN", ".Z80", nullptr};
   for (int i = 0; text_exts[i]; i++) {
     if (upper.find(text_exts[i]) != std::string::npos) {
       return MODE_TEXT;
@@ -642,35 +652,50 @@ size_t CPMEmulator::read_with_conversion(OpenFile& of, uint8_t* buffer, size_t s
       }
     }
 
+    // If we got less than requested, we're at EOF
+    if (nread < size) {
+      of.eof_seen = true;
+    }
+
     return nread;
   }
 
   // Text mode with EOL conversion: Unix \n -> CP/M \r\n
+  // But don't double-convert files that already have \r\n
   size_t out_pos = 0;
+  bool last_was_cr = false;
 
   while (out_pos < size) {
     int ch = fgetc(of.fp);
 
     if (ch == EOF) {
+      of.eof_seen = true;
       break;
     }
 
     if (ch == '\n') {
-      // Convert \n to \r\n
-      if (out_pos + 1 < size) {
-        buffer[out_pos++] = '\r';
+      if (last_was_cr) {
+        // File already has \r\n - don't add another \r
         buffer[out_pos++] = '\n';
       } else {
-        // Not enough space, put back
-        ungetc(ch, of.fp);
-        break;
+        // Bare \n - convert to \r\n
+        if (out_pos + 1 < size) {
+          buffer[out_pos++] = '\r';
+          buffer[out_pos++] = '\n';
+        } else {
+          // Not enough space, put back
+          ungetc(ch, of.fp);
+          break;
+        }
       }
+      last_was_cr = false;
     } else if (ch == CPM_EOF) {
       // EOF marker
       of.eof_seen = true;
       break;
     } else {
       buffer[out_pos++] = (uint8_t)ch;
+      last_was_cr = (ch == '\r');
     }
   }
 
@@ -1478,6 +1503,9 @@ void CPMEmulator::bdos_read_sequential() {
 
   auto it = open_files.find(fcb_addr);
   if (it == open_files.end()) {
+    if (debug || debug_bdos_funcs.count(20)) {
+      fprintf(stderr, "Read sequential: FCB %04X not open\n", fcb_addr);
+    }
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error: file not open
     return;
   }
@@ -1485,6 +1513,11 @@ void CPMEmulator::bdos_read_sequential() {
   // Read 128 bytes to DMA with conversion
   uint8_t buffer[128];
   size_t nread = read_with_conversion(it->second, buffer, 128);
+
+  if (debug || debug_bdos_funcs.count(20)) {
+    fprintf(stderr, "Read sequential: FCB %04X file '%s' read %zu bytes, eof=%d\n",
+            fcb_addr, it->second.cpm_name.c_str(), nread, it->second.eof_seen);
+  }
 
   if (nread == 0 || it->second.eof_seen) {
     cpu->set_reg8(1, qkz80::reg_A);  // EOF
@@ -2457,6 +2490,13 @@ int main(int argc, char** argv) {
     } else {
       fprintf(stderr, "Warning: Invalid CPM_BIOS_DISK value '%s' (use ok, fail, or error)\n", bios_disk);
     }
+  }
+
+  // Check for general debug flag
+  const char* debug_env = getenv("CPM_DEBUG");
+  if (debug_env && (strcmp(debug_env, "1") == 0 || strcmp(debug_env, "true") == 0 || strcmp(debug_env, "yes") == 0)) {
+    cpm.set_debug(true);
+    fprintf(stderr, "Debug mode enabled\n");
   }
 
   // Parse selective debug settings
