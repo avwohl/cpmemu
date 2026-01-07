@@ -54,6 +54,11 @@ bool is_terminal() {
 }
 
 bool stdin_has_data() {
+    // For non-interactive use (pipes, /dev/null), don't report data available
+    // This prevents CP/M programs from checking for user abort when running batch
+    if (!is_terminal()) {
+        return false;
+    }
     fd_set readfds;
     struct timeval tv;
     FD_ZERO(&readfds);

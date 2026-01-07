@@ -538,7 +538,7 @@ FileMode CPMEmulator::detect_file_mode(const std::string& filename, const std::s
   for (char& c : upper) c = toupper(c);
 
   // Known text extensions
-  const char* text_exts[] = {".BAS", ".MAC", ".ASM", ".TXT", ".DOC", ".LST", ".PRN", ".Z80", nullptr};
+  const char* text_exts[] = {".BAS", ".MAC", ".ASM", ".TXT", ".DOC", ".LST", ".PRN", ".Z80", ".LIB", nullptr};
   for (int i = 0; text_exts[i]; i++) {
     if (upper.find(text_exts[i]) != std::string::npos) {
       return MODE_TEXT;
@@ -1216,6 +1216,11 @@ void CPMEmulator::bdos_call(qkz80_uint8 func) {
     bdos_write_random_zero_fill();
     break;
 
+  case 48: // Flush Buffers (CP/M 3+)
+    // Our emulator writes directly to files, so just return success
+    cpu->set_reg8(0, qkz80::reg_A);
+    break;
+
   default:
     fprintf(stderr, "Unimplemented BDOS function %d\n", func);
     cpu->set_reg8(0xFF, qkz80::reg_A);
@@ -1241,7 +1246,7 @@ void CPMEmulator::bdos_write_string() {
 
 void CPMEmulator::bdos_read_console() {
   int ch = platform::console_getchar();
-  if (ch == -1 || ch == EOF) ch = 0x1A;  // EOF becomes ^Z
+  if (ch == -1 || ch == EOF) ch = '\r';  // EOF becomes CR (Enter) for non-interactive use
   check_ctrl_c_exit(ch);  // Track ^C for exit, pass through to program
   if (ch == '\n') ch = '\r';  // Convert LF to CR for CP/M
   cpu->set_reg8(ch & 0x7F, qkz80::reg_A);
@@ -1514,13 +1519,14 @@ void CPMEmulator::bdos_read_sequential() {
   uint8_t buffer[128];
   size_t nread = read_with_conversion(it->second, buffer, 128);
 
-  if (debug || debug_bdos_funcs.count(20)) {
-    fprintf(stderr, "Read sequential: FCB %04X file '%s' read %zu bytes, eof=%d\n",
-            fcb_addr, it->second.cpm_name.c_str(), nread, it->second.eof_seen);
-  }
-
-  if (nread == 0 || it->second.eof_seen) {
-    cpu->set_reg8(1, qkz80::reg_A);  // EOF
+  // CP/M convention: return A=0 (success) when data is available,
+  // return A=1 (EOF) only when no more data can be read.
+  // For partial records at end of file, return success with Ctrl-Z padding.
+  if (nread == 0) {
+    cpu->set_reg8(1, qkz80::reg_A);  // EOF - no data available
+    if (debug || debug_bdos_funcs.count(20)) {
+      fprintf(stderr, "Read sequential: FCB %04X file '%s' -> EOF (no data)\n", fcb_addr, it->second.cpm_name.c_str());
+    }
   } else {
     // Pad to 128 bytes if needed
     if (nread < 128) {
@@ -1530,6 +1536,11 @@ void CPMEmulator::bdos_read_sequential() {
     // Copy to DMA
     memcpy(&mem[current_dma], buffer, 128);
     cpu->set_reg8(0, qkz80::reg_A);  // Success
+
+    if (debug || debug_bdos_funcs.count(20)) {
+      fprintf(stderr, "Read sequential: FCB %04X file '%s' read %zu bytes, returning A=0\n",
+              fcb_addr, it->second.cpm_name.c_str(), nread);
+    }
   }
 
   // Update current record in FCB
@@ -1543,9 +1554,15 @@ void CPMEmulator::bdos_write_sequential() {
   auto it = open_files.find(fcb_addr);
   if (it == open_files.end()) {
     // File not open - try to open it for writing
+    if (debug || debug_bdos_funcs.count(21)) {
+      fprintf(stderr, "Write sequential: FCB %04X not open, trying to open\n", fcb_addr);
+    }
     bdos_open_file();
     it = open_files.find(fcb_addr);
     if (it == open_files.end()) {
+      if (debug || debug_bdos_funcs.count(21)) {
+        fprintf(stderr, "Write sequential: FCB %04X failed to open\n", fcb_addr);
+      }
       cpu->set_reg8(0xFF, qkz80::reg_A);
       return;
     }
