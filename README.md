@@ -255,6 +255,14 @@ cpmemu/
 └── docs/                  # Documentation and references
 ```
 
+## Related Projects
+
+- [RomWBW](https://github.com/wwarthen/RomWBW) - The original RomWBW project by Wayne Warthen
+- [cpmemu](https://github.com/avwohl/cpmemu) - Portable Z80 CPU emulator core
+- [ioscpm](https://github.com/avwohl/ioscpm) - iOS/macOS version
+- [z80cpmw](https://github.com/avwohl/z80cpmw) - Windows GUI version
+- [cpmdroid](https://github.com/avwohl/cpmdroid) - Android version
+
 ## License
 
 This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
