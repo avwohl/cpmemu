@@ -273,4 +273,5 @@ cpmemu/
 - [upeepz80](https://github.com/avwohl/upeepz80) - Universal peephole optimizer for Z80 compilers
 - [uplm80](https://github.com/avwohl/uplm80) - PL/M-80 compiler targeting Intel 8080 and Zilog Z80 assembly language
 - [z80cpmw](https://github.com/avwohl/z80cpmw) - Z80 CP/M emulator for Windows (RomWBW)
+- [RomWBW](https://github.com/wwarthen/RomWBW) - The original RomWBW project by Wayne Warthen
 
