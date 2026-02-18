@@ -132,10 +132,9 @@ static bool check_ctrl_c_exit(int ch) {
 #define CPM_EOF        0x1A  // ^Z
 
 // BIOS/BDOS placement (for 64K system)
-// Compressed layout since we only need jump tables, not full code
-#define BIOS_BASE      0xFE00  // BIOS starts here (17 jumps * 3 = 51 bytes)
-#define BDOS_BASE      0xFD00  // BDOS starts here (40 jumps * 3 = 120 bytes)
-#define CCP_BASE       0xFC00  // CCP starts here (gives max TPA)
+// No real BDOS/BIOS code — just trap addresses intercepted by handle_pc()
+#define BIOS_BASE      0xFE00  // BIOS jump table (17 entries * 3 = 51 bytes)
+#define BDOS_BASE      0xFD00  // BDOS entry (trapped, no code in memory)
 
 // BIOS function offsets from BIOS_BASE
 #define BIOS_BOOT      0
@@ -154,12 +153,13 @@ static bool check_ctrl_c_exit(int ch) {
 #define BIOS_READ      39  // Read sector
 #define BIOS_WRITE     42  // Write sector
 
-// Reserved memory area for system tables
-#define DPH_ADDR       0xFAE0  // Disk Parameter Header (16 bytes)
-#define DPB_ADDR       0xFAF0  // Disk Parameter Block (15 bytes)
-#define DIRBUF_ADDR    0xFB00  // Directory buffer (128 bytes)
-#define ALV_ADDR       0xFB80  // Allocation Vector (64 bytes for 512 blocks)
-#define CSV_ADDR       0xFBC0  // Check Vector (not used, but referenced)
+// Disk tables packed above BIOS jump table (0xFE00 + 51 = 0xFE33)
+// This keeps them out of TPA so large programs can't overwrite them
+#define DPH_ADDR       0xFE33  // Disk Parameter Header (16 bytes)
+#define DPB_ADDR       0xFE43  // Disk Parameter Block (15 bytes)
+#define DIRBUF_ADDR    0xFE52  // Directory buffer (128 bytes)
+#define ALV_ADDR       0xFED2  // Allocation Vector (64 bytes)
+#define CSV_ADDR       0xFF12  // Check Vector (64 bytes, ends at 0xFF51)
 #define BIOS_LISTST    45  // List status
 #define BIOS_SECTRAN   48  // Sector translate
 
@@ -2595,7 +2595,7 @@ int main(int argc, char** argv) {
   }
 
   qkz80_uint8* mem = cpu.get_mem();
-  size_t loaded = fread(&mem[TPA_START], 1, 0xE000, fp);
+  size_t loaded = fread(&mem[TPA_START], 1, BDOS_BASE - TPA_START, fp);
   fclose(fp);
 
   fprintf(stderr, "Loaded %zu bytes from %s\n", loaded, program.c_str());
