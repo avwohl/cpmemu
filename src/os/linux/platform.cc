@@ -43,6 +43,10 @@ void enable_raw_mode() {
     // Disable canonical mode (line buffering), echo, and signal generation
     // ISIG disabled so ^C passes through to CP/M program instead of killing emulator
     raw.c_lflag &= ~(ICANON | ECHO | ISIG);
+    // Disable input processing (CR-to-NL, XON/XOFF)
+    raw.c_iflag &= ~(ICRNL | IXON | INLCR | IGNCR);
+    // Disable output processing so escape sequences pass through unmodified
+    raw.c_oflag &= ~(OPOST);
     // Set minimum characters to 1 and timeout to 0
     raw.c_cc[VMIN] = 1;
     raw.c_cc[VTIME] = 0;

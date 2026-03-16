@@ -350,6 +350,13 @@ private:
   void bios_reader();  // Reader (aux input)
   void bios_listst();  // List status
 
+  // ADM-3A to ANSI terminal translator
+  enum TermState { TERM_NORMAL, TERM_ESC, TERM_ESC_EQ, TERM_ESC_EQ_ROW, TERM_ESC_G };
+  TermState term_state = TERM_NORMAL;
+  int term_saved_row = 0;
+
+  void console_output(qkz80_uint8 ch);
+
   // Helper functions
   std::string fcb_to_filename(qkz80_uint16 fcb_addr);
   void filename_to_fcb(const std::string& filename, qkz80_uint16 fcb_addr);
@@ -1280,8 +1287,7 @@ void CPMEmulator::bdos_call(qkz80_uint8 func) {
 }
 
 void CPMEmulator::bdos_write_console(qkz80_uint8 ch) {
-  putchar(ch & 0x7F);
-  fflush(stdout);
+  console_output(ch);
 }
 
 void CPMEmulator::bdos_write_string() {
@@ -1289,10 +1295,9 @@ void CPMEmulator::bdos_write_string() {
   qkz80_uint8* mem = cpu->get_mem();
 
   while (mem[addr] != '$') {
-    putchar(mem[addr] & 0x7F);
+    console_output(mem[addr]);
     addr++;
   }
-  fflush(stdout);
 }
 
 void CPMEmulator::bdos_read_console() {
@@ -1924,9 +1929,8 @@ void CPMEmulator::bdos_direct_console_io() {
     // Status check - return 0xFF if char ready, 0 if not
     cpu->set_reg8(platform::stdin_has_data() ? 0xFF : 0, qkz80::reg_A);
   } else {
-    // Output mode - send character
-    putchar(e_reg & 0x7F);
-    fflush(stdout);
+    // Output mode - send character through terminal translator
+    console_output(e_reg);
     // No return value for output
   }
 }
@@ -2348,11 +2352,128 @@ void CPMEmulator::bios_conin() {
   cpu->set_reg8(ch & 0x7F, qkz80::reg_A);
 }
 
+// ADM-3A to ANSI/VT100 terminal translator
+// Translates ADM-3A escape sequences (standard CP/M terminal) to ANSI
+// sequences understood by modern terminals (xterm, konsole, etc.)
+void CPMEmulator::console_output(qkz80_uint8 ch) {
+  ch &= 0x7F;
+
+  switch (term_state) {
+  case TERM_ESC:
+    switch (ch) {
+    case '=':  // ESC = row col - cursor positioning
+      term_state = TERM_ESC_EQ;
+      return;
+    case '*':  // ESC * - clear screen and home
+      fputs("\033[2J\033[H", stdout);
+      break;
+    case 'T':  // ESC T - clear to end of line
+      fputs("\033[K", stdout);
+      break;
+    case 'Y':  // ESC Y - clear to end of screen
+      fputs("\033[J", stdout);
+      break;
+    case ')':  // ESC ) - start reverse video
+      fputs("\033[7m", stdout);
+      break;
+    case '(':  // ESC ( - end reverse video
+      fputs("\033[0m", stdout);
+      break;
+    case 'G':  // ESC G n - Kaypro/Televideo attribute
+      term_state = TERM_ESC_G;
+      return;
+    default:
+      // Unknown escape - pass through as ANSI ESC + char
+      fprintf(stdout, "\033%c", ch);
+      break;
+    }
+    term_state = TERM_NORMAL;
+    fflush(stdout);
+    return;
+
+  case TERM_ESC_G:
+    // ESC G n - Kaypro/Televideo attribute byte
+    // n: '0'=normal, '4'=reverse, '8'=half-intensity, etc.
+    switch (ch) {
+    case '0':  // Normal
+      fputs("\033[0m", stdout);
+      break;
+    case '4':  // Reverse (inverse)
+      fputs("\033[7m", stdout);
+      break;
+    case '2':  // Half-intensity (dim)
+      fputs("\033[2m", stdout);
+      break;
+    case '1':  // Underline (some variants)
+      fputs("\033[4m", stdout);
+      break;
+    default:  // Unknown attribute - reset
+      fputs("\033[0m", stdout);
+      break;
+    }
+    fflush(stdout);
+    term_state = TERM_NORMAL;
+    return;
+
+  case TERM_ESC_EQ:
+    // Got ESC = , this byte is row + 32
+    term_saved_row = ch - 32;
+    term_state = TERM_ESC_EQ_ROW;
+    return;
+
+  case TERM_ESC_EQ_ROW:
+    // Got ESC = row, this byte is col + 32
+    // Convert to ANSI: ESC [ row ; col H (1-based)
+    fprintf(stdout, "\033[%d;%dH", term_saved_row + 1, (ch - 32) + 1);
+    fflush(stdout);
+    term_state = TERM_NORMAL;
+    return;
+
+  case TERM_NORMAL:
+    break;
+  }
+
+  // Normal character processing
+  switch (ch) {
+  case 0x1B:  // ESC - start escape sequence
+    term_state = TERM_ESC;
+    return;
+  case 0x1A:  // Ctrl-Z - clear screen and home (ADM-3A)
+    fputs("\033[2J\033[H", stdout);
+    break;
+  case 0x1E:  // Ctrl-^ - home cursor
+    fputs("\033[H", stdout);
+    break;
+  case 0x0B:  // Ctrl-K - cursor up
+    fputs("\033[A", stdout);
+    break;
+  case 0x0C:  // Ctrl-L - cursor right
+    fputs("\033[C", stdout);
+    break;
+  case 0x07:  // BEL
+    putchar(0x07);
+    break;
+  case 0x08:  // Backspace - cursor left
+    putchar(0x08);
+    break;
+  case 0x0D:  // CR
+    putchar('\r');
+    break;
+  case 0x0A:  // LF - cursor down / newline
+    putchar('\n');
+    break;
+  default:
+    if (ch >= 0x20)
+      putchar(ch);
+    break;
+  }
+  fflush(stdout);
+}
+
 void CPMEmulator::bios_conout() {
   // Console output - character is in C register
   qkz80_uint8 ch = cpu->get_reg8(qkz80::reg_C);
-  putchar(ch & 0x7F);
-  fflush(stdout);
+  console_output(ch);
 }
 
 void CPMEmulator::bios_list() {
