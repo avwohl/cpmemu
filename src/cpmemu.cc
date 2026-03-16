@@ -984,7 +984,6 @@ void CPMEmulator::filename_to_fcb(const std::string& filename, qkz80_uint16 fcb_
   // Fill name field (8 chars, space-padded), validating characters
   size_t name_len = (dot_pos != std::string::npos) ? (dot_pos - name_start) : (upper_name.length() - name_start);
   if (name_len > 8) {
-    fprintf(stderr, "Warning: filename '%s' truncated to 8 characters\n", filename.c_str());
     name_len = 8;
   }
 
@@ -1006,7 +1005,6 @@ void CPMEmulator::filename_to_fcb(const std::string& filename, qkz80_uint16 fcb_
     size_t ext_start = dot_pos + 1;
     size_t ext_len = upper_name.length() - ext_start;
     if (ext_len > 3) {
-      fprintf(stderr, "Warning: extension in '%s' truncated to 3 characters\n", filename.c_str());
       ext_len = 3;
     }
 
