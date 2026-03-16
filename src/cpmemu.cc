@@ -886,6 +886,42 @@ std::string CPMEmulator::normalize_cpm_filename(const std::string& name) {
   return result;
 }
 
+// Check if a character is valid in CP/M filenames.
+// Per the DRI CP/M manual, valid filename characters are printable
+// 7-bit ASCII (0x21-0x7E) EXCEPT the following forbidden characters:
+//   < > . , ; : = ? * [ ] ^ % | ( ) / backslash
+// Space (0x20) is also invalid as it's the padding character.
+static bool is_valid_cpm_char(char c) {
+  if (c < 0x21 || c > 0x7E) return false;
+  switch (c) {
+    case '<': case '>': case '.': case ',': case ';':
+    case ':': case '=': case '?': case '*': case '[':
+    case ']': case '^': case '%': case '|': case '(':
+    case ')': case '/': case '\\':
+      return false;
+    default:
+      return true;
+  }
+}
+
+// Validate FCB filename bytes at the given address.
+// Checks bytes 1-8 (name) and 9-11 (extension) for valid CP/M characters.
+// Each byte has its high bit stripped (attribute flags).
+// Name must have at least one non-space character.
+// All characters must be spaces (padding) or valid CP/M characters.
+static bool validate_fcb_name(qkz80_uint8* mem, qkz80_uint16 fcb_addr) {
+  bool has_nonspace = false;
+  // Check name bytes (1-8) and extension bytes (9-11)
+  for (int i = 1; i <= 11; i++) {
+    char c = mem[fcb_addr + i] & 0x7F;  // Strip high bit
+    if (c == ' ') continue;
+    if (c == '?') continue;  // Wildcard, valid in search patterns
+    if (!is_valid_cpm_char(c)) return false;
+    if (i <= 8) has_nonspace = true;
+  }
+  return has_nonspace;  // Must have at least one non-space char in name
+}
+
 std::string CPMEmulator::fcb_to_filename(qkz80_uint16 fcb_addr) {
   qkz80_uint8* mem = cpu->get_mem();
   std::string filename;
@@ -945,26 +981,43 @@ void CPMEmulator::filename_to_fcb(const std::string& filename, qkz80_uint16 fcb_
   // Find extension
   size_t dot_pos = upper_name.find('.', name_start);
 
-  // Fill name field (8 chars, space-padded)
+  // Fill name field (8 chars, space-padded), validating characters
   size_t name_len = (dot_pos != std::string::npos) ? (dot_pos - name_start) : (upper_name.length() - name_start);
-  name_len = std::min(name_len, (size_t)8);
+  if (name_len > 8) {
+    fprintf(stderr, "Warning: filename '%s' truncated to 8 characters\n", filename.c_str());
+    name_len = 8;
+  }
 
   for (size_t i = 0; i < 8; i++) {
     if (i < name_len) {
-      mem[fcb_addr + 1 + i] = upper_name[name_start + i];
+      char c = upper_name[name_start + i];
+      if (!is_valid_cpm_char(c)) {
+        fprintf(stderr, "Warning: invalid CP/M character '%c' in filename '%s'\n", c, filename.c_str());
+        c = '_';  // Replace with underscore
+      }
+      mem[fcb_addr + 1 + i] = c;
     } else {
       mem[fcb_addr + 1 + i] = ' ';
     }
   }
 
-  // Fill extension field (3 chars, space-padded)
+  // Fill extension field (3 chars, space-padded), validating characters
   if (dot_pos != std::string::npos) {
     size_t ext_start = dot_pos + 1;
-    size_t ext_len = std::min(upper_name.length() - ext_start, (size_t)3);
+    size_t ext_len = upper_name.length() - ext_start;
+    if (ext_len > 3) {
+      fprintf(stderr, "Warning: extension in '%s' truncated to 3 characters\n", filename.c_str());
+      ext_len = 3;
+    }
 
     for (size_t i = 0; i < 3; i++) {
       if (i < ext_len) {
-        mem[fcb_addr + 9 + i] = upper_name[ext_start + i];
+        char c = upper_name[ext_start + i];
+        if (!is_valid_cpm_char(c)) {
+          fprintf(stderr, "Warning: invalid CP/M character '%c' in filename '%s'\n", c, filename.c_str());
+          c = '_';  // Replace with underscore
+        }
+        mem[fcb_addr + 9 + i] = c;
       } else {
         mem[fcb_addr + 9 + i] = ' ';
       }
@@ -1423,6 +1476,15 @@ void CPMEmulator::bdos_get_set_user() {
 
 void CPMEmulator::bdos_open_file() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
+
+  if (!validate_fcb_name(cpu->get_mem(), fcb_addr)) {
+    if (debug || debug_bdos_funcs.count(15)) {
+      fprintf(stderr, "BDOS Open: rejected invalid FCB filename\n");
+    }
+    cpu->set_reg8(0xFF, qkz80::reg_A);
+    return;
+  }
+
   std::string filename = fcb_to_filename(fcb_addr);
 
   FileMode mode;
@@ -1585,6 +1647,15 @@ void CPMEmulator::bdos_write_sequential() {
 
 void CPMEmulator::bdos_make_file() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
+
+  if (!validate_fcb_name(cpu->get_mem(), fcb_addr)) {
+    if (debug || debug_bdos_funcs.count(22)) {
+      fprintf(stderr, "Make file: rejected invalid FCB filename\n");
+    }
+    cpu->set_reg8(0xFF, qkz80::reg_A);
+    return;
+  }
+
   std::string filename = fcb_to_filename(fcb_addr);
 
   if (debug || debug_bdos_funcs.count(22)) {
@@ -1623,6 +1694,15 @@ void CPMEmulator::bdos_make_file() {
 
 void CPMEmulator::bdos_delete_file() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
+
+  if (!validate_fcb_name(cpu->get_mem(), fcb_addr)) {
+    if (debug || debug_bdos_funcs.count(19)) {
+      fprintf(stderr, "Delete file: rejected invalid FCB filename\n");
+    }
+    cpu->set_reg8(0xFF, qkz80::reg_A);
+    return;
+  }
+
   std::string filename = fcb_to_filename(fcb_addr);
 
   FileMode mode;
@@ -1717,6 +1797,15 @@ void CPMEmulator::bdos_write_random() {
 void CPMEmulator::bdos_file_size() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
   qkz80_uint8* mem = cpu->get_mem();
+
+  if (!validate_fcb_name(mem, fcb_addr)) {
+    if (debug || debug_bdos_funcs.count(35)) {
+      fprintf(stderr, "File size: rejected invalid FCB filename\n");
+    }
+    cpu->set_reg8(0xFF, qkz80::reg_A);
+    return;
+  }
+
   std::string filename = fcb_to_filename(fcb_addr);
 
   FileMode mode;
@@ -1770,6 +1859,15 @@ void CPMEmulator::bdos_rename_file() {
   // In CP/M, rename uses a special FCB format:
   // Bytes 0-15: old filename (standard FCB format)
   // Bytes 16-31: new filename
+
+  if (!validate_fcb_name(cpu->get_mem(), fcb_addr) ||
+      !validate_fcb_name(cpu->get_mem(), fcb_addr + 16)) {
+    if (debug || debug_bdos_funcs.count(23)) {
+      fprintf(stderr, "Rename: rejected invalid FCB filename\n");
+    }
+    cpu->set_reg8(0xFF, qkz80::reg_A);
+    return;
+  }
 
   std::string old_name = fcb_to_filename(fcb_addr);
 
@@ -1872,20 +1970,6 @@ static bool match_fcb_pattern(const char* pattern_name, const char* pattern_ext,
     }
   }
   return true;
-}
-
-// Check if a character is valid in CP/M filenames
-// Valid: A-Z, 0-9, and some special chars
-static bool is_valid_cpm_char(char c) {
-  c = toupper(c);
-  if (c >= 'A' && c <= 'Z') return true;
-  if (c >= '0' && c <= '9') return true;
-  // CP/M allows: $ # @ ! % ' ( ) - { } ~
-  // Technically also & ^ but often cause issues
-  if (c == '$' || c == '#' || c == '@' || c == '!' ||
-      c == '%' || c == '\'' || c == '(' || c == ')' ||
-      c == '-' || c == '{' || c == '}' || c == '~') return true;
-  return false;
 }
 
 // Helper: convert Unix filename to CP/M 8.3 format (space-padded)
