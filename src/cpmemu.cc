@@ -460,9 +460,17 @@ void CPMEmulator::setup_command_line(int argc, char** argv, int program_arg_inde
     return;
   }
 
+  // Parse filenames into default FCBs first (before writing command tail,
+  // since FCB2 at 0x6C overlaps with the DMA buffer region)
+  if (argc >= program_arg_index + 2) {
+    filename_to_fcb(argv[program_arg_index + 1], DEFAULT_FCB);
+  }
+  if (argc >= program_arg_index + 3) {
+    filename_to_fcb(argv[program_arg_index + 2], DEFAULT_FCB2);
+  }
+
   // Build command line from arguments
   // CP/M requires a leading space before the first argument
-  // Also, filenames must be in 8.3 format (truncated if needed)
   std::string cmdline;
   for (int i = program_arg_index + 1; i < argc; i++) {  // Skip program name and any switches
     cmdline += " ";  // Space before each argument (CP/M convention)
@@ -491,7 +499,8 @@ void CPMEmulator::setup_command_line(int argc, char** argv, int program_arg_inde
     args.push_back(argv[i]);
   }
 
-  // Store command line at DEFAULT_DMA
+  // Store command tail at DEFAULT_DMA (0x80)
+  // Written after FCBs to ensure it isn't corrupted
   mem[DEFAULT_DMA] = std::min((int)cmdline.length(), 127);
   for (size_t i = 0; i < cmdline.length() && i < 127; i++) {
     mem[DEFAULT_DMA + 1 + i] = toupper(cmdline[i]);
@@ -499,17 +508,6 @@ void CPMEmulator::setup_command_line(int argc, char** argv, int program_arg_inde
 
   if (debug) {
     fprintf(stderr, "Command line (%d bytes): '%s'\n", (int)cmdline.length(), cmdline.c_str());
-  }
-
-
-  // Parse first filename into DEFAULT_FCB
-  if (argc >= program_arg_index + 2) {
-    filename_to_fcb(argv[program_arg_index + 1], DEFAULT_FCB);
-  }
-
-  // Parse second filename into DEFAULT_FCB2
-  if (argc >= program_arg_index + 3) {
-    filename_to_fcb(argv[program_arg_index + 2], DEFAULT_FCB2);
   }
 }
 
@@ -966,12 +964,23 @@ std::string CPMEmulator::fcb_to_filename(qkz80_uint16 fcb_addr) {
 void CPMEmulator::filename_to_fcb(const std::string& filename, qkz80_uint16 fcb_addr) {
   qkz80_uint8* mem = cpu->get_mem();
 
-  // Clear FCB
-  memset(&mem[fcb_addr], 0, 36);
+  // Clear FCB header (16 bytes: drive + name[8] + ext[3] + ex + s1 + s2 + rc)
+  // Only clear the header portion, matching CP/M CCP behavior.
+  // Clearing 36 bytes from FCB2 (0x6C) would corrupt the DMA buffer at 0x80.
+  memset(&mem[fcb_addr], 0, 16);
+
+  // Extract basename if argument looks like a Unix path
+  std::string base_name = filename;
+  if (filename.length() > 0 && (filename[0] == '/' || (filename[0] == '.' && filename.length() > 1 && filename[1] == '/'))) {
+    size_t slash = filename.rfind('/');
+    if (slash != std::string::npos) {
+      base_name = filename.substr(slash + 1);
+    }
+  }
 
   // Parse filename
   std::string upper_name;
-  for (char c : filename) {
+  for (char c : base_name) {
     upper_name += toupper(c);
   }
 
