@@ -44,9 +44,6 @@ Configuration files (`.cfg`) specify program settings, file mappings, and modes.
 # Program to run (required)
 program = /path/to/program.com
 
-# Command-line arguments to pass to program
-args = ARG1 ARG2 ARG3
-
 # Change to directory before running
 cd = /path/to/working/directory
 
@@ -60,38 +57,11 @@ eol_convert = true
 debug = false
 ```
 
-### Drive Mappings
-
-Map CP/M drives (A:-P:) to Unix directories:
-
-```ini
-drive_A = .
-drive_B = /home/user/cpm_files
-drive_C = ${HOME}/cpm/programs
-```
-
-When a CP/M program accesses `B:TEST.BAS`, it will look for the file in `/home/user/cpm_files/test.bas`.
-
 ### File Mappings
 
 File mappings specify how CP/M filenames map to Unix files and set their mode.
 
-**Syntax:** `CPM_PATTERN = [unix_path] [text|binary]`
-
-#### Mode-Only Mappings
-
-Set the file mode for patterns without specifying a path. Files are found via normal search (current directory or drive mapping).
-
-```ini
-# All .BAS files are text
-*.BAS = text
-
-# All .DAT files are binary
-*.DAT = binary
-
-# Symbol files are text
-*.SYM = text
-```
+**Syntax:** `CPM_PATTERN = unix_path [text|binary]`
 
 #### Directory Mappings
 
@@ -139,15 +109,10 @@ drive_B = $HOME/basic_programs
 
 ```ini
 # mbasic_tests.cfg
-program = com/mbasic.com
-args = TEST.BAS
+program = /path/to/mbasic.com
 
-# Text mode for BASIC files
-*.BAS = text
-
-# Drive mappings
-drive_A = .
-drive_B = /home/user/mbasic/tests
+# Map BASIC files to test directory
+*.BAS = /home/user/mbasic/tests text
 
 # Map specific games
 STARTREK.BAS = /home/user/mbasic/superstartrek.bas text
@@ -157,20 +122,12 @@ STARTREK.BAS = /home/user/mbasic/superstartrek.bas text
 
 ```ini
 # asm.cfg
-program = com/m80.com
+program = /path/to/m80.com
 cd = /tmp
 
-# Assembly source files are text
-*.MAC = text
-*.ASM = text
-*.LST = text
-
-# Object/binary files
-*.REL = binary
-*.COM = binary
-
-# Look for source in specific directory
+# Assembly source files in specific directory
 *.MAC = ${HOME}/asm/src text
+*.ASM = ${HOME}/asm/src text
 ```
 
 ### Compiler with Output Directory
@@ -180,14 +137,9 @@ cd = /tmp
 program = ${HOME}/cpm/compilers/hitech_c.com
 cd = /tmp/build
 
-# Source is text, output is binary
-*.C = text
-*.H = text
-*.OBJ = binary
-*.COM = binary
-
-# Drive B is the source directory
-drive_B = ${HOME}/projects/myapp/src
+# Source files in specific directory
+*.C = ${HOME}/projects/myapp/src text
+*.H = ${HOME}/projects/myapp/src text
 ```
 
 ## Command Line Usage
@@ -196,35 +148,25 @@ drive_B = ${HOME}/projects/myapp/src
 # Run with config file
 ./cpmemu config.cfg
 
-# Run with config and additional arguments (appended to config args)
-./cpmemu config.cfg MYFILE.BAS
-
 # Config with CPU mode option
 ./cpmemu --8080 config.cfg
-
-# Show config file help
-./cpmemu --help-cfg
 ```
 
 ## File Mode Detection
 
-When `default_mode = auto`, the emulator uses these heuristics:
+When `default_mode = auto`, the emulator checks the file extension:
 
-**Known text extensions:** .BAS, .MAC, .ASM, .TXT, .DOC, .LST, .PRN
-**Known binary extensions:** .COM, .EXE, .OVL, .OVR, .SYS, .BIN, .DAT
+**Known text extensions:** .BAS, .MAC, .ASM, .TXT, .DOC, .LST, .PRN, .Z80, .LIB
+**Known binary extensions:** .COM, .EXE, .OVL, .OVR, .SYS, .BIN, .DAT, .SPR, .REL, .PRL, .RSP
 
-For other files, it scans the first 512 bytes:
-- If more than 5% are control characters (excluding CR, LF, TAB, ^Z), treat as binary
-- Otherwise treat as text
+Files with unrecognized extensions default to binary.
 
 ## File Search Order
 
 When a CP/M program opens a file (e.g., `TEST.BAS`):
 
-1. Check explicit file mappings (exact CP/M name to Unix path)
-2. Check pattern mappings (e.g., `*.BAS = /some/dir`)
-3. Search in drive directory (if drive mapping exists)
-4. Search in current directory (lowercase, then uppercase)
+1. Check file mappings (pattern and exact matches from config)
+2. Search in current directory (lowercase, then as-is)
 
 ## Notes
 

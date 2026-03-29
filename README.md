@@ -22,7 +22,7 @@ be supplied for the file name mapping and type (text vs binary) for
 each file.
 ## Features
 
-- **Dual CPU modes**: Intel 8080 (default) and Zilog Z80 instruction sets
+- **Dual CPU modes**: Zilog Z80 (default) and Intel 8080 instruction sets
 - **CP/M environment**: BDOS file/console functions and BIOS character I/O
 - **File I/O translation**: Maps CP/M file operations to Unix filesystem
 - **Text/binary mode**: Automatic EOL conversion between CP/M and Unix
@@ -92,9 +92,13 @@ cpmemu [options] <program.com> [args...]
 
 | Option | Description |
 |--------|-------------|
-| `--8080` | Run in 8080 mode (default) |
-| `--z80` | Run in Z80 mode with full instruction set |
+| `--z80` | Run in Z80 mode (default) |
+| `--8080` | Run in 8080 mode |
 | `--progress[=N]` | Report progress every N million instructions (default: disabled; 100 if flag used without N) |
+| `--save-memory=FILE` | Save memory to FILE on exit (for MOVCPM/SYSGEN) |
+| `--save-range=S-E` | Save only range S to E (hex, e.g., DC00-FFFF) |
+| `--int-cycles=N` | Enable timer interrupt every N cycles (e.g., 50000) |
+| `--int-rst=N` | RST number for interrupt (0-7, default 7 = RST 38H) |
 
 ### Examples
 
@@ -132,6 +136,7 @@ SYSTEM
 | Variable | Description |
 |----------|-------------|
 | `CPM_PROGRESS=N` | Progress reporting every N million instructions |
+| `CPM_DEBUG` | Enable debug mode (set to `1`, `true`, or `yes`) |
 | `CPM_PRINTER` | File path for LIST device (printer) output |
 | `CPM_AUX_IN` | File path for Reader device input |
 | `CPM_AUX_OUT` | File path for Punch device output |
@@ -157,7 +162,7 @@ aux_input = /tmp/input.txt
 aux_output = /tmp/output.txt
 
 # File mappings (supports environment variables)
-# *.BAS = ${HOME}/basic/*.bas text
+# *.BAS = ${HOME}/basic text
 # DATA.DAT = /path/to/data.dat binary
 ```
 
@@ -176,7 +181,7 @@ Run with: `./src/cpmemu config.cfg`
 | 6 | Direct Console I/O | Supported |
 | 7-8 | Get/Set IOBYTE | Supported |
 | 9 | Print String | Supported |
-| 10 | Read Console Buffer | Stub (returns 0) |
+| 10 | Read Console Buffer | Supported |
 | 11 | Console Status | Supported |
 | 12 | Get Version | Supported |
 | 13-14 | Reset/Select Disk | Supported |
@@ -250,7 +255,6 @@ cpmemu/
 ├── packaging/
 │   └── windows/           # MSIX packaging for Windows Store
 ├── tests/                 # Test programs (.com and .asm)
-├── com/                   # Sample CP/M programs (mbasic.com)
 ├── examples/              # Configuration file examples
 └── docs/                  # Documentation and references
 ```

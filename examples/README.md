@@ -7,9 +7,6 @@ This directory contains example configuration files for the CP/M emulator.
 ```bash
 # Run with a config file
 ./src/cpmemu examples/example.cfg
-
-# Show config file help
-./src/cpmemu --help-cfg
 ```
 
 ## Example Files
@@ -41,21 +38,12 @@ Hi-Tech C development setup:
 # Program to run (required)
 program = path/to/program.com
 
-# Arguments passed to program
-args = ARG1 ARG2
-
 # Working directory
 cd = /path/to/dir
 
 # File mode mappings
-*.BAS = text           # Mode only
-*.DAT = binary         # Mode only
 *.MAC = /path text     # Directory + mode
 TEST.BAS = /path/test.bas text  # Exact mapping
-
-# Drive mappings
-drive_A = .
-drive_B = /path/to/files
 
 # Settings
 default_mode = auto    # auto, text, or binary
@@ -70,29 +58,6 @@ aux_output = /path/to/output.txt
 
 ## Usage Patterns
 
-### Pass arguments on command line
-```bash
-# Config args are used if no command-line args given
-./src/cpmemu config.cfg
-
-# Command-line args are appended to config args
-./src/cpmemu config.cfg MYFILE.BAS
-```
-
-### Multiple source directories
-Use drive mappings to access files from different locations:
-```ini
-drive_A = .                    # Current directory
-drive_B = ${HOME}/source       # Source code
-drive_C = ${HOME}/libraries    # Libraries
-```
-
-In CP/M program:
-```
-LOAD B:MYFILE.BAS       ; Load from source directory
-SAVE "A:OUTPUT.BAS"     ; Save to current directory
-```
-
 ### Text vs Binary Files
 
 The emulator handles line ending conversion automatically:
@@ -101,13 +66,12 @@ The emulator handles line ending conversion automatically:
 
 Set modes explicitly to avoid conversion issues:
 ```ini
-*.BAS = text    # BASIC source
-*.MAC = text    # Assembly source
-*.COM = binary  # Executables
-*.REL = binary  # Object files
+*.BAS = /path/to/basic text    # BASIC source (path + mode)
+*.MAC = /path/to/asm text      # Assembly source
+*.COM = /path/to/bin binary    # Executables
+*.REL = /path/to/obj binary    # Object files
 ```
 
 ## See Also
 
 - `docs/file_handling_notes.md` - Detailed documentation
-- `./src/cpmemu --help-cfg` - Built-in configuration help
