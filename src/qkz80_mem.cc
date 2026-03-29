@@ -9,7 +9,7 @@ qkz80_cpu_mem::qkz80_cpu_mem():dat(0) {
 };
 
 qkz80_cpu_mem::~qkz80_cpu_mem() {
-  delete dat;
+  delete[] dat;
   dat=0;
 }
 

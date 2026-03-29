@@ -1,5 +1,5 @@
-#ifndef I8080_CPU_FLAGS
-#define I8080_CPU_FLAGS 1
+#ifndef QKZ80_CPU_FLAGS
+#define QKZ80_CPU_FLAGS 1
 
   class qkz80_cpu_flags {
   public:

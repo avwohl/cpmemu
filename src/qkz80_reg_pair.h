@@ -1,5 +1,5 @@
-#ifndef I8080_REG_PAIR
-#define I8080_REG_PAIR 1
+#ifndef QKZ80_REG_PAIR
+#define QKZ80_REG_PAIR 1
 // two 8bit regs
 // settable as a 16bit word
 // does not depend on compiler/runtime big/little end

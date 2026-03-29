@@ -235,9 +235,9 @@ bool qkz80_reg_set::condition_code(qkz80_uint8 cond,qkz80_uint8 cpu_flags) const
     return (cpu_flags & qkz80_cpu_flags::CY)==0;
   case 3: //C
     return (cpu_flags & qkz80_cpu_flags::CY)!=0;
-  case 4: // PO (partity)
+  case 4: // PO (parity odd)
     return (cpu_flags & qkz80_cpu_flags::P)==0;
-  case 5: // PE (partity)
+  case 5: // PE (parity even)
     return (cpu_flags & qkz80_cpu_flags::P)!=0;
   case 6: // P (positive)
     return (cpu_flags & qkz80_cpu_flags::S)==0;
@@ -858,8 +858,8 @@ void qkz80_reg_set::set_flags_from_sbc16(qkz80_big_uint result, qkz80_big_uint v
   set_flags(flags);  // set_flags() already calls fix_flags(), no need to double-call
 }
 
-// Z80-specific: 16-bit ADC/SBC (ADC HL,ss / SBC HL,ss)
-// Kept for backward compatibility - redirects to appropriate function
+// Z80-specific: 16-bit SBC (SBC HL,ss)
+// Kept for backward compatibility - redirects to set_flags_from_sbc16
 void qkz80_reg_set::set_flags_from_diff16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2, qkz80_big_uint carry) {
   // Default to SBC behavior (subtraction)
   set_flags_from_sbc16(result, val1, val2, carry);

@@ -2583,7 +2583,7 @@ int main(int argc, char** argv) {
     fprintf(stderr, "  CPM_PROGRESS=N      Enable progress reporting every N million instructions\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Examples:\n");
-    fprintf(stderr, "  %s program.com              # Run CP/M program in 8080 mode\n", argv[0]);
+    fprintf(stderr, "  %s program.com              # Run CP/M program (default: Z80 mode)\n", argv[0]);
     fprintf(stderr, "  %s --z80 program.com        # Run in Z80 mode\n", argv[0]);
     fprintf(stderr, "  %s --progress program.com   # With progress reporting (every 100M)\n", argv[0]);
     fprintf(stderr, "  %s --progress=50 prog.com   # Report every 50M instructions\n", argv[0]);

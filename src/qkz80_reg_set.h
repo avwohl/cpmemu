@@ -1,7 +1,7 @@
-#ifndef I8080_REG_SET
-#define I8080_REG_SET
+#ifndef QKZ80_REG_SET
+#define QKZ80_REG_SET
 
-// all of the CPU register for an 8080 emulator
+// all of the CPU registers for the Z80/8080 emulator
 
 #include "qkz80_reg_pair.h"
 

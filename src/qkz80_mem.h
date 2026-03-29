@@ -1,5 +1,5 @@
-#ifndef X_CPU_MEM
-#define X_CPU_MEM 1
+#ifndef QKZ80_CPU_MEM
+#define QKZ80_CPU_MEM 1
 #include "qkz80_types.h"
 
 class qkz80_cpu_mem {

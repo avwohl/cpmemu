@@ -5,6 +5,6 @@ includedir=${prefix}/include/qkz80
 
 Name: qkz80
 Description: Z80/8080 CPU emulator library
-Version: 1.0.0
+Version: 4.6.0
 Cflags: -I${includedir}
 Libs: -L${libdir} -lqkz80

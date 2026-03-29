@@ -1,5 +1,5 @@
-#ifndef I8080_TRACE
-#define I8080_TRACE 1
+#ifndef QKZ80_TRACE
+#define QKZ80_TRACE 1
 
 class qkz80_trace {
  public:
