@@ -34,16 +34,25 @@ each file.
 
 ### Windows
 
-Download and install the MSIX package:
+An MSIX package is published for some releases; it is built by hand rather than
+by CI, because signing needs a certificate the release workflow does not carry.
+The most recent one is in
+[v4.5.1](https://github.com/avwohl/cpmemu/releases/tag/v4.5.1):
+
 ```powershell
 # Download
-curl -LO https://github.com/avwohl/cpmemu/releases/latest/download/cpmemu.msix
+curl -LO https://github.com/avwohl/cpmemu/releases/download/v4.5.1/cpmemu.msix
 
 # Install (double-click the file, or use PowerShell)
 Add-AppPackage cpmemu.msix
 ```
 
 After installation, `cpmemu` is available from any command prompt or PowerShell window.
+
+To get a *current* Windows build, build the MSIX from source with
+[`packaging/windows/build-msix.ps1`](packaging/windows/build-msix.ps1) (needs
+CMake or MinGW plus the Windows 10 SDK), or build `cpmemu.exe` directly with
+`src/Makefile.win`. See [docs/BUILDING.md](docs/BUILDING.md).
 
 ### Linux (Debian/Ubuntu)
 
