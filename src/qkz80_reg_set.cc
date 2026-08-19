@@ -768,6 +768,7 @@ static qkz80_uint16 sub16_bitwise(qkz80_uint16 minuend, qkz80_uint16 subtrahend,
 // Affects: H, N (cleared), C, X, Y (undocumented)
 // Does NOT affect: S, Z, P/V (these are preserved)
 void qkz80_reg_set::set_flags_from_add16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2) {
+  (void)result;
   qkz80_uint8 flags = get_flags();
 
   // Preserve S, Z, P/V flags (ADD HL doesn't modify them!)
@@ -813,6 +814,7 @@ void qkz80_reg_set::set_flags_from_add16(qkz80_big_uint result, qkz80_big_uint v
 // Z80-specific: 16-bit ADC HL,ss
 // Affects: S, Z, H, P/V (overflow), N (cleared), C, X, Y (undocumented)
 void qkz80_reg_set::set_flags_from_adc16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2, qkz80_big_uint carry) {
+  (void)result;
   // Use bit-by-bit simulation to get exact flag values (addition with carry)
   qkz80_uint8 flag_h(0), flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
   add16_bitwise(val1 & 0xFFFF, val2 & 0xFFFF, carry, flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s);
@@ -837,6 +839,7 @@ void qkz80_reg_set::set_flags_from_adc16(qkz80_big_uint result, qkz80_big_uint v
 // Z80-specific: 16-bit SBC HL,ss
 // Affects: S, Z, H, P/V (overflow), N (set), C, X, Y (undocumented)
 void qkz80_reg_set::set_flags_from_sbc16(qkz80_big_uint result, qkz80_big_uint val1, qkz80_big_uint val2, qkz80_big_uint carry) {
+  (void)result;
   // Use bit-by-bit simulation to get exact flag values (subtraction with borrow)
   qkz80_uint8 flag_h(0), flag_c, flag_v, flag_x, flag_y, flag_z, flag_s;
   sub16_bitwise(val1 & 0xFFFF, val2 & 0xFFFF, carry, flag_h, flag_c, flag_v, flag_x, flag_y, flag_z, flag_s);

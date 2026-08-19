@@ -255,7 +255,7 @@ const char *qkz80::name_reg16(qkz80_uint8 rpair) {
 }
 
 void qkz80::set_reg16(qkz80_uint16 a,qkz80_uint8 rp) {
-  trace->add_reg16(rp);
+  QKZ80_TRACE_CALL(add_reg16(rp));
   switch(rp) {
   case regp_BC:
     regs.BC.set_pair16(a);
@@ -353,7 +353,7 @@ qkz80_uint8 qkz80::fetch_carry_as_int(void) {
 }
 
 void qkz80::set_reg8(qkz80_uint8 dat,qkz80_uint8 rnum) {
-  trace->add_reg8(rnum);
+  QKZ80_TRACE_CALL(add_reg8(rnum));
   switch(rnum) {
   case reg_B:
     regs.BC.set_high(dat);
@@ -387,14 +387,14 @@ void qkz80::set_reg8(qkz80_uint8 dat,qkz80_uint8 rnum) {
 qkz80_uint8 qkz80::peek_byte_from_opcode_stream(void) {
   qkz80_uint16 pc=regs.PC.get_pair16();
   qkz80_uint8 opcode_byte(mem->fetch_mem(pc, true));  // true = instruction fetch
-  trace->fetch(opcode_byte,pc);
+  QKZ80_TRACE_CALL(fetch(opcode_byte,pc));
   return opcode_byte;
 }
 
 qkz80_uint8 qkz80::pull_byte_from_opcode_stream(void) {
   qkz80_uint16 pc=regs.PC.get_pair16();
   qkz80_uint8 opcode_byte(mem->fetch_mem(pc, true));  // true = instruction fetch
-  trace->fetch(opcode_byte,pc);
+  QKZ80_TRACE_CALL(fetch(opcode_byte,pc));
   pc++;
   regs.PC.set_pair16(pc);
   return opcode_byte;
@@ -480,7 +480,7 @@ void qkz80::execute(void) {
       set_reg16(result, regp_HL);
       // Z80: ADC HL is addition with carry, sets all flags
       regs.set_flags_from_adc16(result, hl_val, rp_val, carry);
-      trace->asm_op("adc hl,%s", name_reg16(rp));
+      QKZ80_TRACE_CALL(asm_op("adc hl,%s", name_reg16(rp)));
       return;
     }
 
@@ -494,7 +494,7 @@ void qkz80::execute(void) {
       set_reg16(result, regp_HL);
       // Z80: SBC HL is subtraction with borrow, sets all flags
       regs.set_flags_from_sbc16(result, hl_val, rp_val, carry);
-      trace->asm_op("sbc hl,%s", name_reg16(rp));
+      QKZ80_TRACE_CALL(asm_op("sbc hl,%s", name_reg16(rp)));
       return;
     }
 
@@ -505,7 +505,7 @@ void qkz80::execute(void) {
       qkz80_uint16 addr = pull_word_from_opcode_stream();
       qkz80_uint16 val = get_reg16(rp);
       write_2_bytes(val, addr);
-      trace->asm_op("ld (0x%04x),%s", addr, name_reg16(rp));
+      QKZ80_TRACE_CALL(asm_op("ld (0x%04x),%s", addr, name_reg16(rp)));
       return;
     }
 
@@ -515,7 +515,7 @@ void qkz80::execute(void) {
       qkz80_uint16 addr = pull_word_from_opcode_stream();
       qkz80_uint16 val = read_word(addr);
       set_reg16(val, rp);
-      trace->asm_op("ld %s,(0x%04x)", name_reg16(rp), addr);
+      QKZ80_TRACE_CALL(asm_op("ld %s,(0x%04x)", name_reg16(rp), addr));
       return;
     }
 
@@ -527,7 +527,7 @@ void qkz80::execute(void) {
       qkz80_big_uint result = 0 - a_val;
       regs.set_flags_from_diff8(result, 0, a_val, 0);
       set_A(result);
-      trace->asm_op("neg");
+      QKZ80_TRACE_CALL(asm_op("neg"));
       return;
     }
 
@@ -535,37 +535,37 @@ void qkz80::execute(void) {
     // IM 0
     case 0x46: case 0x4e: case 0x66: case 0x6e:
       regs.IM = 0;
-      trace->asm_op("im 0");
+      QKZ80_TRACE_CALL(asm_op("im 0"));
       return;
 
     // IM 1
     case 0x56: case 0x76:
       regs.IM = 1;
-      trace->asm_op("im 1");
+      QKZ80_TRACE_CALL(asm_op("im 1"));
       return;
 
     // IM 2
     case 0x5e: case 0x7e:
       regs.IM = 2;
-      trace->asm_op("im 2");
+      QKZ80_TRACE_CALL(asm_op("im 2"));
       return;
 
     // LD I,A / LD R,A / LD A,I / LD A,R
     case 0x47: // LD I,A
       regs.I = get_reg8(reg_A);
-      trace->asm_op("ld i,a");
+      QKZ80_TRACE_CALL(asm_op("ld i,a"));
       return;
 
     case 0x4f: // LD R,A
       regs.R = get_reg8(reg_A);
-      trace->asm_op("ld r,a");
+      QKZ80_TRACE_CALL(asm_op("ld r,a"));
       return;
 
     case 0x57: { // LD A,I
       qkz80_uint8 val = regs.I;
       set_A(val);
       regs.set_flags_from_ld_a_ir(val);
-      trace->asm_op("ld a,i");
+      QKZ80_TRACE_CALL(asm_op("ld a,i"));
       return;
     }
 
@@ -573,7 +573,7 @@ void qkz80::execute(void) {
       qkz80_uint8 val = regs.R;
       set_A(val);
       regs.set_flags_from_ld_a_ir(val);
-      trace->asm_op("ld a,r");
+      QKZ80_TRACE_CALL(asm_op("ld a,r"));
       return;
     }
 
@@ -581,7 +581,7 @@ void qkz80::execute(void) {
     case 0x4d: { // RETI
       qkz80_uint16 addr = pop_word();
       regs.PC.set_pair16(addr);
-      trace->asm_op("reti");
+      QKZ80_TRACE_CALL(asm_op("reti"));
       return;
     }
 
@@ -592,7 +592,7 @@ void qkz80::execute(void) {
       qkz80_uint16 addr = pop_word();
       regs.PC.set_pair16(addr);
       regs.IFF1 = regs.IFF2;  // Restore IFF1 from IFF2
-      trace->asm_op("retn");
+      QKZ80_TRACE_CALL(asm_op("retn"));
       return;
     }
 
@@ -606,7 +606,7 @@ void qkz80::execute(void) {
       set_A(new_a);
       mem->store_mem(hl_addr, new_mem);
       regs.set_flags_from_logic8(new_a, regs.get_carry_as_int(), 0);
-      trace->asm_op("rrd");
+      QKZ80_TRACE_CALL(asm_op("rrd"));
       return;
     }
 
@@ -619,7 +619,7 @@ void qkz80::execute(void) {
       set_A(new_a);
       mem->store_mem(hl_addr, new_mem);
       regs.set_flags_from_logic8(new_a, regs.get_carry_as_int(), 0);
-      trace->asm_op("rld");
+      QKZ80_TRACE_CALL(asm_op("rld"));
       return;
     }
 
@@ -634,7 +634,7 @@ void qkz80::execute(void) {
       set_reg16(de + 1, regp_DE);
       set_reg16(bc - 1, regp_BC);
       regs.set_flags_from_block_ld(get_reg8(reg_A), byte_val, bc - 1);
-      trace->asm_op("ldi");
+      QKZ80_TRACE_CALL(asm_op("ldi"));
       return;
     }
 
@@ -649,7 +649,7 @@ void qkz80::execute(void) {
       set_reg16(bc - 1, regp_BC);
       regs.set_flags_from_block_ld(get_reg8(reg_A), byte_val, bc - 1);
       if (bc != 1) regs.PC.set_pair16(regs.PC.get_pair16() - 2);  // Repeat
-      trace->asm_op("ldir");
+      QKZ80_TRACE_CALL(asm_op("ldir"));
       return;
     }
 
@@ -663,7 +663,7 @@ void qkz80::execute(void) {
       set_reg16(de - 1, regp_DE);
       set_reg16(bc - 1, regp_BC);
       regs.set_flags_from_block_ld(get_reg8(reg_A), byte_val, bc - 1);
-      trace->asm_op("ldd");
+      QKZ80_TRACE_CALL(asm_op("ldd"));
       return;
     }
 
@@ -678,7 +678,7 @@ void qkz80::execute(void) {
       set_reg16(bc - 1, regp_BC);
       regs.set_flags_from_block_ld(get_reg8(reg_A), byte_val, bc - 1);
       if (bc != 1) regs.PC.set_pair16(regs.PC.get_pair16() - 2);  // Repeat
-      trace->asm_op("lddr");
+      QKZ80_TRACE_CALL(asm_op("lddr"));
       return;
     }
 
@@ -690,7 +690,7 @@ void qkz80::execute(void) {
       regs.set_flags_from_block_cp(a_val, mem_val, bc - 1);
       set_reg16(hl + 1, regp_HL);
       set_reg16(bc - 1, regp_BC);
-      trace->asm_op("cpi");
+      QKZ80_TRACE_CALL(asm_op("cpi"));
       return;
     }
 
@@ -704,7 +704,7 @@ void qkz80::execute(void) {
       set_reg16(hl + 1, regp_HL);
       set_reg16(bc - 1, regp_BC);
       if (bc != 1 && diff != 0) regs.PC.set_pair16(regs.PC.get_pair16() - 2);  // Repeat if not found
-      trace->asm_op("cpir");
+      QKZ80_TRACE_CALL(asm_op("cpir"));
       return;
     }
 
@@ -716,7 +716,7 @@ void qkz80::execute(void) {
       regs.set_flags_from_block_cp(a_val, mem_val, bc - 1);
       set_reg16(hl - 1, regp_HL);
       set_reg16(bc - 1, regp_BC);
-      trace->asm_op("cpd");
+      QKZ80_TRACE_CALL(asm_op("cpd"));
       return;
     }
 
@@ -730,7 +730,7 @@ void qkz80::execute(void) {
       set_reg16(hl - 1, regp_HL);
       set_reg16(bc - 1, regp_BC);
       if (bc != 1 && diff != 0) regs.PC.set_pair16(regs.PC.get_pair16() - 2);  // Repeat if not found
-      trace->asm_op("cpdr");
+      QKZ80_TRACE_CALL(asm_op("cpdr"));
       return;
     }
 
@@ -742,7 +742,7 @@ void qkz80::execute(void) {
 
     // Many ED opcodes are just NOPs or duplicates
     default:
-      trace->asm_op("ED %02x (nop or duplicate)", opcode);
+      QKZ80_TRACE_CALL(asm_op("ED %02x (nop or duplicate)", opcode));
       return;
     }
   }
@@ -774,35 +774,35 @@ void qkz80::execute(void) {
       switch(op) {
       case 0:
         result = do_rlc(val);
-        trace->asm_op("rlc %s", name_reg8(reg_sel));
+        QKZ80_TRACE_CALL(asm_op("rlc %s", name_reg8(reg_sel)));
         break;
       case 1:
         result = do_rrc(val);
-        trace->asm_op("rrc %s", name_reg8(reg_sel));
+        QKZ80_TRACE_CALL(asm_op("rrc %s", name_reg8(reg_sel)));
         break;
       case 2:
         result = do_rl(val);
-        trace->asm_op("rl %s", name_reg8(reg_sel));
+        QKZ80_TRACE_CALL(asm_op("rl %s", name_reg8(reg_sel)));
         break;
       case 3:
         result = do_rr(val);
-        trace->asm_op("rr %s", name_reg8(reg_sel));
+        QKZ80_TRACE_CALL(asm_op("rr %s", name_reg8(reg_sel)));
         break;
       case 4:
         result = do_sla(val);
-        trace->asm_op("sla %s", name_reg8(reg_sel));
+        QKZ80_TRACE_CALL(asm_op("sla %s", name_reg8(reg_sel)));
         break;
       case 5:
         result = do_sra(val);
-        trace->asm_op("sra %s", name_reg8(reg_sel));
+        QKZ80_TRACE_CALL(asm_op("sra %s", name_reg8(reg_sel)));
         break;
       case 6:
         result = do_sll(val);
-        trace->asm_op("sll %s", name_reg8(reg_sel));
+        QKZ80_TRACE_CALL(asm_op("sll %s", name_reg8(reg_sel)));
         break; // undocumented
       case 7:
         result = do_srl(val);
-        trace->asm_op("srl %s", name_reg8(reg_sel));
+        QKZ80_TRACE_CALL(asm_op("srl %s", name_reg8(reg_sel)));
         break;
       }
       // Write result back
@@ -843,7 +843,7 @@ void qkz80::execute(void) {
       }
 
       regs.set_flags(flags);
-      trace->asm_op("bit %d,%s", bit_num, name_reg8(reg_sel));
+      QKZ80_TRACE_CALL(asm_op("bit %d,%s", bit_num, name_reg8(reg_sel)));
     } else if (opcode < 0xC0) {
       // RES b,r (80-BF) - reset bit
       qkz80_uint8 bit_mask = ~(1 << bit_num);
@@ -856,7 +856,7 @@ void qkz80::execute(void) {
       } else {
         set_reg8(result, reg_sel);
       }
-      trace->asm_op("res %d,%s", bit_num, name_reg8(reg_sel));
+      QKZ80_TRACE_CALL(asm_op("res %d,%s", bit_num, name_reg8(reg_sel)));
     } else {
       // SET b,r (C0-FF) - set bit
       qkz80_uint8 bit_mask = 1 << bit_num;
@@ -869,7 +869,7 @@ void qkz80::execute(void) {
       } else {
         set_reg8(result, reg_sel);
       }
-      trace->asm_op("set %d,%s", bit_num, name_reg8(reg_sel));
+      QKZ80_TRACE_CALL(asm_op("set %d,%s", bit_num, name_reg8(reg_sel)));
     }
     return;
   }
@@ -906,9 +906,9 @@ void qkz80::execute(void) {
         regs.set_flags_from_sum8(sum, rega, regb, 0);
         set_A(sum);
         if (reg_num == reg_M) {
-          trace->asm_op("add (%s+d)", has_dd_prefix ? "ix" : "iy");
+          QKZ80_TRACE_CALL(asm_op("add (%s+d)", has_dd_prefix ? "ix" : "iy"));
         } else {
-          trace->asm_op("add %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          QKZ80_TRACE_CALL(asm_op("add %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl")));
         }
         break;
       }
@@ -918,9 +918,9 @@ void qkz80::execute(void) {
         regs.set_flags_from_sum8(sum, rega, regb, carry);
         set_A(sum);
         if (reg_num == reg_M) {
-          trace->asm_op("adc (%s+d)", has_dd_prefix ? "ix" : "iy");
+          QKZ80_TRACE_CALL(asm_op("adc (%s+d)", has_dd_prefix ? "ix" : "iy"));
         } else {
-          trace->asm_op("adc %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          QKZ80_TRACE_CALL(asm_op("adc %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl")));
         }
         break;
       }
@@ -929,9 +929,9 @@ void qkz80::execute(void) {
         regs.set_flags_from_diff8(diff, rega, regb, 0);
         set_A(diff);
         if (reg_num == reg_M) {
-          trace->asm_op("sub (%s+d)", has_dd_prefix ? "ix" : "iy");
+          QKZ80_TRACE_CALL(asm_op("sub (%s+d)", has_dd_prefix ? "ix" : "iy"));
         } else {
-          trace->asm_op("sub %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          QKZ80_TRACE_CALL(asm_op("sub %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl")));
         }
         break;
       }
@@ -941,9 +941,9 @@ void qkz80::execute(void) {
         regs.set_flags_from_diff8(diff, rega, regb, carry);
         set_A(diff);
         if (reg_num == reg_M) {
-          trace->asm_op("sbc (%s+d)", has_dd_prefix ? "ix" : "iy");
+          QKZ80_TRACE_CALL(asm_op("sbc (%s+d)", has_dd_prefix ? "ix" : "iy"));
         } else {
-          trace->asm_op("sbc %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          QKZ80_TRACE_CALL(asm_op("sbc %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl")));
         }
         break;
       }
@@ -954,9 +954,9 @@ void qkz80::execute(void) {
         regs.set_flags_from_logic8(result, 0, hc);
         set_A(result);
         if (reg_num == reg_M) {
-          trace->asm_op("and (%s+d)", has_dd_prefix ? "ix" : "iy");
+          QKZ80_TRACE_CALL(asm_op("and (%s+d)", has_dd_prefix ? "ix" : "iy"));
         } else {
-          trace->asm_op("and %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          QKZ80_TRACE_CALL(asm_op("and %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl")));
         }
         break;
       }
@@ -965,9 +965,9 @@ void qkz80::execute(void) {
         regs.set_flags_from_logic8(result, 0, 0);
         set_A(result);
         if (reg_num == reg_M) {
-          trace->asm_op("xor (%s+d)", has_dd_prefix ? "ix" : "iy");
+          QKZ80_TRACE_CALL(asm_op("xor (%s+d)", has_dd_prefix ? "ix" : "iy"));
         } else {
-          trace->asm_op("xor %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          QKZ80_TRACE_CALL(asm_op("xor %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl")));
         }
         break;
       }
@@ -976,9 +976,9 @@ void qkz80::execute(void) {
         regs.set_flags_from_logic8(result, 0, 0);
         set_A(result);
         if (reg_num == reg_M) {
-          trace->asm_op("or (%s+d)", has_dd_prefix ? "ix" : "iy");
+          QKZ80_TRACE_CALL(asm_op("or (%s+d)", has_dd_prefix ? "ix" : "iy"));
         } else {
-          trace->asm_op("or %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          QKZ80_TRACE_CALL(asm_op("or %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl")));
         }
         break;
       }
@@ -992,9 +992,9 @@ void qkz80::execute(void) {
         if (regb & 0x20) flags |= qkz80_cpu_flags::Y;          // Set Y from bit 5 of operand
         regs.set_flags(flags);
         if (reg_num == reg_M) {
-          trace->asm_op("cp (%s+d)", has_dd_prefix ? "ix" : "iy");
+          QKZ80_TRACE_CALL(asm_op("cp (%s+d)", has_dd_prefix ? "ix" : "iy"));
         } else {
-          trace->asm_op("cp %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl"));
+          QKZ80_TRACE_CALL(asm_op("cp %s", reg_num == reg_H ? (has_dd_prefix ? "ixh" : "iyh") : (has_dd_prefix ? "ixl" : "iyl")));
         }
         break;
       }
@@ -1007,7 +1007,7 @@ void qkz80::execute(void) {
   switch (opcode) {
 
   case 0x00: // NOP
-    trace->asm_op("nop");
+    QKZ80_TRACE_CALL(asm_op("nop"));
     return;
 
   // LXI - Load register pair immediate
@@ -1020,8 +1020,8 @@ void qkz80::execute(void) {
       rpair = active_hl;
     }
     set_reg16(addr,rpair);
-    trace->asm_op("lxi %s,0x%0x",name_reg16(rpair),addr);
-    trace->add_reg16(rpair);
+    QKZ80_TRACE_CALL(asm_op("lxi %s,0x%0x",name_reg16(rpair),addr));
+    QKZ80_TRACE_CALL(add_reg16(rpair));
     return;
   }
 
@@ -1031,9 +1031,9 @@ void qkz80::execute(void) {
     qkz80_uint8 rp((opcode >> 4) & 0x03);
     qkz80_uint16 pair(get_reg16(rp));
     qkz80_uint8 rega(get_reg8(reg_A));
-    trace->add_reg16(rp);
+    QKZ80_TRACE_CALL(add_reg16(rp));
     mem->store_mem(pair,rega);
-    trace->asm_op("stax %s",name_reg16(rp));
+    QKZ80_TRACE_CALL(asm_op("stax %s",name_reg16(rp)));
     return;
   }
 
@@ -1048,7 +1048,7 @@ void qkz80::execute(void) {
     qkz80_uint16 pair_val(get_reg16(rp));
     pair_val++;
     set_reg16(pair_val,rp);
-    trace->asm_op("inx %s",name_reg16(rp));
+    QKZ80_TRACE_CALL(asm_op("inx %s",name_reg16(rp)));
     return;
   }
 
@@ -1068,9 +1068,9 @@ void qkz80::execute(void) {
       qkz80_uint8 hc((num & 0xf) == 0);
       regs.set_zspa_from_inr(num,hc);
       if (has_dd_prefix)
-        trace->asm_op("inc (ix%+d)", offset);
+        QKZ80_TRACE_CALL(asm_op("inc (ix%+d)", offset));
       else
-        trace->asm_op("inc (iy%+d)", offset);
+        QKZ80_TRACE_CALL(asm_op("inc (iy%+d)", offset));
       return;
     }
 
@@ -1082,20 +1082,20 @@ void qkz80::execute(void) {
         num++;
         if (has_dd_prefix) {
           regs.IX.set_high(num);
-          trace->asm_op("inc ixh");
+          QKZ80_TRACE_CALL(asm_op("inc ixh"));
         } else {
           regs.IY.set_high(num);
-          trace->asm_op("inc iyh");
+          QKZ80_TRACE_CALL(asm_op("inc iyh"));
         }
       } else { // reg_L
         num = has_dd_prefix ? regs.IX.get_low() : regs.IY.get_low();
         num++;
         if (has_dd_prefix) {
           regs.IX.set_low(num);
-          trace->asm_op("inc ixl");
+          QKZ80_TRACE_CALL(asm_op("inc ixl"));
         } else {
           regs.IY.set_low(num);
-          trace->asm_op("inc iyl");
+          QKZ80_TRACE_CALL(asm_op("inc iyl"));
         }
       }
       qkz80_uint8 hc((num & 0xf) == 0);
@@ -1108,7 +1108,7 @@ void qkz80::execute(void) {
     set_reg8(num,reg_num);
     qkz80_uint8 hc((num & 0xf) == 0);
     regs.set_zspa_from_inr(num,hc);
-    trace->asm_op("inr %s",name_reg8(reg_num));
+    QKZ80_TRACE_CALL(asm_op("inr %s",name_reg8(reg_num)));
     return;
   }
 
@@ -1136,9 +1136,9 @@ void qkz80::execute(void) {
       }
       regs.set_zspa_from_inr(num,hc,false);  // false = decrement
       if (has_dd_prefix)
-        trace->asm_op("dec (ix%+d)", offset);
+        QKZ80_TRACE_CALL(asm_op("dec (ix%+d)", offset));
       else
-        trace->asm_op("dec (iy%+d)", offset);
+        QKZ80_TRACE_CALL(asm_op("dec (iy%+d)", offset));
       return;
     }
 
@@ -1150,20 +1150,20 @@ void qkz80::execute(void) {
         num--;
         if (has_dd_prefix) {
           regs.IX.set_high(num);
-          trace->asm_op("dec ixh");
+          QKZ80_TRACE_CALL(asm_op("dec ixh"));
         } else {
           regs.IY.set_high(num);
-          trace->asm_op("dec iyh");
+          QKZ80_TRACE_CALL(asm_op("dec iyh"));
         }
       } else { // reg_L
         num = has_dd_prefix ? regs.IX.get_low() : regs.IY.get_low();
         num--;
         if (has_dd_prefix) {
           regs.IX.set_low(num);
-          trace->asm_op("dec ixl");
+          QKZ80_TRACE_CALL(asm_op("dec ixl"));
         } else {
           regs.IY.set_low(num);
-          trace->asm_op("dec iyl");
+          QKZ80_TRACE_CALL(asm_op("dec iyl"));
         }
       }
       qkz80_uint8 hc((num & 0xf) == 0xf);
@@ -1184,7 +1184,7 @@ void qkz80::execute(void) {
       hc = ((num & 0xf) == 0xf);
     }
     regs.set_zspa_from_inr(num,hc,false);  // false = decrement
-    trace->asm_op("dcr %s",name_reg8(reg_num));
+    QKZ80_TRACE_CALL(asm_op("dcr %s",name_reg8(reg_num)));
     return;
   }
 
@@ -1201,9 +1201,9 @@ void qkz80::execute(void) {
       qkz80_uint16 addr = get_reg16(active_hl) + offset;
       mem->store_mem(addr, dat);
       if (has_dd_prefix)
-        trace->asm_op("ld (ix%+d),0x%02x", offset, dat);
+        QKZ80_TRACE_CALL(asm_op("ld (ix%+d),0x%02x", offset, dat));
       else
-        trace->asm_op("ld (iy%+d),0x%02x", offset, dat);
+        QKZ80_TRACE_CALL(asm_op("ld (iy%+d),0x%02x", offset, dat));
       return;
     }
 
@@ -1213,18 +1213,18 @@ void qkz80::execute(void) {
       if (dst == reg_H) {
         if (has_dd_prefix) {
           regs.IX.set_high(dat);
-          trace->asm_op("ld ixh,0x%02x", dat);
+          QKZ80_TRACE_CALL(asm_op("ld ixh,0x%02x", dat));
         } else {
           regs.IY.set_high(dat);
-          trace->asm_op("ld iyh,0x%02x", dat);
+          QKZ80_TRACE_CALL(asm_op("ld iyh,0x%02x", dat));
         }
       } else { // reg_L
         if (has_dd_prefix) {
           regs.IX.set_low(dat);
-          trace->asm_op("ld ixl,0x%02x", dat);
+          QKZ80_TRACE_CALL(asm_op("ld ixl,0x%02x", dat));
         } else {
           regs.IY.set_low(dat);
-          trace->asm_op("ld iyl,0x%02x", dat);
+          QKZ80_TRACE_CALL(asm_op("ld iyl,0x%02x", dat));
         }
       }
       return;
@@ -1232,8 +1232,8 @@ void qkz80::execute(void) {
 
     qkz80_uint8 dat(pull_byte_from_opcode_stream());
     set_reg8(dat,dst);
-    trace->asm_op("mvi %s,0x%0x",name_reg8(dst),dat);
-    trace->add_reg8(dst);
+    QKZ80_TRACE_CALL(asm_op("mvi %s,0x%0x",name_reg8(dst),dat));
+    QKZ80_TRACE_CALL(add_reg8(dst));
     return;
   }
 
@@ -1247,7 +1247,7 @@ void qkz80::execute(void) {
     dat1=(dat1<<1) | cy;
     set_reg8(dat1,reg_A);
     regs.set_flags_from_rotate_acc(dat1, cy);
-    trace->asm_op("rlca");
+    QKZ80_TRACE_CALL(asm_op("rlca"));
     return;
   }
 
@@ -1259,7 +1259,7 @@ void qkz80::execute(void) {
       qkz80_uint16 af_prime = regs.AF_.get_pair16();
       regs.AF.set_pair16(af_prime);
       regs.AF_.set_pair16(af);
-      trace->asm_op("ex af,af'");
+      QKZ80_TRACE_CALL(asm_op("ex af,af'"));
     }
     return;
 
@@ -1284,10 +1284,10 @@ void qkz80::execute(void) {
       regs.set_carry_from_int((sum& ~0x0ffff)!=0);
     }
 
-    if (has_dd_prefix) trace->asm_op("add ix,%s",name_reg16(rp));
-    else if (has_fd_prefix) trace->asm_op("add iy,%s",name_reg16(rp));
-    else trace->asm_op("dad %s",name_reg16(rp));
-    trace->add_reg16(rp);
+    if (has_dd_prefix) QKZ80_TRACE_CALL(asm_op("add ix,%s",name_reg16(rp)));
+    else if (has_fd_prefix) QKZ80_TRACE_CALL(asm_op("add iy,%s",name_reg16(rp)));
+    else QKZ80_TRACE_CALL(asm_op("dad %s",name_reg16(rp)));
+    QKZ80_TRACE_CALL(add_reg16(rp));
     return;
   }
 
@@ -1297,9 +1297,9 @@ void qkz80::execute(void) {
     qkz80_uint8 rp((opcode >> 4) & 0x03);
     qkz80_uint16 pair(get_reg16(rp));
     qkz80_uint8 dat(mem->fetch_mem(pair));
-    trace->add_reg16(rp);
+    QKZ80_TRACE_CALL(add_reg16(rp));
     set_reg8(dat,reg_A);
-    trace->asm_op("ldax %s",name_reg16(rp));
+    QKZ80_TRACE_CALL(asm_op("ldax %s",name_reg16(rp)));
     return;
   }
 
@@ -1314,7 +1314,7 @@ void qkz80::execute(void) {
     qkz80_uint16 pair_val(get_reg16(rp));
     pair_val--;
     set_reg16(pair_val,rp);
-    trace->asm_op("dcx %s",name_reg16(rp));
+    QKZ80_TRACE_CALL(asm_op("dcx %s",name_reg16(rp)));
     return;
   }
 
@@ -1329,7 +1329,7 @@ void qkz80::execute(void) {
     dat1=(dat1>>1) | high_bit;
     set_reg8(dat1,reg_A);
     regs.set_flags_from_rotate_acc(dat1, low_bit);
-    trace->asm_op("rrca");
+    QKZ80_TRACE_CALL(asm_op("rrca"));
     return;
   }
 
@@ -1344,11 +1344,11 @@ void qkz80::execute(void) {
       if (b_val != 0) {
         qkz80_uint16 pc = regs.PC.get_pair16();
         regs.PC.set_pair16(pc + offset);
-        trace->asm_op("djnz $%+d", offset);
-        trace->comment("taken, B=%02x", b_val);
+        QKZ80_TRACE_CALL(asm_op("djnz $%+d", offset));
+        QKZ80_TRACE_CALL(comment("taken, B=%02x", b_val));
       } else {
-        trace->asm_op("djnz $%+d", offset);
-        trace->comment("not taken, B=0");
+        QKZ80_TRACE_CALL(asm_op("djnz $%+d", offset));
+        QKZ80_TRACE_CALL(comment("not taken, B=0"));
       }
     }
     return;
@@ -1363,7 +1363,7 @@ void qkz80::execute(void) {
     a_val=(a_val<<1) | old_carry;
     set_reg8(a_val,reg_A);
     regs.set_flags_from_rotate_acc(a_val, new_carry);
-    trace->asm_op("rla");
+    QKZ80_TRACE_CALL(asm_op("rla"));
     return;
   }
 
@@ -1374,7 +1374,7 @@ void qkz80::execute(void) {
       qkz80_int8 offset = (qkz80_int8)pull_byte_from_opcode_stream();
       qkz80_uint16 pc = regs.PC.get_pair16();
       regs.PC.set_pair16(pc + offset);
-      trace->asm_op("jr $%+d", offset);
+      QKZ80_TRACE_CALL(asm_op("jr $%+d", offset));
     }
     return;
 
@@ -1390,7 +1390,7 @@ void qkz80::execute(void) {
       a_val&=0x7f;
     set_reg8(a_val,reg_A);
     regs.set_flags_from_rotate_acc(a_val, new_carry);
-    trace->asm_op("rra");
+    QKZ80_TRACE_CALL(asm_op("rra"));
     return;
   }
 
@@ -1402,11 +1402,11 @@ void qkz80::execute(void) {
       if (!regs.condition_code(1, regs.get_flags())) { // NZ condition
         qkz80_uint16 pc = regs.PC.get_pair16();
         regs.PC.set_pair16(pc + offset);
-        trace->asm_op("jr nz,$%+d", offset);
-        trace->comment("taken");
+        QKZ80_TRACE_CALL(asm_op("jr nz,$%+d", offset));
+        QKZ80_TRACE_CALL(comment("taken"));
       } else {
-        trace->asm_op("jr nz,$%+d", offset);
-        trace->comment("not taken");
+        QKZ80_TRACE_CALL(asm_op("jr nz,$%+d", offset));
+        QKZ80_TRACE_CALL(comment("not taken"));
       }
     }
     return;
@@ -1416,10 +1416,10 @@ void qkz80::execute(void) {
     qkz80_uint16 addr(pull_word_from_opcode_stream());
     qkz80_uint16 aword(get_reg16(active_hl));
     write_2_bytes(aword,addr);
-    if (has_dd_prefix) trace->asm_op("ld (0x%0x),ix",addr);
-    else if (has_fd_prefix) trace->asm_op("ld (0x%0x),iy",addr);
-    else trace->asm_op("shld 0x%0x",addr);
-    trace->add_reg16(active_hl);
+    if (has_dd_prefix) QKZ80_TRACE_CALL(asm_op("ld (0x%0x),ix",addr));
+    else if (has_fd_prefix) QKZ80_TRACE_CALL(asm_op("ld (0x%0x),iy",addr));
+    else QKZ80_TRACE_CALL(asm_op("shld 0x%0x",addr));
+    QKZ80_TRACE_CALL(add_reg16(active_hl));
     return;
   }
 
@@ -1486,7 +1486,7 @@ void qkz80::execute(void) {
 
     set_reg8(result, reg_A);
     regs.set_flags_from_daa(result, flag_n, new_h, new_c);
-    trace->asm_op("daa");
+    QKZ80_TRACE_CALL(asm_op("daa"));
     return;
   }
 
@@ -1498,11 +1498,11 @@ void qkz80::execute(void) {
       if (regs.condition_code(1, regs.get_flags())) { // Z condition
         qkz80_uint16 pc = regs.PC.get_pair16();
         regs.PC.set_pair16(pc + offset);
-        trace->asm_op("jr z,$%+d", offset);
-        trace->comment("taken");
+        QKZ80_TRACE_CALL(asm_op("jr z,$%+d", offset));
+        QKZ80_TRACE_CALL(comment("taken"));
       } else {
-        trace->asm_op("jr z,$%+d", offset);
-        trace->comment("not taken");
+        QKZ80_TRACE_CALL(asm_op("jr z,$%+d", offset));
+        QKZ80_TRACE_CALL(comment("not taken"));
       }
     }
     return;
@@ -1512,9 +1512,9 @@ void qkz80::execute(void) {
     qkz80_uint16 addr(pull_word_from_opcode_stream());
     qkz80_uint16 pair_val(read_word(addr));
     set_reg16(pair_val,active_hl);
-    if (has_dd_prefix) trace->asm_op("ld ix,(0x%0x)",addr);
-    else if (has_fd_prefix) trace->asm_op("ld iy,(0x%0x)",addr);
-    else trace->asm_op("lhld 0x%0x",addr);
+    if (has_dd_prefix) QKZ80_TRACE_CALL(asm_op("ld ix,(0x%0x)",addr));
+    else if (has_fd_prefix) QKZ80_TRACE_CALL(asm_op("ld iy,(0x%0x)",addr));
+    else QKZ80_TRACE_CALL(asm_op("lhld 0x%0x",addr));
     return;
   }
 
@@ -1524,7 +1524,7 @@ void qkz80::execute(void) {
     result=result ^ -1;
     set_reg8(result,reg_A);
     regs.set_flags_from_cpl(result);
-    trace->asm_op("cpl");
+    QKZ80_TRACE_CALL(asm_op("cpl"));
     return;
   }
 
@@ -1536,11 +1536,11 @@ void qkz80::execute(void) {
       if (!regs.condition_code(3, regs.get_flags())) { // NC condition
         qkz80_uint16 pc = regs.PC.get_pair16();
         regs.PC.set_pair16(pc + offset);
-        trace->asm_op("jr nc,$%+d", offset);
-        trace->comment("taken");
+        QKZ80_TRACE_CALL(asm_op("jr nc,$%+d", offset));
+        QKZ80_TRACE_CALL(comment("taken"));
       } else {
-        trace->asm_op("jr nc,$%+d", offset);
-        trace->comment("not taken");
+        QKZ80_TRACE_CALL(asm_op("jr nc,$%+d", offset));
+        QKZ80_TRACE_CALL(comment("not taken"));
       }
     }
     return;
@@ -1550,7 +1550,7 @@ void qkz80::execute(void) {
     qkz80_uint16 addr(pull_word_from_opcode_stream());
     qkz80_uint8 rega(get_reg8(reg_A));
     mem->store_mem(addr,rega);
-    trace->asm_op("sta 0x%0x",addr);
+    QKZ80_TRACE_CALL(asm_op("sta 0x%0x",addr));
     return;
   }
 
@@ -1558,7 +1558,7 @@ void qkz80::execute(void) {
   {
     qkz80_uint8 a_val = get_reg8(reg_A);
     regs.set_flags_from_scf(a_val);
-    trace->asm_op("scf");
+    QKZ80_TRACE_CALL(asm_op("scf"));
     return;
   }
 
@@ -1570,11 +1570,11 @@ void qkz80::execute(void) {
       if (regs.condition_code(3, regs.get_flags())) { // C condition
         qkz80_uint16 pc = regs.PC.get_pair16();
         regs.PC.set_pair16(pc + offset);
-        trace->asm_op("jr c,$%+d", offset);
-        trace->comment("taken");
+        QKZ80_TRACE_CALL(asm_op("jr c,$%+d", offset));
+        QKZ80_TRACE_CALL(comment("taken"));
       } else {
-        trace->asm_op("jr c,$%+d", offset);
-        trace->comment("not taken");
+        QKZ80_TRACE_CALL(asm_op("jr c,$%+d", offset));
+        QKZ80_TRACE_CALL(comment("not taken"));
       }
     }
     return;
@@ -1583,7 +1583,7 @@ void qkz80::execute(void) {
   {
     qkz80_uint16 addr(pull_word_from_opcode_stream());
     qkz80_uint8 dat(mem->fetch_mem(addr));
-    trace->asm_op("lda 0x%0x",addr);
+    QKZ80_TRACE_CALL(asm_op("lda 0x%0x",addr));
     set_reg8(dat,reg_A);
     return;
   }
@@ -1592,7 +1592,7 @@ void qkz80::execute(void) {
   {
     qkz80_uint8 a_val = get_reg8(reg_A);
     regs.set_flags_from_ccf(a_val);
-    trace->asm_op("ccf");
+    QKZ80_TRACE_CALL(asm_op("ccf"));
     return;
   }
 
@@ -1624,17 +1624,17 @@ void qkz80::execute(void) {
         qkz80_uint8 dat = mem->fetch_mem(addr);
         set_reg8(dat, dst);
         if (has_dd_prefix)
-          trace->asm_op("ld %s,(ix%+d)", name_reg8(dst), offset);
+          QKZ80_TRACE_CALL(asm_op("ld %s,(ix%+d)", name_reg8(dst), offset));
         else
-          trace->asm_op("ld %s,(iy%+d)", name_reg8(dst), offset);
+          QKZ80_TRACE_CALL(asm_op("ld %s,(iy%+d)", name_reg8(dst), offset));
       } else {
         // LD (IX+d),r or LD (IY+d),r
         qkz80_uint8 dat = get_reg8(src);
         mem->store_mem(addr, dat);
         if (has_dd_prefix)
-          trace->asm_op("ld (ix%+d),%s", offset, name_reg8(src));
+          QKZ80_TRACE_CALL(asm_op("ld (ix%+d),%s", offset, name_reg8(src)));
         else
-          trace->asm_op("ld (iy%+d),%s", offset, name_reg8(src));
+          QKZ80_TRACE_CALL(asm_op("ld (iy%+d),%s", offset, name_reg8(src)));
       }
       return;
     }
@@ -1656,25 +1656,25 @@ void qkz80::execute(void) {
       if (dst == reg_H) {
         if (has_dd_prefix) {
           regs.IX.set_high(dat);
-          trace->asm_op("ld ixh,%s", src == reg_H ? "ixh" : (src == reg_L ? "ixl" : name_reg8(src)));
+          QKZ80_TRACE_CALL(asm_op("ld ixh,%s", src == reg_H ? "ixh" : (src == reg_L ? "ixl" : name_reg8(src))));
         } else {
           regs.IY.set_high(dat);
-          trace->asm_op("ld iyh,%s", src == reg_H ? "iyh" : (src == reg_L ? "iyl" : name_reg8(src)));
+          QKZ80_TRACE_CALL(asm_op("ld iyh,%s", src == reg_H ? "iyh" : (src == reg_L ? "iyl" : name_reg8(src))));
         }
       } else if (dst == reg_L) {
         if (has_dd_prefix) {
           regs.IX.set_low(dat);
-          trace->asm_op("ld ixl,%s", src == reg_H ? "ixh" : (src == reg_L ? "ixl" : name_reg8(src)));
+          QKZ80_TRACE_CALL(asm_op("ld ixl,%s", src == reg_H ? "ixh" : (src == reg_L ? "ixl" : name_reg8(src))));
         } else {
           regs.IY.set_low(dat);
-          trace->asm_op("ld iyl,%s", src == reg_H ? "iyh" : (src == reg_L ? "iyl" : name_reg8(src)));
+          QKZ80_TRACE_CALL(asm_op("ld iyl,%s", src == reg_H ? "iyh" : (src == reg_L ? "iyl" : name_reg8(src))));
         }
       } else {
         set_reg8(dat, dst);
         if (src == reg_H) {
-          trace->asm_op("ld %s,%s", name_reg8(dst), has_dd_prefix ? "ixh" : "iyh");
+          QKZ80_TRACE_CALL(asm_op("ld %s,%s", name_reg8(dst), has_dd_prefix ? "ixh" : "iyh"));
         } else {
-          trace->asm_op("ld %s,%s", name_reg8(dst), has_dd_prefix ? "ixl" : "iyl");
+          QKZ80_TRACE_CALL(asm_op("ld %s,%s", name_reg8(dst), has_dd_prefix ? "ixl" : "iyl"));
         }
       }
       return;
@@ -1682,8 +1682,8 @@ void qkz80::execute(void) {
 
     qkz80_uint8 dat(get_reg8(src));
     set_reg8(dat,dst);
-    trace->asm_op("mov %s,%s",name_reg8(dst),name_reg8(src));
-    trace->add_reg8(src);
+    QKZ80_TRACE_CALL(asm_op("mov %s,%s",name_reg8(dst),name_reg8(src)));
+    QKZ80_TRACE_CALL(add_reg8(src));
     return;
   }
 
@@ -1701,8 +1701,8 @@ void qkz80::execute(void) {
     qkz80_big_uint sum(rega+regb);
     regs.set_flags_from_sum8(sum, rega, regb, 0);
     set_A(sum);
-    trace->asm_op("add %s",name_reg8(reg_num));
-    trace->add_reg8(reg_num);
+    QKZ80_TRACE_CALL(asm_op("add %s",name_reg8(reg_num)));
+    QKZ80_TRACE_CALL(add_reg8(reg_num));
     return;
   }
 
@@ -1717,8 +1717,8 @@ void qkz80::execute(void) {
     qkz80_big_uint sum(rega+regb+carry);
     regs.set_flags_from_sum8(sum, rega, regb, carry);
     set_A(sum);
-    trace->add_reg8(reg_num);
-    trace->asm_op("adc %s",name_reg8(reg_num));
+    QKZ80_TRACE_CALL(add_reg8(reg_num));
+    QKZ80_TRACE_CALL(asm_op("adc %s",name_reg8(reg_num)));
     return;
   }
 
@@ -1732,8 +1732,8 @@ void qkz80::execute(void) {
     qkz80_big_uint diff(rega-regb);
     regs.set_flags_from_diff8(diff, rega, regb, 0);
     set_A(diff);
-    trace->asm_op("sub %s",name_reg8(reg_num));
-    trace->add_reg8(reg_num);
+    QKZ80_TRACE_CALL(asm_op("sub %s",name_reg8(reg_num)));
+    QKZ80_TRACE_CALL(add_reg8(reg_num));
     return;
   }
 
@@ -1748,8 +1748,8 @@ void qkz80::execute(void) {
     qkz80_big_uint diff(rega-regb-carry);
     regs.set_flags_from_diff8(diff, rega, regb, carry);
     set_A(diff);
-    trace->asm_op("sbb %s",name_reg8(reg_num));
-    trace->add_reg8(reg_num);
+    QKZ80_TRACE_CALL(asm_op("sbb %s",name_reg8(reg_num)));
+    QKZ80_TRACE_CALL(add_reg8(reg_num));
     return;
   }
 
@@ -1765,8 +1765,8 @@ void qkz80::execute(void) {
     // Z80: H always 1, 8080: H = bit 3 of (op1 | op2)
     qkz80_uint8 hc = (cpu_mode == MODE_Z80) ? 1 : (((dat1 | dat2) & 0x08) != 0);
     regs.set_flags_from_logic8(result,0,hc);
-    trace->asm_op("ana %s",name_reg8(src_reg));
-    trace->add_reg8(src_reg);
+    QKZ80_TRACE_CALL(asm_op("ana %s",name_reg8(src_reg)));
+    QKZ80_TRACE_CALL(add_reg8(src_reg));
     return;
   }
 
@@ -1780,8 +1780,8 @@ void qkz80::execute(void) {
     qkz80_uint8 result(dat1 ^ dat2);
     set_reg8(result,reg_A);
     regs.set_flags_from_logic8(result,0,0);
-    trace->asm_op("xra %s",name_reg8(src_reg));
-    trace->add_reg8(src_reg);
+    QKZ80_TRACE_CALL(asm_op("xra %s",name_reg8(src_reg)));
+    QKZ80_TRACE_CALL(add_reg8(src_reg));
     return;
   }
 
@@ -1795,8 +1795,8 @@ void qkz80::execute(void) {
     qkz80_uint8 result(dat1 | dat2);
     set_reg8(result,reg_A);
     regs.set_flags_from_logic8(result,0,0);
-    trace->asm_op("ora %s",name_reg8(src_reg));
-    trace->add_reg8(src_reg);
+    QKZ80_TRACE_CALL(asm_op("ora %s",name_reg8(src_reg)));
+    QKZ80_TRACE_CALL(add_reg8(src_reg));
     return;
   }
 
@@ -1815,8 +1815,8 @@ void qkz80::execute(void) {
     if (regb & 0x08) flags |= qkz80_cpu_flags::X;          // Set X from bit 3 of operand
     if (regb & 0x20) flags |= qkz80_cpu_flags::Y;          // Set Y from bit 5 of operand
     regs.set_flags(flags);
-    trace->asm_op("cmp %s",name_reg8(reg_num));
-    trace->add_reg8(reg_num);
+    QKZ80_TRACE_CALL(asm_op("cmp %s",name_reg8(reg_num)));
+    QKZ80_TRACE_CALL(add_reg8(reg_num));
     return;
   }
 
@@ -1825,13 +1825,13 @@ void qkz80::execute(void) {
   case 0xc0: case 0xc8: case 0xd0: case 0xd8:
   case 0xe0: case 0xe8: case 0xf0: case 0xf8: {
     qkz80_big_uint fl_code=(opcode>>3) & 0x7;
-    trace->asm_op("r%s",name_condition_code(fl_code));
+    QKZ80_TRACE_CALL(asm_op("r%s",name_condition_code(fl_code)));
     if(regs.condition_code(fl_code,regs.get_flags())) {
       qkz80_uint16 addr(pop_word());
       regs.PC.set_pair16(addr);
-      trace->comment("conditional ret taken");
+      QKZ80_TRACE_CALL(comment("conditional ret taken"));
     } else {
-      trace->comment("conditional ret not taken");
+      QKZ80_TRACE_CALL(comment("conditional ret not taken"));
     }
     return;
   }
@@ -1850,8 +1850,8 @@ void qkz80::execute(void) {
     }
     qkz80_uint16 pair_val(pop_word());
     set_reg16(pair_val,rpair);
-    trace->asm_op("pop %s",name_reg16(rpair));
-    trace->add_reg16(rpair);
+    QKZ80_TRACE_CALL(asm_op("pop %s",name_reg16(rpair)));
+    QKZ80_TRACE_CALL(add_reg16(rpair));
     return;
   }
 
@@ -1861,12 +1861,12 @@ void qkz80::execute(void) {
   case 0xe2: case 0xea: case 0xf2: case 0xfa: {
     qkz80_uint16 addr(pull_word_from_opcode_stream());
     qkz80_uint8 cc_active((opcode >> 3) & 0x7);
-    trace->asm_op("j%s 0x%x",name_condition_code(cc_active),addr);
+    QKZ80_TRACE_CALL(asm_op("j%s 0x%x",name_condition_code(cc_active),addr));
     if(regs.condition_code(cc_active,regs.get_flags())) {
       regs.PC.set_pair16(addr);
-      trace->comment("jump taken");
+      QKZ80_TRACE_CALL(comment("jump taken"));
     } else {
-      trace->comment("jump not taken");
+      QKZ80_TRACE_CALL(comment("jump not taken"));
     }
     return;
   }
@@ -1875,7 +1875,7 @@ void qkz80::execute(void) {
   {
     qkz80_uint16 addr(pull_word_from_opcode_stream());
     regs.PC.set_pair16(addr);
-    trace->asm_op("jmp 0x%0x",addr);
+    QKZ80_TRACE_CALL(asm_op("jmp 0x%0x",addr));
     return;
   }
 
@@ -1885,14 +1885,14 @@ void qkz80::execute(void) {
   case 0xe4: case 0xec: case 0xf4: case 0xfc: {
     qkz80_uint16 addr(pull_word_from_opcode_stream());
     qkz80_uint8 cc_active((opcode >> 3) & 0x7);
-    trace->asm_op("c%s 0x%x",name_condition_code(cc_active),addr);
+    QKZ80_TRACE_CALL(asm_op("c%s 0x%x",name_condition_code(cc_active),addr));
     if(regs.condition_code(cc_active,regs.get_flags())) {
       const qkz80_uint16 pc=regs.PC.get_pair16();
       push_word(pc);
       regs.PC.set_pair16(addr);
-      trace->comment("conditional call taken");
+      QKZ80_TRACE_CALL(comment("conditional call taken"));
     } else {
-      trace->comment("conditional call not taken");
+      QKZ80_TRACE_CALL(comment("conditional call not taken"));
     }
     return;
   }
@@ -1911,8 +1911,8 @@ void qkz80::execute(void) {
     }
     qkz80_uint16 val(get_reg16(rpair));
     push_word(val);
-    trace->asm_op("push %s",name_reg16(rpair));
-    trace->add_reg16(rpair);
+    QKZ80_TRACE_CALL(asm_op("push %s",name_reg16(rpair)));
+    QKZ80_TRACE_CALL(add_reg16(rpair));
     return;
   }
 
@@ -1923,7 +1923,7 @@ void qkz80::execute(void) {
     qkz80_big_uint sum(dat+rega);
     regs.set_flags_from_sum8(sum, rega, dat, 0);
     set_A(sum);
-    trace->asm_op("adi 0x%0x",dat);
+    QKZ80_TRACE_CALL(asm_op("adi 0x%0x",dat));
     return;
   }
 
@@ -1936,7 +1936,7 @@ void qkz80::execute(void) {
     push_word(pc);
     qkz80_uint16 addr(rst_num*8);
     regs.PC.set_pair16(addr);
-    trace->asm_op("rst %d",rst_num);
+    QKZ80_TRACE_CALL(asm_op("rst %d",rst_num));
     return;
   }
 
@@ -1944,7 +1944,7 @@ void qkz80::execute(void) {
   {
     qkz80_uint16 addr(pop_word());
     regs.PC.set_pair16(addr);
-    trace->asm_op("ret");
+    QKZ80_TRACE_CALL(asm_op("ret"));
     return;
   }
 
@@ -1954,7 +1954,7 @@ void qkz80::execute(void) {
     const qkz80_uint16 pc=regs.PC.get_pair16();
     push_word(pc);
     regs.PC.set_pair16(addr);
-    trace->asm_op("call %0x",addr);
+    QKZ80_TRACE_CALL(asm_op("call %0x",addr));
     return;
   }
 
@@ -1966,7 +1966,7 @@ void qkz80::execute(void) {
     qkz80_big_uint sum(dat+rega+cy);
     regs.set_flags_from_sum8(sum, rega, dat, cy);
     set_A(sum);
-    trace->asm_op("aci 0x%0x",dat);
+    QKZ80_TRACE_CALL(asm_op("aci 0x%0x",dat));
     return;
   }
 
@@ -1975,8 +1975,8 @@ void qkz80::execute(void) {
     qkz80_uint8 port(pull_byte_from_opcode_stream());
     qkz80_uint8 rega(get_reg8(reg_A));
     port_out(port, rega);
-    trace->asm_op("out 0x%0x",port);
-    trace->add_reg8(reg_A);
+    QKZ80_TRACE_CALL(asm_op("out 0x%0x",port));
+    QKZ80_TRACE_CALL(add_reg8(reg_A));
     return;
   }
 
@@ -1987,7 +1987,7 @@ void qkz80::execute(void) {
     qkz80_big_uint diff(rega-dat);
     regs.set_flags_from_diff8(diff, rega, dat, 0);
     set_A(diff);
-    trace->asm_op("sui 0x%0x",dat);
+    QKZ80_TRACE_CALL(asm_op("sui 0x%0x",dat));
     return;
   }
 
@@ -2004,14 +2004,14 @@ void qkz80::execute(void) {
     regs.BC_.set_pair16(bc);
     regs.DE_.set_pair16(de);
     regs.HL_.set_pair16(hl);
-    trace->asm_op("exx");
+    QKZ80_TRACE_CALL(asm_op("exx"));
     return;
   }
 
   case 0xdb: // IN
   {
     qkz80_uint8 port(pull_byte_from_opcode_stream());
-    trace->asm_op("in 0x%0x",port);
+    QKZ80_TRACE_CALL(asm_op("in 0x%0x",port));
     qkz80_uint8 dat = port_in(port);
     set_reg8(dat,reg_A);
     return;
@@ -2025,7 +2025,7 @@ void qkz80::execute(void) {
     qkz80_big_uint diff(rega-dat-carry);
     regs.set_flags_from_diff8(diff, rega, dat, carry);
     set_A(diff);
-    trace->asm_op("sbi 0x%0x",dat);
+    QKZ80_TRACE_CALL(asm_op("sbi 0x%0x",dat));
     return;
   }
 
@@ -2036,9 +2036,9 @@ void qkz80::execute(void) {
     qkz80_uint16 hl(get_reg16(active_hl));
     set_reg16(dat,active_hl);
     mem->store_mem16(addr,hl);
-    if (has_dd_prefix) trace->asm_op("ex (sp),ix");
-    else if (has_fd_prefix) trace->asm_op("ex (sp),iy");
-    else trace->asm_op("xthl");
+    if (has_dd_prefix) QKZ80_TRACE_CALL(asm_op("ex (sp),ix"));
+    else if (has_fd_prefix) QKZ80_TRACE_CALL(asm_op("ex (sp),iy"));
+    else QKZ80_TRACE_CALL(asm_op("xthl"));
     return;
   }
 
@@ -2051,7 +2051,7 @@ void qkz80::execute(void) {
     // Z80: H always 1, 8080: H = bit 3 of (op1 | op2)
     qkz80_uint8 hc = (cpu_mode == MODE_Z80) ? 1 : (((dat1 | dat2) & 0x08) != 0);
     regs.set_flags_from_logic8(result,0,hc);
-    trace->asm_op("ani 0x%0x",dat2);
+    QKZ80_TRACE_CALL(asm_op("ani 0x%0x",dat2));
     return;
   }
 
@@ -2059,9 +2059,9 @@ void qkz80::execute(void) {
   {
     qkz80_uint16 addr(get_reg16(active_hl));
     regs.PC.set_pair16(addr);
-    if (has_dd_prefix) trace->asm_op("jp (ix)");
-    else if (has_fd_prefix) trace->asm_op("jp (iy)");
-    else trace->asm_op("pchl");
+    if (has_dd_prefix) QKZ80_TRACE_CALL(asm_op("jp (ix)"));
+    else if (has_fd_prefix) QKZ80_TRACE_CALL(asm_op("jp (iy)"));
+    else QKZ80_TRACE_CALL(asm_op("pchl"));
     return;
   }
 
@@ -2071,9 +2071,9 @@ void qkz80::execute(void) {
     qkz80_uint16 b(get_reg16(active_hl));
     set_reg16(a,active_hl);
     set_reg16(b,regp_DE);
-    if (has_dd_prefix) trace->asm_op("ex de,ix");
-    else if (has_fd_prefix) trace->asm_op("ex de,iy");
-    else trace->asm_op("xchg");
+    if (has_dd_prefix) QKZ80_TRACE_CALL(asm_op("ex de,ix"));
+    else if (has_fd_prefix) QKZ80_TRACE_CALL(asm_op("ex de,iy"));
+    else QKZ80_TRACE_CALL(asm_op("xchg"));
     return;
   }
 
@@ -2084,14 +2084,14 @@ void qkz80::execute(void) {
     qkz80_uint8 result(dat1 ^ dat2);
     set_reg8(result,reg_A);
     regs.set_flags_from_logic8(result,0,0);
-    trace->asm_op("xri 0x%0x",dat2);
+    QKZ80_TRACE_CALL(asm_op("xri 0x%0x",dat2));
     return;
   }
 
   case 0xf3: // DI
     regs.IFF1 = 0;
     regs.IFF2 = 0;
-    trace->asm_op("di");
+    QKZ80_TRACE_CALL(asm_op("di"));
     return;
 
   case 0xf6: // ORI - OR immediate with A
@@ -2101,7 +2101,7 @@ void qkz80::execute(void) {
     qkz80_uint8 result(dat1 | dat2);
     set_reg8(result,reg_A);
     regs.set_flags_from_logic8(result,0,0);
-    trace->asm_op("ori 0x%0x",dat2);
+    QKZ80_TRACE_CALL(asm_op("ori 0x%0x",dat2));
     return;
   }
 
@@ -2109,9 +2109,9 @@ void qkz80::execute(void) {
   {
     qkz80_uint16 addr(get_reg16(active_hl));
     set_reg16(addr,regp_SP);
-    if (has_dd_prefix) trace->asm_op("ld sp,ix");
-    else if (has_fd_prefix) trace->asm_op("ld sp,iy");
-    else trace->asm_op("sphl");
+    if (has_dd_prefix) QKZ80_TRACE_CALL(asm_op("ld sp,ix"));
+    else if (has_fd_prefix) QKZ80_TRACE_CALL(asm_op("ld sp,iy"));
+    else QKZ80_TRACE_CALL(asm_op("sphl"));
     return;
   }
 
@@ -2119,7 +2119,7 @@ void qkz80::execute(void) {
     regs.IFF1 = 1;
     regs.IFF2 = 1;
     ei_delay = true;  // Z80: next instruction executes before interrupts are accepted
-    trace->asm_op("ei");
+    QKZ80_TRACE_CALL(asm_op("ei"));
     return;
 
   case 0xfe: // CPI - Compare immediate with A
@@ -2134,8 +2134,8 @@ void qkz80::execute(void) {
     if (dat & 0x08) flags |= qkz80_cpu_flags::X;           // Set X from bit 3 of operand
     if (dat & 0x20) flags |= qkz80_cpu_flags::Y;           // Set Y from bit 5 of operand
     regs.set_flags(flags);
-    trace->asm_op("cpi 0x%0x",dat);
-    trace->add_reg8(reg_A);
+    QKZ80_TRACE_CALL(asm_op("cpi 0x%0x",dat));
+    QKZ80_TRACE_CALL(add_reg8(reg_A));
     return;
   }
 

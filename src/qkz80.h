@@ -56,7 +56,7 @@ class qkz80 {
   virtual ~qkz80() = default;
 
   virtual void block_io(qkz80_uint8 opcode) {
-    trace->asm_op("ED %02x (block I/O - not implemented)", opcode);
+    QKZ80_TRACE_CALL(asm_op("ED %02x (block I/O - not implemented)", opcode));
   }
     
   virtual void set_debug(bool new_debug) {
