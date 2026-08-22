@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <chrono>
 
 // Helper function to expand environment variables in strings
 // Supports both $VAR and ${VAR} syntax
@@ -73,6 +74,18 @@ static std::string expand_env_vars(const std::string& str) {
 // ^C exit handling - 5 consecutive ^C characters exit the emulator
 static int consecutive_ctrl_c = 0;
 static const int CTRL_C_EXIT_COUNT = 5;
+static bool ctrl_c_exit_enabled = true;   // default on: a raw-mode CLI
+                                          // emulator needs an escape hatch
+static bool ctrl_c_exit_from_cli = false; // a CLI flag outranks the config file
+static const long long CTRL_C_EXIT_WINDOW_MS = 2000;
+static long long first_ctrl_c_ms = 0;
+
+// Milliseconds from a monotonic clock.  steady_clock never runs backwards,
+// so an NTP step or a daylight-saving change cannot widen the ^C window.
+static long long steady_ms() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 // Memory save support for MOVCPM/SYSGEN
 static const char* save_memory_file = nullptr;
@@ -102,21 +115,61 @@ static void do_save_memory() {
 }
 
 // Check for ^C and handle exit logic
-// Returns true if we should exit, false if character should be passed through
+// Always returns false - ^C reaches the CP/M program either way.
+// The exit is the escape hatch a raw-mode emulator needs, but WordStar binds
+// ^C to page-down, so it is switchable: the 'ctrl_c_exit' config directive
+// and the --ctrl-c-exit / --no-ctrl-c-exit flags.  All five must land inside
+// CTRL_C_EXIT_WINDOW_MS of the first, measured across the whole run and not
+// keystroke to keystroke, so that page-downs arriving at a reading pace never
+// accumulate into an exit.  It is still only a second line of defence: a fast
+// enough reader can page five times in two seconds.  The switch is the fix.
 static bool check_ctrl_c_exit(int ch) {
-  if (ch == 0x03) {  // ^C
-    consecutive_ctrl_c++;
-    if (consecutive_ctrl_c >= CTRL_C_EXIT_COUNT) {
+  // A ^C synthesized from a special key (a Windows PgDn translated to the
+  // WordStar page-down code) is not a user asking to leave, so it must never
+  // count toward the exit.
+  if (ch != 0x03 || platform::console_last_char_synthesized()) {
+    consecutive_ctrl_c = 0;  // Reset counter on any other input
+    return false;
+  }
+
+  // A run that has gone stale restarts from this keystroke.  Expiring it here
+  // rather than at the fifth ^C matters: leftovers from an old run would
+  // otherwise stay armed and eat into a genuine burst, so someone who pressed
+  // ^C once minutes ago would need more than five to get out.
+  long long now = steady_ms();
+  if (consecutive_ctrl_c == 0 || (now - first_ctrl_c_ms) > CTRL_C_EXIT_WINDOW_MS) {
+    consecutive_ctrl_c = 0;
+    first_ctrl_c_ms = now;
+  }
+  consecutive_ctrl_c++;
+
+  // Reaching the count here means all of them landed inside the window, since
+  // every one of them was measured against first_ctrl_c_ms on the way in
+  if (consecutive_ctrl_c >= CTRL_C_EXIT_COUNT) {
+    if (ctrl_c_exit_enabled) {
       fprintf(stderr, "\n[Exiting: %d consecutive ^C received]\n", CTRL_C_EXIT_COUNT);
       do_save_memory();
       platform::disable_raw_mode();
       exit(0);
     }
-    return false;  // Pass ^C through to CP/M program
-  } else {
-    consecutive_ctrl_c = 0;  // Reset counter on any other input
-    return false;
+    consecutive_ctrl_c = 0;  // Switched off - keep the counter bounded
   }
+  return false;  // Pass ^C through to CP/M program
+}
+
+// Read a console character for a blocking read site.
+// The platform layer reports a special key it has no translation for as a
+// synthesized 0.  That is exactly right for the polled BDOS 6 path, where 0
+// means "no character", but BDOS 1, BDOS 10 and BIOS CONIN are waiting for a
+// keystroke and must not be handed a NUL the user never typed - so skip it and
+// wait for the next key.  On POSIX nothing is ever synthesized and this is a
+// straight pass-through.
+static int console_getchar_blocking() {
+  int ch = platform::console_getchar();
+  while (ch == 0 && platform::console_last_char_synthesized()) {
+    ch = platform::console_getchar();
+  }
+  return ch;
 }
 
 // CP/M Memory Layout Constants
@@ -237,6 +290,7 @@ private:
   FILE* aux_in_file;       // RDR: device (Auxiliary input)
   FILE* aux_out_file;      // PUN: device (Auxiliary output)
   qkz80_uint8 iobyte;      // IOBYTE for device mapping
+  bool printer_echo;       // ^P: mirror console output to printer_file
 
   // Directory search state for BDOS 17/18
   std::vector<std::string> search_results;  // List of matching files
@@ -260,7 +314,7 @@ public:
       current_dma(DEFAULT_DMA), debug(adebug),
       default_mode(MODE_AUTO), default_eol_convert(true),
       printer_file(nullptr), aux_in_file(nullptr),
-      aux_out_file(nullptr), iobyte(0),
+      aux_out_file(nullptr), iobyte(0), printer_echo(false),
       search_index(0), search_user(0), bios_disk_mode(0) {
   }
 
@@ -356,6 +410,10 @@ private:
   int term_saved_row = 0;
 
   void console_output(qkz80_uint8 ch);
+
+  // BDOS function 10 line-editor echo - the single place ^P hooks into
+  void rdbuf_echo(int ch);
+  void rdbuf_echo_stored(qkz80_uint8 ch);
 
   // Helper functions
   std::string fcb_to_filename(qkz80_uint16 fcb_addr);
@@ -813,6 +871,11 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
       debug = (value == "true" || value == "1" || value == "yes");
     } else if (key == "eol_convert") {
       default_eol_convert = (value == "true" || value == "1" || value == "yes");
+    } else if (key == "ctrl_c_exit") {
+      // A --ctrl-c-exit / --no-ctrl-c-exit flag outranks the config file
+      if (!ctrl_c_exit_from_cli) {
+        ctrl_c_exit_enabled = (value == "true" || value == "1" || value == "yes");
+      }
     } else if (key == "printer") {
       set_printer_file(value);
     } else if (key == "aux_input") {
@@ -1310,11 +1373,48 @@ void CPMEmulator::bdos_write_string() {
 }
 
 void CPMEmulator::bdos_read_console() {
-  int ch = platform::console_getchar();
+  int ch = console_getchar_blocking();
   if (ch == -1 || ch == EOF) ch = '\r';  // EOF becomes CR (Enter) for non-interactive use
   check_ctrl_c_exit(ch);  // Track ^C for exit, pass through to program
   if (ch == '\n') ch = '\r';  // Convert LF to CR for CP/M
   cpu->set_reg8(ch & 0x7F, qkz80::reg_A);
+}
+
+// Columns one stored byte occupies when echoed: 1 for a printable character,
+// 2 for the ^x form every other byte is shown in
+static int rdbuf_echo_width(qkz80_uint8 ch) {
+  return (ch >= 0x20 && ch < 0x7F) ? 1 : 2;
+}
+
+// Address of byte 'offset' of the function 10 buffer, wrapped into the 64K the
+// guest actually has.  A buffer placed near 0FFFFh must wrap the way the CPU
+// does rather than run off the end of the emulator's memory block.
+static qkz80_uint16 rdbuf_at(qkz80_uint16 buf_addr, int offset) {
+  return (qkz80_uint16)((buf_addr + offset) & 0xFFFF);
+}
+
+// Echo one byte from the BDOS function 10 line editor.
+// Deliberately putchar() and not console_output(): this is the user's own
+// keystroke coming back, so it must not be run through the ADM-3A translator.
+// ^P mirrors it to the printer file named by CPM_PRINTER or the 'printer'
+// config directive; with no printer file open there is nowhere to send it.
+void CPMEmulator::rdbuf_echo(int ch) {
+  putchar(ch);
+  if (printer_echo && printer_file) {
+    fputc(ch & 0x7F, printer_file);
+    fflush(printer_file);
+  }
+}
+
+// Echo one buffered byte the way CP/M shows it: printable as itself,
+// anything else - TAB and ESC included - as '^' plus the letter it is made of
+void CPMEmulator::rdbuf_echo_stored(qkz80_uint8 ch) {
+  if (ch >= 0x20 && ch < 0x7F) {
+    rdbuf_echo(ch);
+  } else {
+    rdbuf_echo('^');
+    rdbuf_echo(ch + 0x40);
+  }
 }
 
 void CPMEmulator::bdos_read_console_buffer() {
@@ -1324,79 +1424,154 @@ void CPMEmulator::bdos_read_console_buffer() {
   //   Byte 1: Actual characters read (filled by this function)
   //   Bytes 2+: Characters read (up to max)
   //
-  // Line editing supported:
-  //   Backspace/DEL: Delete last character
-  //   CR or LF: End input
-  //   ^C: Passed through (tracked for 5x exit)
-  //   ^U: Cancel line (clear buffer)
-  //   ^H: Backspace (same as DEL)
+  // These are the only keys the editor consumes, matching CP/M 2.2 RDBUF:
+  //   CR, LF    End the line
+  //   RUB, ^H   Delete the last character and erase its echoed width
+  //   ^U        Cancel the whole line: echo '#' and start a fresh one
+  //   ^X        Cancel the current physical line, erasing it off the screen
+  //   ^E        Physical end of line - echo CR LF and keep collecting
+  //   ^R        Retype the line so far on a fresh physical line
+  //   ^P        Toggle console-to-printer echo
+  //   ^S        Consumed and ignored (it pauses output on real hardware)
+  // Every other byte is stored for the program and echoed - a printable
+  // character as itself, any other control character as ^x.
+  // The read ends on CR, LF, EOF, or a full buffer.
 
   qkz80_uint16 buf_addr = cpu->get_reg16(qkz80::regp_DE);
   qkz80_uint8* mem = cpu->get_mem();
 
   qkz80_uint8 max_chars = mem[buf_addr] & 0xFF;
   if (max_chars == 0) {
-    mem[buf_addr + 1] = 0;
+    mem[rdbuf_at(buf_addr, 1)] = 0;
     cpu->set_reg8(0, qkz80::reg_A);
     return;
   }
 
-  // Buffer for characters (bytes 2+)
-  int count = 0;
+  int count = 0;       // Characters stored in the buffer (bytes 2+)
+  int line_start = 0;  // First stored character echoed on the current physical
+                       // line - ^E, ^U and ^X move it, and RUB stops there
 
-  while (count < max_chars) {
-    int ch = platform::console_getchar();
-    if (ch == -1 || ch == EOF) {
-      ch = 0x1A;  // ^Z
-    }
+  for (;;) {
+    int ch = console_getchar_blocking();
+    // Ask before anything else reads it: the flag describes the character we
+    // just took, and any further console call would overwrite it
+    bool synthesized = platform::console_last_char_synthesized();
+    if (ch == -1 || ch == EOF) break;  // EOF ends the line; a typed ^Z does not
 
-    check_ctrl_c_exit(ch);  // Track ^C for exit
+    check_ctrl_c_exit(ch);
 
-    // Handle control characters
-    if (ch == '\n' || ch == '\r') {
-      // End of line - echo CR/LF and finish
-      putchar('\r');
-      putchar('\n');
-      fflush(stdout);
-      break;
-    } else if (ch == 0x7F || ch == 0x08) {  // DEL or Backspace
-      if (count > 0) {
-        count--;
-        // Erase character on screen: backspace, space, backspace
-        putchar('\b');
-        putchar(' ');
-        putchar('\b');
+    // Every test below is on the raw byte and only what gets stored is masked,
+    // matching the other three read sites.  Masking first would turn an 8-bit
+    // 0x8D into a CR and silently submit the line someone was still typing -
+    // reachable now that raw mode no longer strips the 8th bit.
+    //
+    // A byte the platform layer synthesized from a special key is the key the
+    // user pressed, not an instruction to this editor.  A Windows arrow key
+    // arrives here as a WordStar diamond code, and Down must not cancel the
+    // line being typed the way a typed ^X does, so those go straight to the
+    // program.
+    if (!synthesized) {
+      if (ch == '\r' || ch == '\n') {
+        // End of line - echo CR LF and finish
+        rdbuf_echo('\r');
+        rdbuf_echo('\n');
         fflush(stdout);
+        break;
       }
-    } else if (ch == 0x15) {  // ^U - cancel line
-      // Erase all characters on screen
-      while (count > 0) {
-        putchar('\b');
-        putchar(' ');
-        putchar('\b');
-        count--;
+      if (ch == 0x7F || ch == 0x08) {  // RUB or ^H - delete last character
+        if (count > line_start) {
+          count--;
+          // Erase what it echoed as: 1 column printable, 2 for a ^x
+          int width = rdbuf_echo_width(mem[rdbuf_at(buf_addr, 2 + count)]);
+          for (int i = 0; i < width; i++) {
+            rdbuf_echo('\b');
+            rdbuf_echo(' ');
+            rdbuf_echo('\b');
+          }
+          fflush(stdout);
+        }
+        continue;
       }
-      fflush(stdout);
-    } else if (ch == 0x03) {  // ^C - pass through to buffer
-      mem[buf_addr + 2 + count] = ch;
-      count++;
-      putchar('^');
-      putchar('C');
-      fflush(stdout);
-    } else if (ch >= 0x20 && ch < 0x7F) {  // Printable characters
-      mem[buf_addr + 2 + count] = ch;
-      count++;
-      putchar(ch);
-      fflush(stdout);
-    } else if (ch == 0x1A) {  // ^Z - end of file marker
-      // Treat ^Z as end of input
-      break;
+      if (ch == 0x15) {  // ^U - cancel line
+        // Authentic CP/M 2.2: mark the abandoned line with '#' and continue on
+        // a fresh physical line, rather than erasing it in place.  ^U drops the
+        // whole logical line, including anything a ^E left on the line above.
+        rdbuf_echo('#');
+        rdbuf_echo('\r');
+        rdbuf_echo('\n');
+        fflush(stdout);
+        count = 0;
+        line_start = 0;
+        continue;
+      }
+      if (ch == 0x18) {  // ^X - cancel line, erasing it off the screen
+        // Only back to the start of the physical line, and the buffer drops
+        // exactly the characters that were erased - otherwise text left
+        // visible above a ^E would vanish from the buffer while still on screen
+        while (count > line_start) {
+          count--;
+          int width = rdbuf_echo_width(mem[rdbuf_at(buf_addr, 2 + count)]);
+          for (int i = 0; i < width; i++) {
+            rdbuf_echo('\b');
+            rdbuf_echo(' ');
+            rdbuf_echo('\b');
+          }
+        }
+        fflush(stdout);
+        continue;
+      }
+      if (ch == 0x05) {  // ^E - physical end of line
+        // Break the screen line but keep collecting the same logical line
+        rdbuf_echo('\r');
+        rdbuf_echo('\n');
+        fflush(stdout);
+        line_start = count;  // Backspacing must not walk onto the line above
+        continue;
+      }
+      if (ch == 0x12) {  // ^R - retype the line
+        rdbuf_echo('#');
+        rdbuf_echo('\r');
+        rdbuf_echo('\n');
+        for (int i = 0; i < count; i++) {
+          rdbuf_echo_stored(mem[rdbuf_at(buf_addr, 2 + i)]);
+        }
+        fflush(stdout);
+        line_start = 0;  // The whole buffer is now on this physical line
+        continue;
+      }
+      if (ch == 0x10) {  // ^P - toggle console-to-printer echo
+        // The destination is whatever CPM_PRINTER or the 'printer' config
+        // directive selected; with none configured this does nothing
+        printer_echo = !printer_echo;
+        continue;
+      }
+      if (ch == 0x13) {  // ^S - consumed and ignored
+        // ^S pauses console output on real hardware, which means nothing while
+        // we are collecting a line
+        continue;
+      }
     }
-    // Ignore other control characters
+
+    // Everything else is stored for the program and echoed.
+    // ^C lands here too: real RDBUF warm boots on a ^C in column one, but a
+    // warm boot in this emulator is program termination, and the five-^C hatch
+    // already covers the escape case - so ^C is stored and echoed as ^C like
+    // any other control character and the program decides what it means.
+    qkz80_uint8 stored = (qkz80_uint8)(ch & 0x7F);
+    mem[rdbuf_at(buf_addr, 2 + count)] = stored;
+    count++;
+    rdbuf_echo_stored(stored);
+    fflush(stdout);
+
+    // A full buffer ends the read, the same as a CR - "console input is
+    // terminated when either the input buffer overflows or a carriage return
+    // or line feed is typed".  No CR LF is echoed here, matching the terminal
+    // the guest is left looking at on real CP/M.
+    if (count >= max_chars) break;
   }
 
   // Store actual count
-  mem[buf_addr + 1] = count;
+  mem[rdbuf_at(buf_addr, 1)] = count;
   cpu->set_reg8(0, qkz80::reg_A);
 }
 
@@ -2354,7 +2529,7 @@ void CPMEmulator::bios_const() {
 
 void CPMEmulator::bios_conin() {
   // Console input
-  int ch = platform::console_getchar();
+  int ch = console_getchar_blocking();
   if (ch == -1 || ch == EOF) ch = 0x1A;
   check_ctrl_c_exit(ch);  // Track ^C for exit, pass through to program
   if (ch == '\n') ch = '\r';  // Convert LF to CR for CP/M
@@ -2366,6 +2541,14 @@ void CPMEmulator::bios_conin() {
 // sequences understood by modern terminals (xterm, konsole, etc.)
 void CPMEmulator::console_output(qkz80_uint8 ch) {
   ch &= 0x7F;
+
+  // ^P mirrors the console to the printer file named by CPM_PRINTER or the
+  // 'printer' config directive; with no printer file open there is nowhere
+  // to send it, exactly as on a system with no printer attached
+  if (printer_echo && printer_file) {
+    fputc(ch, printer_file);
+    fflush(printer_file);
+  }
 
   switch (term_state) {
   case TERM_ESC:
@@ -2578,6 +2761,8 @@ int main(int argc, char** argv) {
     fprintf(stderr, "  --save-range=S-E    Save only range S to E (hex, e.g., DC00-FFFF)\n");
     fprintf(stderr, "  --int-cycles=N      Enable timer interrupt every N cycles (e.g., 50000)\n");
     fprintf(stderr, "  --int-rst=N         RST number for interrupt (0-7, default 7 = RST 38H)\n");
+    fprintf(stderr, "  --ctrl-c-exit       Exit after 5 consecutive typed ^C (default)\n");
+    fprintf(stderr, "  --no-ctrl-c-exit    Give every ^C to the program (WordStar page-down)\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Environment variables:\n");
     fprintf(stderr, "  CPM_PROGRESS=N      Enable progress reporting every N million instructions\n");
@@ -2628,6 +2813,14 @@ int main(int argc, char** argv) {
       arg_offset++;
     } else if (strncmp(argv[arg_offset], "--int-rst=", 10) == 0) {
       int_rst = atoi(argv[arg_offset] + 10) & 7;  // Clamp to 0-7
+      arg_offset++;
+    } else if (strcmp(argv[arg_offset], "--no-ctrl-c-exit") == 0) {
+      ctrl_c_exit_enabled = false;
+      ctrl_c_exit_from_cli = true;  // Outranks a 'ctrl_c_exit' config line
+      arg_offset++;
+    } else if (strcmp(argv[arg_offset], "--ctrl-c-exit") == 0) {
+      ctrl_c_exit_enabled = true;
+      ctrl_c_exit_from_cli = true;  // Outranks a 'ctrl_c_exit' config line
       arg_offset++;
     } else {
       break;  // Unknown option, assume it's the program

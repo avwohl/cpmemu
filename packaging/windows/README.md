@@ -115,6 +115,28 @@ New-SelfSignedCertificate -Type Custom -Subject "CN=TestPublisher" `
 
 4. Double-click the MSIX to install
 
+## Ctrl+V in Windows Terminal
+
+The package installs an AppExecutionAlias, so cpmemu starts in Windows Terminal,
+the default console host on Windows 11. Windows Terminal binds `ctrl+v` to
+`Terminal.PasteFromClipboard`, and the key never reaches the emulator
+([microsoft/terminal#16280](https://github.com/microsoft/terminal/issues/16280)).
+The package cannot fix this for the user: a fragment extension may contribute
+profiles and color schemes only, not keybindings.
+
+Users who need ^V can press Insert instead, which the emulator translates to ^V,
+or add this to the `actions` array of their Windows Terminal `settings.json`:
+
+```json
+{
+  "keys": "ctrl+v",
+  "command": "unbound"
+}
+```
+
+See the Console and Keyboard section of the top-level
+[README](../../README.md) for the rest of the keyboard notes.
+
 ## Troubleshooting
 
 ### "App manifest validation failed"

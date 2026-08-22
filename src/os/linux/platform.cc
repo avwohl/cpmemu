@@ -40,13 +40,26 @@ void enable_raw_mode() {
     }
 
     struct termios raw = original_termios;
+    // These are the same clears cfmakeraw() performs, spelled out by hand:
+    // cfmakeraw is gated behind __USE_MISC / _DARWIN_C_SOURCE and we build with a
+    // strict -std=c++11, so its visibility is not guaranteed on every target.
     // Disable canonical mode (line buffering), echo, and signal generation
     // ISIG disabled so ^C passes through to CP/M program instead of killing emulator
-    raw.c_lflag &= ~(ICANON | ECHO | ISIG);
-    // Disable input processing (CR-to-NL, XON/XOFF)
-    raw.c_iflag &= ~(ICRNL | IXON | INLCR | IGNCR);
+    // IEXTEN disabled so the line discipline stops eating VLNEXT (^V) and
+    // VDISCARD (^O).  On Linux IEXTEN is inert once ICANON is off, but BSD/XNU
+    // gates VLNEXT and VDISCARD on IEXTEN alone, so without this the macOS build
+    // loses ^V and ^O before the guest ever sees them.
+    raw.c_lflag &= ~(ICANON | ECHO | ECHONL | IEXTEN | ISIG);
+    // Disable input processing (break handling, parity marking, CR-to-NL,
+    // XON/XOFF).  ISTRIP disabled so the 8th bit of each byte survives.
+    raw.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
     // Disable output processing so escape sequences pass through unmodified
     raw.c_oflag &= ~(OPOST);
+    // The one clear cfmakeraw() also makes and we deliberately skip is
+    // c_cflag CSIZE/PARENB/CS8.  c_cflag is inert on a pty or a pipe, and on a
+    // real serial console it reprograms the line itself - forcing 8N1 on a
+    // terminal the user brought up 7E1 garbles the whole session.  Clearing
+    // ISTRIP above is what actually keeps the 8th bit, which is all we need.
     // Set minimum characters to 1 and timeout to 0
     raw.c_cc[VMIN] = 1;
     raw.c_cc[VTIME] = 0;
@@ -76,6 +89,11 @@ int console_getchar() {
     int ch = getchar();
     if (ch == EOF) return -1;
     return ch;
+}
+
+bool console_last_char_synthesized() {
+    // POSIX terminals hand us the raw bytes, so nothing is ever synthesized here
+    return false;
 }
 
 // ============================================================================

@@ -108,6 +108,8 @@ cpmemu [options] <program.com> [args...]
 | `--save-range=S-E` | Save only range S to E (hex, e.g., DC00-FFFF) |
 | `--int-cycles=N` | Enable timer interrupt every N cycles (e.g., 50000) |
 | `--int-rst=N` | RST number for interrupt (0-7, default 7 = RST 38H) |
+| `--no-ctrl-c-exit` | Disable the five-consecutive-^C emulator exit |
+| `--ctrl-c-exit` | Enable the five-consecutive-^C emulator exit (the default) |
 
 ### Examples
 
@@ -170,12 +172,106 @@ printer = /tmp/printer.txt
 aux_input = /tmp/input.txt
 aux_output = /tmp/output.txt
 
+# Console
+ctrl_c_exit = true       # five consecutive ^C exit the emulator
+
 # File mappings (supports environment variables)
 # *.BAS = ${HOME}/basic text
 # DATA.DAT = /path/to/data.dat binary
 ```
 
 Run with: `./src/cpmemu config.cfg`
+
+A command-line flag overrides the config file: `--no-ctrl-c-exit` turns the exit
+off even when the config file sets `ctrl_c_exit = true`.
+
+## Console and Keyboard
+
+### The ^C Escape Hatch
+
+Five consecutive ^C within two seconds exit the emulator. If `--save-memory` was
+requested, the memory image is written before the emulator quits. The escape
+hatch exists because the emulator puts the terminal in raw mode with ISIG
+cleared, so there is no other way out.
+
+Turn it off with `--no-ctrl-c-exit`, or with `ctrl_c_exit = false` in the config
+file, when the guest program binds ^C itself. WordStar binds ^C to page-down,
+and five page-downs in a row would otherwise kill the emulator and lose the
+unsaved document.
+
+### Line Editing (BDOS Function 10)
+
+Read Console Buffer consumes these keys:
+
+| Key | Action |
+|-----|--------|
+| RUB / ^H | Delete the previous character |
+| ^U | Cancel the line, echo `#` and start a new one |
+| ^X | Cancel the current physical line, erasing it from the screen |
+| ^E | Start a new physical line, keep collecting |
+| ^R | Retype the line so far |
+| ^P | Toggle console echo to the printer |
+| ^S | Ignored |
+| CR / LF | End the line |
+
+Every other character reaches the program. Printable characters arrive as
+themselves. Control characters, TAB and ESC included, are stored in the buffer
+and echoed as `^x`. The read ends on CR, LF, end of input, or a full buffer.
+
+### Windows Special Keys
+
+On Windows, a special key is translated to the WordStar diamond control code:
+
+| Key | Control code |
+|-----|--------------|
+| Up | ^E |
+| Down | ^X |
+| Left | ^S |
+| Right | ^D |
+| Home | ^Q^S |
+| End | ^Q^D |
+| PgUp | ^R |
+| PgDn | ^C |
+| Insert | ^V |
+| Delete | ^G |
+| Ctrl+Left | ^A |
+| Ctrl+Right | ^F |
+
+A special key that is not in the table is swallowed rather than passed through.
+A translated PgDn does not count toward the ^C exit. At a function 10 prompt the
+translated codes are given to the program rather than obeyed as line-editing
+commands, so the Down arrow does not cancel the line being typed.
+
+### Known Limitations
+
+**Ctrl+V on Windows.** Windows Terminal is the default console host on Windows
+11, and it binds `ctrl+v` to `Terminal.PasteFromClipboard`. That binding does
+not fall through to the application
+([microsoft/terminal#16280](https://github.com/microsoft/terminal/issues/16280),
+still open). No `SetConsoleMode` call the emulator can make changes this. So ^V,
+which is insert/overtype in WordStar, never reaches the guest there.
+
+This affects Windows only. ^V reaches the guest normally on Linux and macOS.
+
+There are two workarounds. Press Insert, which the emulator translates to ^V.
+Or unbind the key in the Windows Terminal settings, by putting this in the
+`actions` array of `settings.json`:
+
+```json
+{
+  "keys": "ctrl+v",
+  "command": "unbound"
+}
+```
+
+A Windows Terminal fragment extension cannot do this on your behalf. Fragments
+may contribute profiles and color schemes only, not keybindings, so this stays a
+manual step.
+
+**Ctrl+C when a selection is active.** On the same host, while a quick-edit
+selection exists, `ctrl+c` copies instead of falling through. The emulator now
+clears `ENABLE_QUICK_EDIT_MODE`, so a stray mouse click no longer starts a
+selection. A deliberate selection still shadows ^C until it is cleared with Esc.
 
 ## Supported CP/M Functions
 

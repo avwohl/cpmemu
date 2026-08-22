@@ -32,8 +32,16 @@ bool is_terminal();
 bool stdin_has_data();
 
 // Read a single character from console (unbuffered)
-// Returns the character, or -1 on EOF
+// Returns the character, or -1 on EOF.  On Windows a special key (arrow,
+// Home, ...) is translated to a WordStar diamond control code; a special
+// key with no translation returns 0.
 int console_getchar();
+
+// True when the character last returned by console_getchar() was
+// synthesized from a special key rather than typed by the user.  The ^C
+// exit escape hatch uses this so a translated ^C (WordStar page-down on
+// Windows) does not count toward the exit.
+bool console_last_char_synthesized();
 
 // ============================================================================
 // File System

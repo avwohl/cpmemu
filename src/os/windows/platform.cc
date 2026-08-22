@@ -13,6 +13,14 @@
 #include <cstdlib>
 #include <cstdio>
 
+// Some older MinGW wincon.h headers are missing these console mode bits
+#ifndef ENABLE_QUICK_EDIT_MODE
+#define ENABLE_QUICK_EDIT_MODE 0x0040
+#endif
+#ifndef ENABLE_EXTENDED_FLAGS
+#define ENABLE_EXTENDED_FLAGS 0x0080
+#endif
+
 namespace platform {
 
 // ============================================================================
@@ -25,7 +33,10 @@ static bool console_mode_saved = false;
 
 void disable_raw_mode() {
     if (console_mode_saved && hStdin != INVALID_HANDLE_VALUE) {
-        SetConsoleMode(hStdin, original_console_mode);
+        // ENABLE_EXTENDED_FLAGS has to be set in the same call or the quick edit
+        // bit of the saved mode is ignored, so the user would be left with quick
+        // edit off after we exit
+        SetConsoleMode(hStdin, original_console_mode | ENABLE_EXTENDED_FLAGS);
         console_mode_saved = false;
     }
 }
@@ -48,6 +59,14 @@ void enable_raw_mode() {
     // Disable line input, echo, and processed input (Ctrl+C handling)
     DWORD raw_mode = original_console_mode;
     raw_mode &= ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT);
+    // Disable quick edit, which is on by default on Windows 10 and later.  With
+    // it on, a stray mouse click starts a selection that freezes guest input
+    // until the user presses Esc, and while a selection exists Windows Terminal
+    // makes ctrl+c copy instead of falling through, so ^C is stolen from the
+    // guest in that state.  ENABLE_EXTENDED_FLAGS must be set in the same call
+    // for the quick edit bit to be honoured.
+    raw_mode |= ENABLE_EXTENDED_FLAGS;
+    raw_mode &= ~(ENABLE_QUICK_EDIT_MODE | ENABLE_MOUSE_INPUT);
     SetConsoleMode(hStdin, raw_mode);
 }
 
@@ -55,7 +74,49 @@ bool is_terminal() {
     return _isatty(_fileno(stdin)) != 0;
 }
 
+// ============================================================================
+// Extended Key Translation
+// ============================================================================
+
+// _getch() reports a special key as 0x00 or 0xE0 followed by a scan code that a
+// second call returns.  The scan codes are translated to the WordStar diamond
+// so an arrow key arrives as one control character the guest understands.
+struct ExtendedKey {
+    int scan;    // scan code from the second _getch() call
+    int first;   // character handed to the guest
+    int second;  // second character of the translation, or -1 if there is none
+};
+
+// Insert maps to ^V on purpose: Windows Terminal binds ctrl+v to paste and never
+// lets it reach the application (microsoft/terminal#16280), so Insert is the only
+// way a WordStar user can reach insert/overtype mode.
+// PgDn maps to ^C, which is why console_last_char_synthesized() exists: without
+// it, five page downs would trip the five-consecutive-^C emulator exit.
+static const ExtendedKey extended_keys[] = {
+    { 0x48, 0x05,   -1 },  // Up         -> ^E
+    { 0x50, 0x18,   -1 },  // Down       -> ^X
+    { 0x4B, 0x13,   -1 },  // Left       -> ^S
+    { 0x4D, 0x04,   -1 },  // Right      -> ^D
+    { 0x47, 0x11, 0x13 },  // Home       -> ^Q ^S
+    { 0x4F, 0x11, 0x04 },  // End        -> ^Q ^D
+    { 0x49, 0x12,   -1 },  // PgUp       -> ^R
+    { 0x51, 0x03,   -1 },  // PgDn       -> ^C
+    { 0x52, 0x16,   -1 },  // Insert     -> ^V
+    { 0x53, 0x07,   -1 },  // Delete     -> ^G
+    { 0x73, 0x01,   -1 },  // Ctrl+Left  -> ^A
+    { 0x74, 0x06,   -1 }   // Ctrl+Right -> ^F
+};
+
+static int pending_char = -1;         // second character of a translation, not read yet
+static bool last_synthesized = false; // last character came from a special key
+
 bool stdin_has_data() {
+    // A queued second character is input that _kbhit() cannot see, so without
+    // this the second half of Home and End is invisible to BDOS 6 and BIOS CONST
+    if (pending_char >= 0) {
+        return true;
+    }
+
     if (!is_terminal()) {
         // For non-terminal (pipe/file), check if data is available
         HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
@@ -71,6 +132,16 @@ bool stdin_has_data() {
 }
 
 int console_getchar() {
+    last_synthesized = false;
+
+    // Hand back the queued half of a two character translation first
+    if (pending_char >= 0) {
+        int queued = pending_char;
+        pending_char = -1;
+        last_synthesized = true;
+        return queued;
+    }
+
     if (!is_terminal()) {
         // For non-terminal, use standard getchar
         return getchar();
@@ -79,7 +150,41 @@ int console_getchar() {
     // For console, use _getch() for unbuffered input
     int ch = _getch();
     if (ch == EOF) return -1;
+
+    // 0x00 and 0xE0 are the special key prefixes.  The scan code has to be
+    // consumed here, otherwise it is read later as an ordinary keystroke.
+    if (ch == 0x00 || ch == 0xE0) {
+        // 0xE0 is also an ordinary character in every OEM code page, so the
+        // byte alone does not prove a special key.  The CRT stashes the scan
+        // code where _kbhit() can see it immediately, so a false prefix is one
+        // the second read would block on - hand it to the guest instead.
+        if (!_kbhit()) {
+            return ch;
+        }
+        int scan = _getch();
+        if (scan == EOF) return -1;
+        // Whatever we return now was made up by us, not typed by the user
+        last_synthesized = true;
+        const size_t count = sizeof(extended_keys) / sizeof(extended_keys[0]);
+        for (size_t i = 0; i < count; i++) {
+            if (extended_keys[i].scan == scan) {
+                if (extended_keys[i].second >= 0) {
+                    pending_char = extended_keys[i].second;
+                }
+                return extended_keys[i].first;
+            }
+        }
+        // Untranslated special key (an F key, say): report "no character"
+        // rather than reading again.  BDOS 6 polls stdin_has_data() before
+        // calling us, so a second read here would block after it said yes.
+        return 0;
+    }
+
     return ch;
+}
+
+bool console_last_char_synthesized() {
+    return last_synthesized;
 }
 
 // ============================================================================
