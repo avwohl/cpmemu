@@ -1,0 +1,84 @@
+Todo list:
+
+- checked ^R across the ports after a windows user reported "Ctrl R exits me
+from CPM" in z80cpmw. ^R itself is clean here on all three platforms: there is
+no UI layer, no menus, no accelerators, no key polling in the run loop, and no
+signal handler anywhere (zero hits for signal(, SIGINT, SetConsoleCtrlHandler).
+every unbuffered read masks & 0x7F and hands the byte straight to the guest -
+cpmemu.cc:1313 (BDOS 1), :1928 (BDOS 6), :2356 (BIOS CONIN) - and the only
+input-side control-character test in the whole file is `ch == 0x03` at
+cpmemu.cc:107. POSIX raw mode clears ICANON, which is exactly the flag that
+disables the tty's own ^R (VREPRINT). so nothing to fix for ^R.
+
+- BUT we have the same bug with a different letter. five consecutive ^C call
+exit(0) with no way to turn it off (cpmemu.cc:73-75, :104-120, called from all
+four read sites). WordStar binds ^C to page-down, so five page-downs in a row
+kills the emulator and loses the unsaved document. that is precisely the shape
+of the windows ^R bug: an app meaning bolted onto a key the guest legitimately
+uses, with no switch. fix it the way z80cpmw fixed ^R - add a ctrl_c_exit
+config directive next to the existing keys (cpmemu.cc:797-820) and a
+--no-ctrl-c-exit flag in the option loop (cpmemu.cc:2602-2635), feeding a
+static bool that check_ctrl_c_exit tests before the exit(0) at line 113. keep
+the default on, a raw-mode CLI emulator does need an escape hatch, but let a
+WordStar user turn it off. also consider requiring the five ^C within a short
+wall-clock window so ordinary paging cannot trip it. document it in README.md
+under Configuration Files and Options.
+
+- ^V never reaches the guest on the shipped windows package, and no
+SetConsoleMode call we make can fix it. windows terminal is the default console
+host on win11, our MSIX (packaging/windows/AppxManifest.xml) is a
+FullTrustApplication console exe with an AppExecutionAlias, so we launch into
+it - and its userDefaults.json binds ctrl+v to Terminal.PasteFromClipboard,
+which does not fall through to the app (microsoft/terminal#16280, still open;
+ctrl+c does fall through when ENABLE_PROCESSED_INPUT is off, ctrl+v never
+does). WordStar binds ^V to insert/overtype. either document it as a known
+limitation or ship a fragment telling users to unbind ctrl+v.
+
+- ENABLE_QUICK_EDIT_MODE is never cleared. os/windows/platform.cc:48-51 clears
+ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT but never sets
+ENABLE_EXTENDED_FLAGS or clears QUICK_EDIT, which is on by default on win10+.
+so a stray mouse click starts a selection and freezes guest input until the
+user hits Esc, and while a selection exists windows terminal's ctrl+c copies
+instead of falling through - ^C gets stolen too, in that state only. the usual
+incantation is SetConsoleMode(h, (mode | ENABLE_EXTENDED_FLAGS) &
+~(ENABLE_QUICK_EDIT_MODE | ENABLE_MOUSE_INPUT)).
+
+- IEXTEN is not cleared in POSIX raw mode (os/linux/platform.cc:45, which is
+also the macOS build per CMakeLists.txt:21-25). on linux that is inert without
+ICANON, but BSD/XNU gates VLNEXT (^V) and VDISCARD (^O) on IEXTEN alone,
+outside the ICANON block - so the macOS build loses ^V and ^O to the line
+discipline. one-word fix:
+    raw.c_lflag &= ~(ICANON | ECHO | ECHONL | IEXTEN | ISIG);
+which is what cfmakeraw() does. consider just calling cfmakeraw(&raw) and
+re-setting VMIN/VTIME, which also picks up the ISTRIP/BRKINT/PARMRK clears we
+currently skip. lowest risk of anything on this list, do it first. note ^V then
+ends up dead on two of three platforms for two unrelated reasons.
+
+- the BDOS fn 10 line editor drops about twenty control characters, not the
+handful the comment implies. the else-chain at cpmemu.cc:1356-1394 accepts only
+CR, LF, DEL/BS, ^U, ^C, ^Z and 0x20..0x7E, and ends with "// Ignore other
+control characters". real CP/M 2.2 RDBUF consumes only ^C ^E ^H ^J ^M ^P ^R ^S
+^U ^X and RUB, and echoes everything else as ^x while storing it in the buffer
+for the guest. we silently discard the lot, including TAB (0x09) and ESC
+(0x1B), so a program that reads a line with fn 10 and expects ESC-to-cancel or
+an embedded tab gets nothing. while in there, ^R retype-line, ^E physical
+newline, ^X delete-line and ^P printer-echo are the fn 10 keys we should
+actually implement.
+
+- separate windows bug found on the way through: os/windows/platform.cc:80
+returns _getch() raw, but _getch signals an extended key by returning 0x00 or
+0xE0 and requiring a second call for the scan code. we never make that second
+call, and the `ch & 0x7F` mask at cpmemu.cc:1317/1933/2361 turns the 0xE0 into
+0x60. so an arrow key injects a backtick plus a letter into the guest instead
+of one keystroke. detect 0x00/0xE0 in console_getchar, consume the second byte,
+and either drop it or map it to the WordStar diamond.
+
+- to verify the ^R conclusion by hand: assemble a loop on BDOS 6 with E=0FFh
+that prints the hex of whatever it gets, run it, press Ctrl+R, expect 12. on a
+mac also press Ctrl+V and Ctrl+O - those are the two that will come back as
+nothing until IEXTEN is fixed.
+
+- there is no issue tracker or TODO convention in this repo
+(docs/archive/todo.txt is a stale narrative note, and README.md has no
+Contributing section), which is why this file exists. github issues on
+avwohl/cpmemu is the only other mechanism available.
