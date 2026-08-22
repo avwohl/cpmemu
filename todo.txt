@@ -1,14 +1,29 @@
 Todo list:
 
 DONE - checked ^R across the ports after a windows user reported "Ctrl R exits
-me from CPM" in z80cpmw. ^R itself is clean here on all three platforms: there
-is no UI layer, no menus, no accelerators, no key polling in the run loop, and
-no signal handler anywhere (zero hits for signal(, SIGINT,
-SetConsoleCtrlHandler). every unbuffered read masks & 0x7F and hands the byte
-straight to the guest, and the only input-side control-character test in the
-whole file was `ch == 0x03`. POSIX raw mode clears ICANON, which is exactly the
-flag that disables the tty's own ^R (VREPRINT). nothing to fix for ^R - keeping
-the note so nobody runs the sweep a second time.
+me from CPM" in z80cpmw. nothing here exits on ^R: there is no UI layer, no
+menus, no accelerators, no key polling in the run loop, and no signal handler
+anywhere (zero hits for signal(, SIGINT, SetConsoleCtrlHandler). POSIX raw mode
+clears ICANON, which is exactly the flag that disables the tty's own ^R
+(VREPRINT). at the three unbuffered read sites - BDOS 1, BDOS 6 and BIOS CONIN -
+a typed 0x12 is masked & 0x7F and handed straight to the guest.
+
+  CORRECTED - and this is now the reason to keep the note. the sweep said "the
+  only input-side control-character test in the whole file was ch == 0x03", and
+  that was never true: it covered the three unbuffered reads and missed the
+  buffered one. BDOS fn 10 tested six more control characters (CR, LF, RUB, ^H,
+  ^U, ^C, ^Z) and then discarded every other one under a "// Ignore other
+  control characters" comment, so a typed ^R at a fn 10 prompt was dropped on
+  the floor on all three platforms - exactly the class of bug the sweep was
+  hunting. the fn 10 entry below is that bug. "nothing to fix for ^R" was wrong
+  when it was written, and is true now only because that editor was rewritten.
+
+  ^R is also no longer one thing across the ports. at a fn 10 prompt a typed ^R
+  is now deliberately consumed as retype-line and never reaches the guest, which
+  is correct CP/M and is documented in README.md under Console and Keyboard. on
+  windows PgUp synthesizes 0x12, and the editor's `synthesized` guard sends that
+  past retype-line and into the guest. so on windows PgUp and a typed ^R are not
+  interchangeable, and anyone re-running this sweep has to test both.
 
 DONE - the same bug with a different letter. five consecutive ^C called exit(0)
 with no way to turn it off, and WordStar binds ^C to page-down, so five page-
@@ -27,12 +42,28 @@ DONE - IEXTEN is now cleared in POSIX raw mode. on linux it was inert without
 ICANON, but BSD/XNU gates VLNEXT (^V) and VDISCARD (^O) on IEXTEN alone,
 outside the ICANON block, so the macOS build was losing ^V and ^O to the line
 discipline. also picked up the ISTRIP/BRKINT/PARMRK/IGNBRK clears we were
-skipping. wrote the flags out by hand instead of calling cfmakeraw(), which is
-gated behind __USE_MISC / _DARWIN_C_SOURCE and we build strict -std=c++11.
+skipping. wrote the flags out by hand instead of calling cfmakeraw().
 deliberately did NOT take cfmakeraw's c_cflag CSIZE/PARENB/CS8 clear: c_cflag
 is inert on a pty or a pipe, and on a real serial console it reprograms the
 line itself - forcing 8N1 on a terminal someone brought up 7E1 garbles the
 session. clearing ISTRIP is what actually keeps the 8th bit.
+
+  CORRECTED - the reason first recorded for skipping cfmakeraw, "gated behind
+  __USE_MISC / _DARWIN_C_SOURCE and we build strict -std=c++11", is wrong for
+  both builds in the tree. g++ predefines _GNU_SOURCE=1 for C++ whatever -std
+  says, so __USE_MISC is defined and cfmakeraw compiles clean under -std=c++11;
+  checked by compiling a two-line program that calls it. and the cmake build is
+  not strict c++11 in the first place - CMakeLists.txt sets CMAKE_CXX_STANDARD
+  11 with no CXX_EXTENSIONS OFF, which cmake turns into -std=gnu++11. the
+  hand-written flags stay, on the c_cflag argument above: that one is real, and
+  it does not depend on what any header chooses to expose.
+
+  worth spelling out, because the file otherwise reads as contradicting itself:
+  every read site masks & 0x7F on the way into the guest, so clearing ISTRIP
+  does not put an 8-bit byte in register A. it is still observable, because the
+  dispatch runs on the raw byte before that mask. with ISTRIP set, an 8-bit 0x8D
+  would arrive as CR and silently submit a half-typed fn 10 line, and 0x83 would
+  read as ^C and count toward the five-^C exit.
 
 DONE - ENABLE_QUICK_EDIT_MODE is now cleared, with ENABLE_EXTENDED_FLAGS set in
 the same call so the bit is honoured, and ENABLE_MOUSE_INPUT cleared with it.
@@ -46,9 +77,9 @@ DONE - the second _getch() call for extended keys. _getch signals an extended
 key by returning 0x00 or 0xE0 and requiring a second call for the scan code; we
 never made it, and the `ch & 0x7F` mask turned the 0xE0 into 0x60, so an arrow
 key injected a backtick plus a letter into the guest. now translated to the
-WordStar diamond (arrows, Home, End, PgUp, PgDn, Insert, Delete, ctrl+arrows)
-through a table, with the second byte of a two-character translation queued and
-reported by stdin_has_data(). two things fell out of it:
+WordStar diamond (arrows, Home, End, PgUp, PgDn, Insert, Delete, ctrl+left,
+ctrl+right) through a table, with the second byte of a two-character translation
+queued and reported by stdin_has_data(). three things fell out of it:
   - Insert maps to ^V, which is the only way a WordStar user on windows terminal
     can reach insert/overtype at all (see below).
   - PgDn maps to ^C, so console_last_char_synthesized() exists to keep a
@@ -57,6 +88,13 @@ reported by stdin_has_data(). two things fell out of it:
   - the second _getch() is gated on _kbhit(), because 0xE0 is a legitimate
     character in every OEM code page and an unconditional second read would
     block on one.
+
+  CORRECTED - an earlier draft of this entry said the table covers
+  "ctrl+arrows". it covers the horizontal pair only, ctrl+left -> ^A and
+  ctrl+right -> ^F. ctrl+up and ctrl+down are not in it, so they miss the
+  lookup, come back as a synthesized 0, and are swallowed - the user sees
+  nothing at all. README.md already lists only the two, so the docs were right
+  and this note was not.
 
 DONE - the BDOS fn 10 line editor was dropping about twenty control characters,
 not the handful the comment implied. it now consumes only what real CP/M 2.2
@@ -89,7 +127,33 @@ CRLF line endings, so bash dies on `line 3: $'\r': command not found` and then
 on a syntax error at the end of the file, and it invokes src/cpm_emulator,
 which is not a binary this repo builds (it builds src/cpmemu). unrelated to
 console input - the script never starts a process - but it means the only
-working test path is `make test` in src/.
+working test path is `make test` in src/, which does build clean and does pass.
+
+  those two are not the whole of it, so do not stop there. after fixing the line
+  endings and the binary name the script still does not work:
+  - tests 3 and 4 hardcode src/cpm_emulator again instead of using $EMU.
+  - the auto-build guard tests for src/cpm_emulator, so it is true on every run:
+    a full `make clean && make` every invocation, and the file it looks for
+    still does not exist afterward. it neither re-checks nor exits.
+  - the output filter is `grep -v "Loaded\|Program exit"`. the emulator does
+    not end output with a newline, so test 1's "ABC" shares a line with the
+    exit banner and grep -v deletes the very thing the test checks. src/makefile
+    gets this right with `sed 's/Program exit.*//'`: substitution, not deletion.
+  - the filter also misses the "CPU mode: Z80" banner, which then lands inside
+    the comparison string on tests 3 and 4.
+  - tests 3 and 4 pipe through `tr -d '\n\r'`, giving 200200 against a stated
+    expectation of "20 02 00". they can never match even once everything above
+    is fixed.
+  - zexdoc and zexall get `timeout 180`, and the comment claims that is about
+    two minutes. measured: both are killed at 3m00s having finished about 5 of
+    67 groups, and the partial run is printed as if it were the whole result.
+    `timeout ... | tail -5` also throws away the 124 exit status, and the block
+    buffering on the pipe loses the unflushed tail on SIGTERM.
+  - nothing in the file asserts anything or sets an exit status, so even fully
+    repaired it cannot fail CI.
+  the honest summary is that this script has never worked and rewriting it is
+  cheaper than repairing it. tests/make_test.sh and tests/test_emulator.sh are
+  CRLF too.
 
 - there is no issue tracker or TODO convention in this repo
 (docs/archive/todo.txt is a stale narrative note, and README.md has no
