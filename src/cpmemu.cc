@@ -1044,6 +1044,40 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
         }
       }
     } else {
+      // Everything unrecognised is taken as a file mapping, which means a
+      // mistyped directive becomes a mapping for a CP/M file nobody will
+      // ever open and nothing says so.  Two cheap checks catch most of it
+      // without changing what the line does.
+      static const char* const kDirectives[] = {
+        "program", "cd", "chdir", "default_mode", "debug", "eol_convert",
+        "ctrl_c_exit", "printer", "aux_input", "aux_output"
+      };
+      std::string key_lower;
+      for (char c : key) key_lower += tolower(c);
+      bool warned = false;
+      for (size_t d = 0; d < sizeof(kDirectives) / sizeof(kDirectives[0]); d++) {
+        if (key_lower == kDirectives[d]) {
+          fprintf(stderr,
+                  "Config line %d: '%s' is being read as a file mapping; the "
+                  "directive is spelled '%s'\n",
+                  line_num, key.c_str(), kDirectives[d]);
+          warned = true;
+          break;
+        }
+      }
+      // A CP/M name has a dot or a wildcard nearly always; a bare identifier
+      // whose value names nothing on disk is far more likely a typo than a
+      // mapping for an extension-less file that does not exist yet.
+      if (!warned &&
+          key.find('.') == std::string::npos && key.find('*') == std::string::npos &&
+          value.find('/') == std::string::npos &&
+          platform::get_file_type(value.c_str()) == platform::FileType::NotFound) {
+        fprintf(stderr,
+                "Config line %d: '%s' is not a directive, so it is a file "
+                "mapping to '%s' - which does not exist\n",
+                line_num, key.c_str(), value.c_str());
+      }
+
       // Assume it's a file mapping: pattern = path [mode]
       FileMode mode = default_mode;
       bool eol_convert = default_eol_convert;

@@ -10,8 +10,8 @@ Example configuration files for the CP/M emulator.
 
 Every directive below was checked against `CPMEmulator::load_config_file` in
 `src/cpmemu.cc` and confirmed by running the emulator. Anything not in this
-list is **not** a directive: unrecognised keys silently become file mappings,
-so a typo produces no error at all.
+list is **not** a directive: unrecognised keys become file mappings, though a
+key that looks like a mistyped directive is now reported (see below).
 
 | Directive | Meaning |
 | --- | --- |
@@ -103,8 +103,11 @@ default_mode = text
 cd = /path/to/my/basic/files
 ```
 
-A key that is not a directive and not meant as a mapping is still silent;
-`todo.txt` records that.
+A key that is neither a directive nor a real mapping is reported rather than
+absorbed: a typo like `verbsoe = 1` says so, and `DEBUG = true` names the
+directive it was probably meant to be. The line still becomes a mapping — a
+bare word is a legal CP/M name, so refusing it would break real configs — but
+it no longer does so in silence.
 
 ## Drives
 

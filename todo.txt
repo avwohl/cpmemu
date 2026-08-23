@@ -37,12 +37,6 @@ nothing. ctrl+left and ctrl+right are mapped, to ^A and ^F. README.md documents
 only the two that exist, so the docs are honest, but the pair is a gap worth
 filling if a WordStar user asks for it.
 
-- an unrecognised config key is silently treated as a file mapping, so a typo
-produces no error whatsoever.  `verbsoe = 1` becomes a mapping for a CP/M file
-named VERBSOE and nothing says so.  warning on a key that looks like a
-directive - no dot, no wildcard, no path separator in the value - would catch
-most of it.
-
 - there is no issue tracker or TODO convention in this repo (docs/archive holds
 stale narrative notes, and README.md has no Contributing section), which is why
 this file exists. github issues on avwohl/cpmemu is the only other mechanism

@@ -314,6 +314,42 @@ else
             failed=$((failed + 1))
         fi
 
+        # --- config diagnostics -------------------------------------------
+        # A mistyped directive still becomes a file mapping - changing that
+        # would break real mappings - but it must no longer do so in silence.
+        check_cfg_warn() {
+            local name=$1 line=$2 want=$3
+            { echo "$line"; printf 'program = %s/drv_read.com\n' "$tmp"; } >"$tmp/warn.cfg"
+            ( cd "$sb" && "$emu" "$tmp/warn.cfg" HELLO.TXT ) >/dev/null 2>"$tmp/warnerr"
+            if grep -q "$want" "$tmp/warnerr"; then
+                printf 'PASS  %s\n' "$name"
+                passed=$((passed + 1))
+            else
+                printf 'FAIL  %s\n        no "%s" for: %s\n' "$name" "$want" "$line"
+                grep '^Config line' "$tmp/warnerr" | sed 's/^/        /'
+                failed=$((failed + 1))
+            fi
+        }
+        check_cfg_warn "config: typo is reported"      'verbsoe = 1'  'is not a directive'
+        check_cfg_warn "config: wrong case is named"   'DEBUG = true' "spelled 'debug'"
+
+        # A real mapping must not be warned about.
+        check_cfg_quiet() {
+            local name=$1 line=$2
+            { echo "$line"; printf 'program = %s/drv_read.com\n' "$tmp"; } >"$tmp/quiet.cfg"
+            ( cd "$sb" && "$emu" "$tmp/quiet.cfg" HELLO.TXT ) >/dev/null 2>"$tmp/quieterr"
+            if grep -q '^Config line' "$tmp/quieterr"; then
+                printf 'FAIL  %s\n' "$name"
+                grep '^Config line' "$tmp/quieterr" | sed 's/^/        /'
+                failed=$((failed + 1))
+            else
+                printf 'PASS  %s\n' "$name"
+                passed=$((passed + 1))
+            fi
+        }
+        check_cfg_quiet "config: real mapping stays quiet" "HELLO.TXT = $sb/a/hello.txt text"
+        check_cfg_quiet "config: mode rule stays quiet"    '*.TXT = text'
+
         # With no drive_X at all, resolution must be what it always was.
         printf 'program = %s/drv_read.com\n' "$tmp" >"$tmp/nodrv.cfg"
         check_drive "drive: none configured behaves as before" "$tmp/drv_read.com" "$tmp/nodrv.cfg" \
