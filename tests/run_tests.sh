@@ -216,7 +216,7 @@ if ! command -v pasmo >/dev/null 2>&1; then
 else
     echo
     asm_ok=1
-    for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren; do
+    for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren cli_tail; do
         if ! pasmo "$root/tests/$src.asm" "$tmp/$src.com" >"$tmp/asm.log" 2>&1; then
             echo "FAIL  assembling tests/$src.asm"
             sed 's/^/        /' <"$tmp/asm.log"
@@ -349,6 +349,19 @@ else
         }
         check_cfg_quiet "config: real mapping stays quiet" "HELLO.TXT = $sb/a/hello.txt text"
         check_cfg_quiet "config: mode rule stays quiet"    '*.TXT = text'
+
+        # --- options after the program name --------------------------------
+        # An emulator option written after the program used to be handed to
+        # the guest instead, silently.  It is now honoured and kept out of the
+        # command tail; anything the emulator does not define still goes to
+        # the program untouched.
+        printf 'program = %s/cli_tail.com\n' "$tmp" >"$tmp/tail.cfg"
+        check_drive "cli: trailing option leaves the tail" "$tmp/cli_tail.com" "$tmp/tail.cfg" \
+            "FOO.TXT --no-ctrl-c-exit" ' FOO.TXT'
+        check_drive "cli: unknown dashed arg reaches the guest" "$tmp/cli_tail.com" "$tmp/tail.cfg" \
+            "-X --bogus" ' -X --BOGUS'
+        check_drive "cli: CP/M option tail is untouched" "$tmp/cli_tail.com" "$tmp/tail.cfg" \
+            "TEST,TEST.COM/N/E" ' TEST,TEST.COM/N/E'
 
         # With no drive_X at all, resolution must be what it always was.
         printf 'program = %s/drv_read.com\n' "$tmp" >"$tmp/nodrv.cfg"

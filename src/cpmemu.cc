@@ -2953,6 +2953,9 @@ int main(int argc, char** argv) {
   if (argc < 2) {
     fprintf(stderr, "Usage: %s [options] <program.com|config.cfg> [args...]\n", argv[0]);
     fprintf(stderr, "\n");
+    fprintf(stderr, "Options may also be written after the program; they are\n");
+    fprintf(stderr, "applied and kept out of the CP/M command tail.\n");
+    fprintf(stderr, "\n");
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "  --8080              Run in 8080 mode\n");
     fprintf(stderr, "  --z80               Run in Z80 mode (default)\n");
@@ -2985,53 +2988,72 @@ int main(int argc, char** argv) {
   unsigned long long int_cycles = 0;  // 0 = interrupts disabled
   int int_rst = 7;  // Default RST 7 (address 0x38)
 
-  while (arg_offset < argc && argv[arg_offset][0] == '-') {
-    if (strcmp(argv[arg_offset], "--8080") == 0) {
+  // One definition of what an emulator option is, used both for the options
+  // written before the program name and for any written after it.  Keeping
+  // it in one place is the point: the two passes cannot drift apart.
+  auto try_option = [&](const char* a) -> bool {
+    if (strcmp(a, "--8080") == 0) {
       mode_8080 = true;
-      arg_offset++;
-    } else if (strcmp(argv[arg_offset], "--z80") == 0) {
+    } else if (strcmp(a, "--z80") == 0) {
       mode_8080 = false;
-      arg_offset++;
-    } else if (strncmp(argv[arg_offset], "--progress=", 11) == 0) {
-      cli_progress_interval = atoll(argv[arg_offset] + 11) * 1000000LL;
-      arg_offset++;
-    } else if (strcmp(argv[arg_offset], "--progress") == 0) {
+    } else if (strncmp(a, "--progress=", 11) == 0) {
+      cli_progress_interval = atoll(a + 11) * 1000000LL;
+    } else if (strcmp(a, "--progress") == 0) {
       cli_progress_interval = 100 * 1000000LL;  // Default to 100M if no value specified
-      arg_offset++;
-    } else if (strncmp(argv[arg_offset], "--save-memory=", 14) == 0) {
-      save_memory_file = argv[arg_offset] + 14;
-      arg_offset++;
-    } else if (strncmp(argv[arg_offset], "--save-range=", 13) == 0) {
+    } else if (strncmp(a, "--save-memory=", 14) == 0) {
+      save_memory_file = a + 14;
+    } else if (strncmp(a, "--save-range=", 13) == 0) {
       // Parse range like "DC00-FFFF"
       unsigned int start, end;
-      if (sscanf(argv[arg_offset] + 13, "%x-%x", &start, &end) == 2) {
+      if (sscanf(a + 13, "%x-%x", &start, &end) == 2) {
         save_memory_start = start;
         save_memory_end = end;
       }
-      arg_offset++;
-    } else if (strncmp(argv[arg_offset], "--int-cycles=", 13) == 0) {
-      int_cycles = strtoull(argv[arg_offset] + 13, nullptr, 10);
-      arg_offset++;
-    } else if (strncmp(argv[arg_offset], "--int-rst=", 10) == 0) {
-      int_rst = atoi(argv[arg_offset] + 10) & 7;  // Clamp to 0-7
-      arg_offset++;
-    } else if (strcmp(argv[arg_offset], "--no-ctrl-c-exit") == 0) {
+    } else if (strncmp(a, "--int-cycles=", 13) == 0) {
+      int_cycles = strtoull(a + 13, nullptr, 10);
+    } else if (strncmp(a, "--int-rst=", 10) == 0) {
+      int_rst = atoi(a + 10) & 7;  // Clamp to 0-7
+    } else if (strcmp(a, "--no-ctrl-c-exit") == 0) {
       ctrl_c_exit_enabled = false;
       ctrl_c_exit_from_cli = true;  // Outranks a 'ctrl_c_exit' config line
-      arg_offset++;
-    } else if (strcmp(argv[arg_offset], "--ctrl-c-exit") == 0) {
+    } else if (strcmp(a, "--ctrl-c-exit") == 0) {
       ctrl_c_exit_enabled = true;
       ctrl_c_exit_from_cli = true;  // Outranks a 'ctrl_c_exit' config line
-      arg_offset++;
     } else {
-      break;  // Unknown option, assume it's the program
+      return false;  // Not ours - the program's, or the program name itself
     }
+    return true;
+  };
+
+  while (arg_offset < argc && argv[arg_offset][0] == '-' && try_option(argv[arg_offset])) {
+    arg_offset++;
   }
 
   if (argc < arg_offset + 1) {
     fprintf(stderr, "Error: No program specified\n");
     fprintf(stderr, "Usage: %s [options] <program.com|config.cfg> [args...]\n", argv[0]);
     return 1;
+  }
+
+  // An emulator option written after the program or config file used to be
+  // handed to the CP/M program instead, silently: `cpmemu prog.cfg
+  // --no-ctrl-c-exit` left the ^C exit on and said nothing.  Recognised
+  // options are now honoured wherever they appear and kept out of the
+  // command tail.  Only exact matches for options this emulator defines are
+  // taken; anything else still belongs to the program, so a CP/M tail like
+  // TEST.COM/N/E is untouched.  This runs before the config file is read, so
+  // a flag still outranks a 'ctrl_c_exit' line as documented.
+  std::vector<char*> guest_argv;
+  for (int i = 0; i <= arg_offset && i < argc; i++) {
+    guest_argv.push_back(argv[i]);
+  }
+  for (int i = arg_offset + 1; i < argc; i++) {
+    if (argv[i][0] == '-' && try_option(argv[i])) {
+      fprintf(stderr, "Note: '%s' taken as an emulator option, not passed to the program\n",
+              argv[i]);
+      continue;
+    }
+    guest_argv.push_back(argv[i]);
   }
 
   const char* arg1 = argv[arg_offset];
@@ -3081,7 +3103,7 @@ int main(int argc, char** argv) {
   cpm.setup_memory();
 
   // Parse command line arguments
-  cpm.setup_command_line(argc, argv, arg_offset);
+  cpm.setup_command_line((int)guest_argv.size(), guest_argv.data(), arg_offset);
 
   // Check for config file settings in environment or command line
   const char* printer_file = getenv("CPM_PRINTER");

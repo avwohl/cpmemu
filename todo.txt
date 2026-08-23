@@ -25,12 +25,6 @@ finishing. long-standing, and unchanged by the read(2) work. it also means any
 piped BDOS 1 test needs a sentinel byte such as ^Z to stop on. worth deciding
 whether repeated EOF should instead terminate the program.
 
-- the option loop stops at the first argument that does not start with '-',
-treating it as the program name, so a flag written after the program or config
-file is silently ignored. `cpmemu prog.cfg --no-ctrl-c-exit` does not turn the
-^C exit off and says nothing about it. the flags do outrank the config file
-when they are parsed at all; this is about them not being parsed.
-
 - ctrl+up and ctrl+down are not in the windows extended-key table, so they miss
 the lookup, come back as a synthesized 0, and are swallowed - the user sees
 nothing. ctrl+left and ctrl+right are mapped, to ^A and ^F. README.md documents

@@ -97,6 +97,12 @@ do_build.bat
 cpmemu [options] <program.com> [args...]
 ```
 
+Options may also be written after the program or config file. They are applied
+wherever they appear and kept out of the CP/M command tail, so
+`cpmemu prog.cfg --no-ctrl-c-exit` works. Only the options listed below are
+taken this way; anything else is passed to the program untouched, which leaves
+a CP/M-style tail such as `TEST,TEST.COM/N/E` alone.
+
 ### Options
 
 | Option | Description |
@@ -183,7 +189,8 @@ ctrl_c_exit = true       # five consecutive ^C exit the emulator
 Run with: `./src/cpmemu config.cfg`
 
 A command-line flag overrides the config file: `--no-ctrl-c-exit` turns the exit
-off even when the config file sets `ctrl_c_exit = true`.
+off even when the config file sets `ctrl_c_exit = true`. This holds wherever the
+flag is written, before the config file or after it.
 
 ## Console and Keyboard
 
