@@ -2,11 +2,22 @@
 
 ## Quick Start
 
-Run all tests:
+Run the quick tests from anywhere in the repo:
 ```bash
-cd /home/wohl/qkz80
-./run_tests.sh
+tests/run_tests.sh
 ```
+
+Each test compares the guest's stdout against an exact expected string and
+reports PASS or FAIL; the script exits non-zero if anything failed.
+
+zexdoc and zexall are opt-in, because a full run takes tens of minutes:
+```bash
+tests/run_tests.sh --zex                      # up to 1 hour each
+CPMEMU_ZEX_TIMEOUT=7200 tests/run_tests.sh --zex
+```
+
+`make -C src test` runs three of the quick tests as an eyeball check with no
+assertions; `tests/run_tests.sh` is the one that can fail.
 
 ## Test Programs
 

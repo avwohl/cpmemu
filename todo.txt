@@ -160,38 +160,43 @@ byte-for-byte identical before and after the read(2) change, so it is not part
 of that fix - but it does mean any piped BDOS 1 test needs a sentinel byte such
 as ^Z to stop on.
 
-- tests/run_tests.sh does not run, and did not before any of this work. it has
-CRLF line endings, so bash dies on `line 3: $'\r': command not found` and then
-on a syntax error at the end of the file, and it invokes src/cpm_emulator,
-which is not a binary this repo builds (it builds src/cpmemu). unrelated to
-console input - the script never starts a process - but it means the only
-working test path is `make test` in src/, which does build clean and does pass.
+DONE - tests/run_tests.sh rewritten. it had never run in any form: CRLF
+line endings killed it at parse time, and underneath that it invoked
+src/cpm_emulator, a binary this repo does not build. nine more defects sat
+behind those two, so it was rewritten rather than repaired.
 
-  those two are not the whole of it, so do not stop there. after fixing the line
-  endings and the binary name the script still does not work:
-  - tests 3 and 4 hardcode src/cpm_emulator again instead of using $EMU.
-  - the auto-build guard tests for src/cpm_emulator, so it is true on every run:
-    a full `make clean && make` every invocation, and the file it looks for
-    still does not exist afterward. it neither re-checks nor exits.
-  - the output filter is `grep -v "Loaded\|Program exit"`. the emulator does
-    not end output with a newline, so test 1's "ABC" shares a line with the
-    exit banner and grep -v deletes the very thing the test checks. src/makefile
-    gets this right with `sed 's/Program exit.*//'`: substitution, not deletion.
-  - the filter also misses the "CPU mode: Z80" banner, which then lands inside
-    the comparison string on tests 3 and 4.
-  - tests 3 and 4 pipe through `tr -d '\n\r'`, giving 200200 against a stated
-    expectation of "20 02 00". they can never match even once everything above
-    is fixed.
-  - zexdoc and zexall get `timeout 180`, and the comment claims that is about
-    two minutes. measured: both are killed at 3m00s having finished about 5 of
-    67 groups, and the partial run is printed as if it were the whole result.
-    `timeout ... | tail -5` also throws away the 124 exit status, and the block
-    buffering on the pipe loses the unflushed tail on SIGTERM.
-  - nothing in the file asserts anything or sets an exit status, so even fully
-    repaired it cannot fail CI.
-  the honest summary is that this script has never worked and rewriting it is
-  cheaper than repairing it. tests/make_test.sh and tests/test_emulator.sh are
-  CRLF too.
+the root mistake was `2>&1`. the emulator writes CPU mode, Loaded and Program
+exit to stderr and nothing else, so stdout already carries the guest's output
+alone - merging the two created a filtering problem that the script then solved
+by deleting whole lines with grep -v, which deleted test 1's "ABC" outright,
+because the guest emits no trailing newline and the exit banner shares its line.
+the rewrite simply does not merge them and compares stdout byte for byte.
+
+what it does now: resolves the emulator relative to its own path, so it runs
+from any directory; builds it if missing and then checks the build actually
+produced it before continuing; compares each test against an exact expected
+string including the CP/M \r\n, and renders both sides through `sed -n l` on a
+mismatch so a line-ending difference is visible instead of invisible; counts
+passes, failures and skips, and exits 1 if anything failed, so it can gate CI.
+
+zexdoc and zexall are now opt-in behind --zex. the old script gave them
+`timeout 180` and a comment claiming that was about two minutes; measured, they
+are killed at three minutes having finished about five of sixty-seven groups,
+and the truncated run was printed as though it were the result. they go to a
+file rather than through a pipe now, so timeout's 124 survives instead of being
+replaced by tail's 0, and a timeout reports itself as a timeout with the group
+count and points at CPMEMU_ZEX_TIMEOUT. a pass requires no CRC mismatch and the
+"Tests complete" line, so a run that stops early cannot read as success.
+
+verified: the four quick tests pass; a deliberately wrong expectation and a
+missing .com produce FAIL and SKIP with exit 1; --zex under a short cap reports
+the timeout honestly; the pass and CRC-mismatch branches were exercised with a
+stub emulator replaying a complete and a failing transcript; the auto-build path
+works from a missing binary; and it runs the same from /.
+
+- tests/make_test.sh and tests/test_emulator.sh are still CRLF and still name
+src/cpm_emulator, so they do not run either. make_test.sh additionally hardcodes
+every path to /home/wohl/qkz80/tests/. neither was touched here.
 
 - there is no issue tracker or TODO convention in this repo
 (docs/archive/todo.txt is a stale narrative note, and README.md has no
