@@ -61,30 +61,29 @@ Tests **all Z80 instructions** including undocumented behavior.
 
 ### Console Output Tests
 ```bash
-cd /home/wohl/qkz80
-src/cpm_emulator tests/simple_con.com
+src/cpmemu tests/simple_con.com
 # Should print: ABC
 
-src/cpm_emulator tests/test_djnz.com
+src/cpmemu tests/test_djnz.com
 # Should print: 321
 ```
 
 ### Flag Tests
 ```bash
-src/cpm_emulator tests/test_n_flag.com
+src/cpmemu tests/test_n_flag.com
 # Should print: 20 02 00
 
-src/cpm_emulator tests/tflags.com
+src/cpmemu tests/tflags.com
 # Should print: 94 51 10 3E
 ```
 
 ### Comprehensive Tests
 ```bash
 # Run zexdoc (documented instructions)
-timeout 180 src/cpm_emulator tests/zexdoc.com
+timeout 180 src/cpmemu tests/zexdoc.com
 
 # Run zexall (all instructions)
-timeout 180 src/cpm_emulator tests/zexall.com
+timeout 180 src/cpmemu tests/zexall.com
 ```
 
 ## Test Results Comparison with tnylpo

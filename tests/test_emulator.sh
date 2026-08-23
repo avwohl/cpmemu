@@ -1,35 +1,63 @@
 #!/bin/bash
-# Test script for CP/M emulator
+# Smoke test: start MBASIC under the emulator and show what it prints.
+#
+# This is an eyeball test with no assertions - tests/run_tests.sh is the one
+# that can fail.  MBASIC is not in this repo, so point at a copy with $MBASIC
+# or drop one at com/mbasic.com.  Without it everything here skips rather than
+# reporting a failure that cannot be told apart from a missing file.
+#
+# Every run takes its input from /dev/null and is capped with timeout, so the
+# script never waits for a terminal and is safe to run unattended.
 
-cd /home/wohl/qkz80
+set -u
 
-echo "=== Testing CP/M Emulator with MBASIC ==="
-echo ""
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd) || exit 1
+root=$(dirname -- "$here")
+emu=$root/src/cpmemu
+mbasic=${MBASIC:-$root/com/mbasic.com}
+cfg=$root/examples/simple_test.cfg
+bas=$root/tests/printsep.bas
 
-# Test 1: Run MBASIC and show prompt
-echo "Test 1: MBASIC starts and shows prompt"
-echo "----------------------------------------"
-timeout 2 src/cpm_emulator com/mbasic.com 2>&1 | head -20
-echo ""
-
-# Test 2: With config file
-echo "Test 2: Loading with config file"
-echo "----------------------------------------"
-if [ -f examples/simple_test.cfg ]; then
-    timeout 2 src/cpm_emulator examples/simple_test.cfg 2>&1 | head -20
+if [ ! -x "$emu" ]; then
+    echo "emulator not found at $emu - run: make -C $root/src" >&2
+    exit 1
 fi
-echo ""
 
-# Test 3: With direct file mapping
-echo "Test 3: Direct file mapping from command line"
-echo "----------------------------------------"
-if [ -f /home/wohl/cl/mbasic/tests/printsep.bas ]; then
-    timeout 2 src/cpm_emulator com/mbasic.com /home/wohl/cl/mbasic/tests/printsep.bas 2>&1 | head -20
+echo "=== CP/M emulator smoke test (MBASIC) ==="
+echo "emulator: $emu"
+echo "mbasic:   $mbasic"
+echo
+
+if [ ! -f "$mbasic" ]; then
+    echo "SKIP  everything: no MBASIC at $mbasic"
+    echo "      set MBASIC=/path/to/mbasic.com, or put a copy at com/mbasic.com"
+    exit 0
 fi
-echo ""
 
-echo "=== Tests Complete ==="
-echo ""
+echo "Test 1: MBASIC starts and shows its prompt"
+echo "------------------------------------------"
+timeout 2 "$emu" "$mbasic" </dev/null 2>&1 | head -20
+echo
+
+echo "Test 2: loading through a config file"
+echo "------------------------------------------"
+if [ -f "$cfg" ]; then
+    timeout 2 "$emu" "$cfg" </dev/null 2>&1 | head -20
+else
+    echo "SKIP  no $cfg"
+fi
+echo
+
+echo "Test 3: mapping a file from the command line"
+echo "------------------------------------------"
+if [ -f "$bas" ]; then
+    timeout 2 "$emu" "$mbasic" "$bas" </dev/null 2>&1 | head -20
+else
+    echo "SKIP  no $bas"
+fi
+echo
+
+echo "=== done ==="
 echo "To use interactively:"
-echo "  ./src/cpm_emulator com/mbasic.com"
-echo "  ./src/cpm_emulator examples/simple_test.cfg"
+echo "  $emu $mbasic"
+echo "  $emu $cfg"

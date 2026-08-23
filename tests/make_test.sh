@@ -1,7 +1,18 @@
 #!/bin/bash
-# Create a simple test COM file by hand-assembling
+# Regenerate flag_test.hex and flag_test.com by hand-assembling.
+#
+# There is no assembler in this repo - tests/README.md records that the .com
+# files here were built elsewhere with z88dk - so this is the one place a test
+# binary is produced from source that lives in the tree.  It writes next to
+# itself rather than to an absolute path, so it works in any checkout.
 
-cat > /home/wohl/qkz80/tests/flag_test.hex << 'EOF'
+set -u
+
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd) || exit 1
+hex=$here/flag_test.hex
+com=$here/flag_test.com
+
+cat > "$hex" << 'EOF'
 # Test 1: ADD overflow
 3E 7F       # LD A, 0x7F
 C6 01       # ADD A, 0x01
@@ -21,21 +32,17 @@ C6 01       # ADD A, 0x01
 C3 00 00    # JP 0x0000
 EOF
 
-# Convert hex to binary
-python3 << 'PYTHON'
-with open('/home/wohl/qkz80/tests/flag_test.hex', 'r') as f:
-    bytes_data = []
+python3 - "$hex" "$com" << 'PYTHON'
+import sys
+
+src, dst = sys.argv[1], sys.argv[2]
+data = bytearray()
+with open(src) as f:
     for line in f:
-        line = line.split('#')[0].strip()  # Remove comments
-        if line:
-            hex_bytes = line.split()
-            for hb in hex_bytes:
-                bytes_data.append(int(hb, 16))
-
-with open('/home/wohl/qkz80/tests/flag_test.com', 'wb') as f:
-    f.write(bytes(bytes_data))
-
-print(f"Created flag_test.com with {len(bytes_data)} bytes")
+        line = line.split('#')[0].strip()   # strip comments
+        for byte in line.split():
+            data.append(int(byte, 16))
+with open(dst, 'wb') as f:
+    f.write(data)
+print("wrote %s, %d bytes" % (dst, len(data)))
 PYTHON
-
-chmod +x /home/wohl/qkz80/tests/flag_test.com
