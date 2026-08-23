@@ -10,9 +10,10 @@ tests/run_tests.sh
 Each test compares the guest's stdout against an exact expected string and
 reports PASS or FAIL; the script exits non-zero if anything failed.
 
-zexdoc and zexall are opt-in, because a full run takes tens of minutes:
+zexdoc and zexall are opt-in, because they are slow - about 7 minutes each,
+measured:
 ```bash
-tests/run_tests.sh --zex                      # up to 1 hour each
+tests/run_tests.sh --zex                      # cap defaults to 1 hour each
 CPMEMU_ZEX_TIMEOUT=7200 tests/run_tests.sh --zex
 ```
 
@@ -42,20 +43,28 @@ All flag tests have been verified to match tnylpo output exactly.
 #### zexdoc.com
 Tests **documented Z80 instructions only**.
 - Size: 8704 bytes
-- Tests: ~67 instruction groups
-- Runtime: ~2 minutes
-- Status: ✅ Completes successfully
-- CRC Status: ❌ All tests show CRC errors (instruction bugs, not flags)
+- Tests: 67 instruction groups
+- Runtime: about 7 minutes
+- Status: completes, all 67 groups, no CRC mismatches
 
 #### zexall.com
 Tests **all Z80 instructions** including undocumented behavior.
 - Size: 8704 bytes
-- Tests: ~67 instruction groups (with undocumented flag behavior)
-- Runtime: ~2 minutes
-- Status: ✅ Completes successfully
-- CRC Status: ❌ All tests show CRC errors (instruction bugs, not flags)
+- Tests: 67 instruction groups (with undocumented flag behavior)
+- Runtime: about 7 minutes
+- Status: completes, all 67 groups, no CRC mismatches
 
-**Note**: Both test suites complete without hanging or crashing. The CRC errors indicate instruction implementation bugs, NOT flag calculation bugs. Simple flag tests verify our flag calculations are 100% correct.
+**Note**: both suites pass clean. `tests/run_tests.sh --zex` ran the pair
+end to end in 13m46s, 67 groups each and zero CRC mismatches. Timings are
+from one development machine and will vary; the runner's cap defaults to
+an hour per suite and is overridable with `CPMEMU_ZEX_TIMEOUT`.
+
+An earlier version of this file recorded that every group reported a CRC
+error and attributed it to instruction bugs. That is not what a full run
+shows. The claim predates a runner that could tell a finished run from a
+truncated one: the old script capped the suites at 180 seconds, which is
+about five groups in, and printed the partial output as though it were
+the result.
 
 ## Running Individual Tests
 
@@ -113,17 +122,18 @@ cp test.bin test.com
 
 ## Known Issues
 
-### zexdoc/zexall CRC Errors
+### zexdoc/zexall CRC errors: none as of the last full run
 
-Both test suites show CRC mismatches on all tests. This indicates bugs in:
-- 16-bit arithmetic operations (ADC HL, SBC HL, ADD IX/IY)
-- DAA (decimal adjust accumulator)
-- RLD/RRD (rotate digit left/right)
-- Block operations (LDI, LDIR, LDD, LDDR, CPI, CPIR, CPD, CPDR)
-- Rotate/shift instructions (undocumented X/Y flag behavior)
-- Some indexed addressing modes
+This section used to list CRC mismatches across 16-bit arithmetic, DAA,
+RLD/RRD, the block operations, rotate/shift X/Y flags and indexed addressing.
+A full run of both suites now reports 67 groups each with zero mismatches, so
+that list is out of date and has been removed rather than left to mislead.
 
-**Important**: Simple targeted tests prove flag calculations are correct. The CRC errors are from other instruction implementation issues.
+What the result does and does not say: every instruction behaviour the two
+exercisers cover, undocumented flag behaviour included, matches the reference
+CRCs. That is the strongest single check available here, but it is still only
+the instructions zexall exercises - it says nothing about BDOS, BIOS, the
+console layer or the file system, which have their own tests or none.
 
 ## Historical Test Results
 
@@ -146,9 +156,21 @@ Both test suites show CRC mismatches on all tests. This indicates bugs in:
 - zexall: Completes all tests ✅
 - Both show CRC errors (expected - other bugs)
 
+### Current
+- zexdoc: 67 groups, no CRC mismatches ✅
+- zexall: 67 groups, no CRC mismatches ✅
+- Pair runs end to end in 13m46s
+
 ## Next Steps
 
-1. Compare CRC errors between our emulator and tnylpo runs
-2. Create targeted tests for failing instruction groups
-3. Focus on highest-impact bugs (16-bit arithmetic, DAA, etc.)
-4. Verify fixes with both simple tests and comprehensive suites
+The CRC hunt that used to sit here is finished; both exercisers pass clean.
+What is left is coverage of everything they do not reach:
+
+1. The console layer has no automated test at all. A pty-driven harness is
+   the missing piece - `stdin_has_data()` returns false for a non-tty, so a
+   pipe cannot drive BDOS 6 on POSIX.
+2. There is no BDOS function 10 line-editor test, despite it being the most
+   intricate console code in the emulator.
+3. The 14 `tests/*.cc` unit tests are not built or run by any make target.
+4. There is no CI job running any of this; `.github/workflows/release.yml`
+   builds and packages only.

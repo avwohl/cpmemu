@@ -16,11 +16,12 @@
 # with explicit \r\n.
 #
 # Usage: tests/run_tests.sh [--zex] [--help]
-#   --zex   also run zexdoc and zexall.  These are long: a sampled rate of
-#           roughly four instruction groups per 40s against 67 groups puts a
-#           full run in the tens of minutes, so they are opt-in rather than
-#           part of the default run.  Override the cap with
-#           CPMEMU_ZEX_TIMEOUT (seconds, default 3600).
+#   --zex   also run zexdoc and zexall.  Each takes about 7 minutes on the
+#           machine this was measured on - 13m46s for the pair, 67 groups
+#           each - so they are opt-in rather than part of the default run.
+#           The cap defaults to an hour apiece, which is generous headroom
+#           for slower hardware; override it with CPMEMU_ZEX_TIMEOUT
+#           (seconds).
 
 set -u
 
@@ -104,7 +105,7 @@ check_zex() {
         return
     fi
 
-    printf '      %s: running, up to %ss\n' "$name" "$zex_timeout"
+    printf '      %s: running, about 7 minutes, cap %ss\n' "$name" "$zex_timeout"
     timeout "$zex_timeout" "$emu" "$root/$prog" >"$out" 2>/dev/null </dev/null
     rc=$?
     groups=$(grep -c 'OK$' "$out")

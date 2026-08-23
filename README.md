@@ -329,11 +329,18 @@ selection. A deliberate selection still shadows ^C until it is cleared with Esc.
 ## Testing
 
 ```bash
-cd src/
-make test                                    # Run quick tests
-timeout 180 ./cpmemu ../tests/zexdoc.com     # Z80 documented instruction test
-timeout 180 ./cpmemu ../tests/zexall.com     # Z80 all instructions test
+tests/run_tests.sh          # quick tests, asserts and exits non-zero on failure
+tests/run_tests.sh --zex    # adds zexdoc and zexall, about 7 minutes each
+make -C src test            # three quick tests, eyeball only, never fails
 ```
+
+`tests/run_tests.sh` is the one that can fail; `make test` prints output next
+to a "should print" string for a human to check. Both zexdoc and zexall
+currently complete all 67 instruction groups with no CRC mismatches.
+
+Do not cap the exercisers at 180 seconds, as an earlier version of this
+section did: that is about five groups in, and a truncated run looks like a
+finished one unless something checks for the "Tests complete" line.
 
 The `tests/` directory contains various test programs including:
 - Console and flag tests
