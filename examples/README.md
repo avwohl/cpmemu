@@ -1,77 +1,128 @@
 # CP/M Emulator Configuration Examples
 
-This directory contains example configuration files for the CP/M emulator.
-
-## Quick Start
+Example configuration files for the CP/M emulator.
 
 ```bash
-# Run with a config file
 ./src/cpmemu examples/example.cfg
 ```
 
-## Example Files
+## What a config file actually supports
 
-### example.cfg
-Basic configuration template showing all available options.
+Every directive below was checked against `CPMEmulator::load_config_file` in
+`src/cpmemu.cc` and confirmed by running the emulator. Anything not in this
+list is **not** a directive: unrecognised keys silently become file mappings,
+so a typo produces no error at all.
 
-### mbasic_tests.cfg
-Run MBASIC with test files from multiple directories:
-- Maps drive B: to the test directory
-- Maps specific classic programs like STARTREK.BAS
-- Sets all .BAS files to text mode
+| Directive | Meaning |
+| --- | --- |
+| `program` | Program to run. Required. |
+| `cd` / `chdir` | Change working directory. Applied immediately, in file order. |
+| `default_mode` | `auto`, `text` or `binary`. |
+| `eol_convert` | `true`/`false`. Convert `\n` <-> `\r\n` for text files. |
+| `debug` | `true`/`false`. Prints mappings, BDOS calls and file operations. |
+| `ctrl_c_exit` | `true`/`false`. Whether five fast ^C quit the emulator. |
+| `printer` | File to receive printer output. |
+| `aux_input` | File to read for AUX input. |
+| `aux_output` | File to receive AUX output. |
 
-### assembler.cfg
-M80 assembler workflow:
-- Source files on drive B:
-- Output to working directory
-- Proper text/binary modes for assembly files
+`$VAR` and `${VAR}` are expanded in every value. An unset variable expands to
+nothing, so `${MISSING}/mbasic.com` becomes `/mbasic.com` and fails with a
+message naming that path.
 
-### compiler.cfg
-Hi-Tech C development setup:
-- Source on drive B:
-- Include files on drive C:
-- Build output in working directory
+### `cd` is applied while the file is being read
 
-## Configuration File Syntax
+It takes effect at the line it appears on, and `program` is resolved later,
+against whatever the working directory ended up as. So this does not work:
 
 ```ini
-# Program to run (required)
-program = path/to/program.com
-
-# Working directory
-cd = /path/to/dir
-
-# File mode mappings
-*.MAC = /path text     # Directory + mode
-TEST.BAS = /path/test.bas text  # Exact mapping
-
-# Settings
-default_mode = auto    # auto, text, or binary
-eol_convert = true     # Convert \n <-> \r\n
-debug = false
-
-# Device redirection
-printer = /path/to/printer.txt
-aux_input = /path/to/input.txt
-aux_output = /path/to/output.txt
+cd = /tmp
+program = tests/simple_con.com     # looked for in /tmp, not where you started
 ```
 
-## Usage Patterns
+Use an absolute path for `program`, or put `cd` after it.
 
-### Text vs Binary Files
+### Settings are captured when a mapping is read
 
-The emulator handles line ending conversion automatically:
-- **Text files**: Convert `\n` (Unix) <-> `\r\n` (CP/M)
-- **Binary files**: No conversion
+A mapping records `default_mode` and `eol_convert` as they stand on the line
+it appears on. A setting written below a mapping does not apply to it:
 
-Set modes explicitly to avoid conversion issues:
 ```ini
-*.BAS = /path/to/basic text    # BASIC source (path + mode)
-*.MAC = /path/to/asm text      # Assembly source
-*.COM = /path/to/bin binary    # Executables
-*.REL = /path/to/obj binary    # Object files
+PRINTSEP.BAS = tests/printsep.bas text
+eol_convert  = false                    # too late for the line above
 ```
 
-## See Also
+Put all the settings first, then the mappings.
 
-- `docs/file_handling_notes.md` - Detailed documentation
+## File mappings
+
+Any line that is not one of the directives above is a mapping:
+
+```ini
+CPM_NAME = unix/path [text|binary]
+```
+
+The CP/M side may be an exact name (`PRINTSEP.BAS`) or an extension pattern
+(`*.BAS`). The Unix side is used **literally** - it is a path to one file, and
+it must exist or the mapping is skipped and the search falls through.
+
+Working forms, all verified by opening a file through BDOS 15:
+
+```ini
+PRINTSEP.BAS = tests/printsep.bas text    # exact name -> one file
+*.BAS        = tests/printsep.bas text    # any .BAS -> that one file
+```
+
+### Forms that do not work
+
+These appear in older versions of these examples and in documentation
+elsewhere in the repo. None of them do anything:
+
+```ini
+*.BAS = text                  # no path: registers the path "text", never opens
+*.BAS = /some/dir/*.bas text  # no wildcard substitution on the Unix side
+drive_A = .                   # drive_X is not a directive at all
+drive_B = /some/dir           # becomes a mapping for a file named DRIVE_B
+verbose = 0                   # not a directive; becomes a mapping named VERBOSE
+args = TEST.BAS               # not a directive
+```
+
+To set the mode for a whole class of files, use `default_mode`. To expose a
+directory of files, `cd` into it: a name with no mapping is looked up
+lowercased in the working directory, which is how a directory of `.bas` files
+is normally reached.
+
+```ini
+default_mode = text
+cd = /path/to/my/basic/files
+```
+
+`todo.txt` records per-drive mapping, wildcard Unix paths and mode-only
+mappings as missing features.
+
+## Where the CP/M binaries go
+
+This repo ships no CP/M programs - no MBASIC, no M80, no Hi-Tech C. The
+examples assume `${HOME}/cpm/com/`, so put your own copies there or edit the
+`program` line. `examples/simple_test.cfg` is the one example that runs
+against files this repo does have.
+
+## Example files
+
+| File | What it shows |
+| --- | --- |
+| `example.cfg` | Every directive, with comments. Start here. |
+| `simple_test.cfg` | MBASIC against this repo's `tests/*.bas`. |
+| `mbasic_tests.cfg` | MBASIC with a directory of programs reached by `cd`. |
+| `assembler.cfg` | M80/L80 assembly workflow. |
+| `compiler.cfg` | Hi-Tech C workflow. |
+| `test.cfg`, `test2.cfg` | Minimal configs for checking env expansion and `cd`. |
+
+## Text vs binary
+
+Text files get `\n` <-> `\r\n` conversion; binary files do not. `default_mode
+= auto` guesses from the extension. Set it explicitly when a guess would be
+wrong, and use the per-file mapping form to override one file.
+
+## See also
+
+- `docs/file_handling_notes.md`

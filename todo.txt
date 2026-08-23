@@ -37,14 +37,26 @@ nothing. ctrl+left and ctrl+right are mapped, to ^A and ^F. README.md documents
 only the two that exist, so the docs are honest, but the pair is a gap worth
 filling if a WordStar user asks for it.
 
-- the example config files cannot work in a fresh checkout. all five name
-com/mbasic.com, and this repo has no com/ directory and ships no MBASIC.
-examples/simple_test.cfg, examples/mbasic_tests.cfg and examples/test2.cfg
-additionally point at /home/wohl/cl/mbasic/... paths from a different tree.
-tests/test_emulator.sh skips cleanly when MBASIC is absent, but its config test
-still fails against simple_test.cfg for this reason. either the configs should
-use relative paths and a documented MBASIC location, or they should say plainly
-that they are templates.
+- the config layer is thinner than its examples used to imply.  the examples
+are now written against what works, but three things they used to use do not
+exist and are worth having: per-drive mapping (drive_A / drive_B / drive_C are
+not directives at all), a wildcard on the unix side of a mapping (`*.BAS =
+/dir/*.bas` opens the literal path and fails), and a mode-only mapping (`*.BAS
+= text` registers "text" as the path).  the workaround for all three is `cd`
+into a directory and let unmapped names be found there, lowercased.
+
+- an unrecognised config key is silently treated as a file mapping, so a typo
+produces no error whatsoever.  `verbsoe = 1` becomes a mapping for a CP/M file
+named VERBSOE and nothing says so.  warning on a key that looks like a
+directive - no dot, no wildcard, no path separator in the value - would catch
+most of it.
+
+- two config ordering rules are surprising enough to be worth either changing
+or hard-documenting.  `cd` takes effect while the file is being read, but
+`program` is resolved afterwards, so a relative program path above a cd is
+looked for in the wrong place.  and a file mapping captures default_mode and
+eol_convert as they stand on its own line, so a setting written below a mapping
+does not apply to it.  both are now documented in examples/README.md.
 
 - there is no issue tracker or TODO convention in this repo (docs/archive holds
 stale narrative notes, and README.md has no Contributing section), which is why

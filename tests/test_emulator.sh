@@ -3,8 +3,9 @@
 #
 # This is an eyeball test with no assertions - tests/run_tests.sh is the one
 # that can fail.  MBASIC is not in this repo, so point at a copy with $MBASIC
-# or drop one at com/mbasic.com.  Without it everything here skips rather than
-# reporting a failure that cannot be told apart from a missing file.
+# or put one at ${HOME}/cpm/com/mbasic.com, which is where the example configs
+# look.  Without it everything here skips rather than reporting a failure that
+# cannot be told apart from a missing file.
 #
 # Every run takes its input from /dev/null and is capped with timeout, so the
 # script never waits for a terminal and is safe to run unattended.
@@ -14,7 +15,7 @@ set -u
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd) || exit 1
 root=$(dirname -- "$here")
 emu=$root/src/cpmemu
-mbasic=${MBASIC:-$root/com/mbasic.com}
+mbasic=${MBASIC:-$HOME/cpm/com/mbasic.com}
 cfg=$root/examples/simple_test.cfg
 bas=$root/tests/printsep.bas
 
@@ -30,7 +31,7 @@ echo
 
 if [ ! -f "$mbasic" ]; then
     echo "SKIP  everything: no MBASIC at $mbasic"
-    echo "      set MBASIC=/path/to/mbasic.com, or put a copy at com/mbasic.com"
+    echo "      set MBASIC=/path/to/mbasic.com, or put a copy at $HOME/cpm/com/"
     exit 0
 fi
 
