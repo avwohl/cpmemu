@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <cerrno>
+#include <csignal>
 #include <cstdlib>
 #include <cstring>
 
@@ -19,14 +20,64 @@ namespace platform {
 // Terminal State
 // ============================================================================
 
+// The terminal as we found it, and whether we are currently the ones changing
+// it.  Two flags rather than one: original_termios has to outlive a
+// disable_raw_mode(), or a second enable_raw_mode() would snapshot a terminal
+// we had already made raw and "restore" the shell to that afterwards.
 static struct termios original_termios;
-static bool termios_saved = false;
+static bool termios_saved = false;   // original_termios holds the real thing
+static bool raw_active = false;      // and we have replaced it
 
+// TCSANOW rather than TCSAFLUSH here and below, for two measured reasons.
+//
+// TCSAFLUSH discards the input queue.  On the way out that means anything the
+// guest never read is thrown away instead of being handed back to the shell:
+// measured on macOS, typing `.QR' at a guest that stops on `.' left the shell
+// with nothing under TCSAFLUSH and with `QR' under TCSANOW.  On the way in it
+// means type-ahead is lost - bytes typed at the prompt before the emulator got
+// here were echoed by the line discipline and then destroyed.
+//
+// TCSAFLUSH also waits for queued output to drain first, and on a terminal
+// stopped by ^S, or one whose reader has gone quiet, it never does: measured,
+// the emulator sat in tcsetattr indefinitely before the guest had even
+// started, which from outside is indistinguishable from a hang.  TCSADRAIN
+// waits the same way.  TCSANOW cannot block.
+//
+// One visible consequence of not flushing: handing a terminal back with input
+// still queued sets PENDIN in its lflag, because the line discipline has raw
+// bytes to reprocess now that canonical mode is back.  That bit is the
+// driver's bookkeeping, not ours, and it clears itself on the next read.
 void disable_raw_mode() {
-    if (termios_saved) {
-        tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios);
-        termios_saved = false;
+    if (raw_active) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &original_termios);
+        raw_active = false;
     }
+}
+
+// Signals that end the process without running atexit(), which leaves the
+// terminal exactly as we set it: no echo, no line editing, and a shell the user
+// has to reset by hand.  Measured on macOS, every one of these left a pty raw
+// before this existed.  It is the POSIX face of the same problem ctrl+break has
+// on Windows.
+//
+// ISIG is cleared below, so none of the first four can come from the keyboard -
+// they arrive from a kill, from a terminal window closing, or from an ssh
+// session dropping.  The last three are crashes, and are here because the user
+// is no less stuck for the emulator having been the one at fault.
+static const int restore_signals[] = {
+    SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGSEGV, SIGBUS, SIGABRT
+};
+
+// tcsetattr() is one of the functions POSIX allows a signal handler to call, so
+// putting the terminal back from here is safe.  Nothing else is done: no
+// buffered output is flushed and no memory is saved, because neither is safe
+// here.  The handler restores the default disposition and re-raises, so the
+// process still dies of the signal it was sent rather than reporting a tidy
+// exit, and a caller waiting on it sees the truth.
+static void restore_terminal_and_die(int sig) {
+    disable_raw_mode();
+    signal(sig, SIG_DFL);
+    raise(sig);
 }
 
 void enable_raw_mode() {
@@ -35,9 +86,23 @@ void enable_raw_mode() {
     }
 
     if (!termios_saved) {
-        tcgetattr(STDIN_FILENO, &original_termios);
+        // Only claim to have a terminal to restore if we actually read one.
+        // Going ahead regardless would leave original_termios zeroed, and
+        // pushing that back at exit asks for speed B0, which hangs up a real
+        // serial line.
+        if (tcgetattr(STDIN_FILENO, &original_termios) != 0) {
+            return;
+        }
         termios_saved = true;
         atexit(disable_raw_mode);
+        for (size_t i = 0; i < sizeof(restore_signals) / sizeof(restore_signals[0]); i++) {
+            // Anything already ignored stays ignored.  A shell that starts us
+            // in the background, or a nohup, ignores these on purpose, and
+            // putting a terminal back is not worth overriding that.
+            if (signal(restore_signals[i], restore_terminal_and_die) == SIG_IGN) {
+                signal(restore_signals[i], SIG_IGN);
+            }
+        }
     }
 
     struct termios raw = original_termios;
@@ -66,7 +131,12 @@ void enable_raw_mode() {
     // Set minimum characters to 1 and timeout to 0
     raw.c_cc[VMIN] = 1;
     raw.c_cc[VTIME] = 0;
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    // TCSAFLUSH here used to throw away whatever the user had already typed:
+    // measured on macOS, bytes typed at the shell before the emulator reached
+    // this line were echoed, then discarded, and the guest never saw them.
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) == 0) {
+        raw_active = true;
+    }
 }
 
 bool is_terminal() {

@@ -1,23 +1,19 @@
 Todo list.  Open items only - finished work is written up in the commit
 messages that made the changes, not kept here.
 
-- the console work still needs running on a mac.  windows is done: the whole
-extended-key table, both status calls, the ^C escape hatch and the function 10
-line editor are checked on a real console by tests/win_console.cc.  a linux pty
-cannot prove the thing the IEXTEN clear was for, because BSD/XNU gates VLNEXT
-and VDISCARD on IEXTEN outside the ICANON block, so ^V and ^O want a real mac.
-any harness there has to be a pty and not a pipe, because stdin_has_data()
-returns false for a non-tty by design and BDOS 6 therefore never sees anything
-over a pipe on POSIX.
-
-- nobody has pressed the keys on windows.  tests/win_console.cc writes
-INPUT_RECORDs into the console input buffer with WriteConsoleInput, which is
-faithful from the console inward but steps past the terminal program itself.
-if Windows Terminal ever binds ctrl+left for its own use the tests still pass
-and the user still loses the key.  tests/win_console.exe --manual runs the same
-hex echo for a person to type at; someone with a keyboard should do one pass in
-Windows Terminal and one in a legacy conhost window.  the machine this was
-tested on had no interactive terminal, only a windowless console.
+- nobody has pressed the keys, on either platform.  tests/win_console.cc writes
+INPUT_RECORDs into the console input buffer with WriteConsoleInput and
+tests/pty_console.cc writes bytes into a pty master; each is faithful from the
+console or the line discipline inward, and each steps past the terminal program
+itself.  if Windows Terminal binds ctrl+left for its own use, or Terminal.app or
+iTerm binds something, the tests still pass and the user still loses the key.
+both harnesses have a --manual mode that runs a hex echo for a person to type
+at; someone with a keyboard should do one pass in Windows Terminal, one in a
+legacy conhost window, and one in each of Terminal.app and iTerm2.  the machine
+the windows side was tested on had no interactive terminal, only a windowless
+console.  the macOS side was driven through a pty by a program, which is not a
+person either: no real terminal emulator was ever in the loop, so whatever
+Terminal.app or iTerm sets in the termios we inherit is still unmeasured.
 
 - a character whose first byte is 0xE0 is still taken for a special key prefix
 when another byte follows it.  measured, console input code page 437: alpha
@@ -35,23 +31,106 @@ ENABLE_PROCESSED_INPUT suppresses ^C but not ctrl+break, and the default handler
 ends the process without running atexit, so disable_raw_mode() never runs.
 measured: the child exits 0xC000013A and the console mode stays at 0x1A0 instead
 of returning to 0x1F7, which leaves the shell with no echo.  a
-SetConsoleCtrlHandler that restores the mode and exits would fix it.
+SetConsoleCtrlHandler that restores the mode and exits would fix it.  the POSIX
+half of the same problem is done - os/linux/platform.cc catches SIGHUP, SIGINT,
+SIGQUIT, SIGTERM, SIGSEGV, SIGBUS and SIGABRT, restores and re-raises, and seven
+cases in tests/pty_console.cc hold it to that - so what is left is the windows
+half alone.
+
+- suspend and resume leaves the emulator cooked for the rest of its life.
+enable_raw_mode() is called once and nothing re-applies it, while both zsh and
+bash restore the pre-raw termios when a job is brought back to the foreground.
+measured on macOS with real job control: after kill -TSTP and fg, ICANON, ECHO,
+ISIG, IEXTEN, ICRNL, IXON and OPOST are all back on, the guest sees nothing
+until CR and then gets the whole line at once, and ISIG being on means the next
+^Z suspends it again rather than reaching the guest.  a second route needs no
+kill at all: `cpmemu prog.com &` then fg, where the tcsetattr in
+enable_raw_mode() runs in a background process group, is interrupted by SIGTTOU
+and returns EINTR - the return value is now checked, so raw mode is correctly
+not claimed, but it is also never applied.  the fix is a SIGTSTP handler that
+restores before stopping and a SIGCONT handler that re-applies; the state
+bookkeeping it needs (original_termios kept across a disable, raw_active
+separate) is already in place.
+
+- a guest polling BDOS 6 at end of input spins with nothing to stop it.  the
+blocking reads have the "console reads past end of input" guard;
+bdos_direct_console_io does not use it - it calls platform::console_getchar()
+directly and turns the -1 into 0, which is the same value it uses for "nothing
+waiting yet", so the counter neither increments nor resets.  measured on windows
+with an empty pipe and an empty file, and on macOS with a pty whose master has
+closed: 200000 end-of-input reads, no diagnostic, the emulator has to be killed,
+while the same emulator on the same stdin exits cleanly in 0.05s through BDOS 1.
+on POSIX it is worse still, because stdin_has_data() is false for everything
+that is not a tty: a guest polling BDOS 6 with a redirected file spins whether
+the file is empty or full, delivering nothing.  the end of input is available to
+be noticed - a pty whose master has closed reports readable and reads 0 - so
+routing that -1 through the existing counter is a few lines in
+bdos_direct_console_io and does not touch the platform layer.
 
 - the two platforms disagree about whether redirected input is visible to the
 polled path, and neither side of it was ever decided.  POSIX returns false from
-stdin_has_data() for anything that is not a tty, on purpose, so BDOS 6 never
-sees a pipe there.  windows answers for a pipe, and now for a file as well.
-that means a guest which polls BDOS 11 or BIOS CONST as a break check while
-reading its real input through BDOS 1 can take a byte of its own script on
-windows and cannot on linux.  the windows half was already like that for pipes
-before any of this, so making files match was the smaller of the two changes
-available.  which behaviour is right was never decided and still is not.
+stdin_has_data() for anything that is not a tty, on purpose, so BDOS 6, BDOS 11
+and BIOS CONST never see a pipe or a file there.  windows answers for a pipe,
+and now for a file as well.  that means a guest which polls BDOS 11 or BIOS
+CONST as a break check while reading its real input through BDOS 1 can take a
+byte of its own script on windows and cannot on linux.  the windows half was
+already like that for pipes before any of this, so making files match was the
+smaller of the two changes available.  which behaviour is right was never
+decided and still is not.  what has changed is that both sides are now pinned by
+tests rather than only described: "a polled read takes nothing from a file" and
+"... from a pipe" in tests/pty_console.cc against "polled input arrives from a
+file, not only from a pipe" in tests/win_console.cc, the same guest printing T
+on POSIX and 41 T on windows.
 
-- a guest polling BDOS 6 at end of input spins with nothing to stop it.  the
-blocking reads have the "console reads past end of input" guard; the polled path
-has no counterpart, because stdin_has_data() answering no is indistinguishable
-from a user who has not typed yet.  measured on windows with both an empty pipe
-and an empty file: the emulator has to be killed.
+- a file of 256 GiB or more is reported to the guest as empty.  in the BDOS 26
+record count, `int records = (file_size + 127) / 128;` narrows an int64_t, so at
+274877906817 bytes records goes negative, the `records > 128` clamp never fires,
+and the RC byte and the whole allocation map come back zero.  measured by
+bisection on an APFS sparse file: 274877906816 gives RC 0x80, one byte more
+gives RC 0x00.  not macOS specific - any LP64 host - but sparse files made it
+cheap to reach here.  -Wshorten-64-to-32 flags it, and the makefiles do not use
+it.
+
+- the comment in os/linux/platform.cc about ISTRIP and the four console read
+sites contradict each other.  the comment says the 8th bit survives, and it does
+survive the line discipline - measured, 128 of 128 high bytes reach read()
+unchanged - but every read site then does `& 0x7F`, so the guest never sees one.
+feeding the UTF-8 bytes for e-acute, alpha, pound and em-dash to the emulator
+gives the guest C3 29 4E 31 42 23 62 00 14 after masking, and on the polled path
+a byte that masks to 0x00 is dropped entirely, because BDOS 6 reads 0 as "no
+character".  whether CP/M should see 8 bits is a real question; what is not in
+question is that the two statements cannot both stand.
+
+- the makefiles build with -Wall only, which catches none of the above.  -Wextra
+adds one warning (an unused parameter), -Wshorten-64-to-32 adds two more, and
+one of those two is the 256 GiB bug.  -Wconversion adds 125 more that are the
+deliberate Z80 mod-256 wraps and are not worth chasing.
+
+- there is no macOS release path and the pieces that would make one do not work.
+`make STATIC=1` cannot link at all: the Apple linker has no crt0.o and there is
+no static libc or libc++.  `make shared` writes libqkz80.so with a bare install
+name that dyld cannot resolve from anywhere, and Apple's linker prefers it over
+libqkz80.a in the same -L directory, so a consumer links clean and aborts at
+exec; `make install-lib` then points qkz80.pc at it.  cpack names the archive
+cpmemu-4.6.0-Darwin.tar.gz with no architecture, and the same is true of every
+non-Windows platform, so linux amd64 and arm64 collide identically.  none of
+this breaks CI today, because .github/workflows/release.yml builds on
+ubuntu-latest and ubuntu-24.04-arm only - they are traps for whoever adds a
+macOS job.  a downloaded binary would also need notarizing or the user needs
+`xattr -d com.apple.quarantine`: measured, a build tagged with the quarantine
+attribute is refused by spctl and killed on exec.
+
+- tests/8080EXM.COM is in the tree, is referenced by nothing, and fails: 25 of
+25 groups mismatch in Z80 mode and 20 of 25 under --8080.  zexdoc and zexall
+pass 67 groups each with no mismatches, so the Z80 core is not in question; this
+is 8080 flag semantics.  either wire it into tests/run_tests.sh and fix what it
+finds, or say in tests/README.md why it is not run.
+
+- the 14 tests/*.cc unit tests are built by nothing - not run_tests.sh, not any
+make target - and compiled binaries for some of them are committed beside the
+sources.  either wire them in or delete them and the stale binaries.  the ADM-3A
+to ANSI output translator has no test at all either: every expected string in
+the suite is plain ASCII, so nothing ever puts a byte into it that changes state.
 
 - there is no issue tracker or TODO convention in this repo (docs/archive holds
 stale narrative notes, and README.md has no Contributing section), which is why

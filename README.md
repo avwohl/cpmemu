@@ -2,7 +2,7 @@
 
 A CP/M 2.2 operating system emulator that runs legacy 8-bit CP/M applications on modern systems. Features both Intel 8080 and Zilog Z80 CPU emulation with comprehensive BDOS/BIOS support.
 
-**Supported Platforms:** Linux (x64, ARM64) and Windows (x64)
+**Supported Platforms:** Linux (x64, ARM64), macOS (arm64) and Windows (x64)
 
 cpmemu emulates BIOS and BDOs calls and translates them to Unix.  Most emulators
 have a file on the OS containing a native CP/M file system.  Then, when

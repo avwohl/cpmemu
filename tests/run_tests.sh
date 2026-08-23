@@ -50,10 +50,46 @@ skipped=0
 tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
 
+# Run a command under a time limit, exiting 124 if it overruns, the way
+# timeout(1) does.
+#
+# timeout(1) is GNU coreutils and is in no BSD or macOS base system - on the Mac
+# this was written on it existed only because Homebrew coreutils was installed.
+# Without a bound the guard tests below stop being guards: a regression that
+# reinstates a spin would hang the suite rather than fail it, and check_zex
+# would have no cap at all. With a bare `timeout` and nothing providing it, all
+# three instead fail with "exited 127", which reads as an emulator bug.
+if command -v timeout >/dev/null 2>&1; then
+    run_bounded() { timeout "$@"; }
+elif command -v gtimeout >/dev/null 2>&1; then
+    run_bounded() { gtimeout "$@"; }
+else
+    run_bounded() {
+        local limit=$1 pid waited=0
+        shift
+        "$@" &
+        pid=$!
+        while kill -0 "$pid" 2>/dev/null; do
+            if [ "$waited" -ge "$limit" ]; then
+                kill -TERM "$pid" 2>/dev/null
+                wait "$pid" 2>/dev/null
+                return 124
+            fi
+            sleep 1
+            waited=$((waited + 1))
+        done
+        wait "$pid"
+    }
+fi
+
 # Render a file with control characters visible, so a CR/LF mismatch is
 # readable in the failure output instead of invisible.
+# Paths here are all script-generated under mktemp -d, so there is nothing for
+# the `--` that used to be here to protect against - and BSD sed took it for a
+# filename, so every FAIL printed "sed: --: No such file or directory" across
+# the output that was meant to explain the failure.
 show() {
-    sed -n l -- "$1" | sed 's/^/      /'
+    sed -n l "$1" | sed 's/^/      /'
 }
 
 # check <name> <program.com> <expected>
@@ -106,7 +142,7 @@ check_zex() {
     fi
 
     printf '      %s: running, about 7 minutes, cap %ss\n' "$name" "$zex_timeout"
-    timeout "$zex_timeout" "$emu" "$root/$prog" >"$out" 2>/dev/null </dev/null
+    run_bounded "$zex_timeout" "$emu" "$root/$prog" >"$out" 2>/dev/null </dev/null
     rc=$?
     groups=$(grep -c 'OK$' "$out")
     errors=$(grep -c 'ERROR' "$out")
@@ -209,15 +245,34 @@ check_drive() {
     fi
 }
 
-if ! command -v pasmo >/dev/null 2>&1; then
+# Assembling the drive mapping sources.
+#
+# pasmo is what tests/README.md names, but it is packaged almost nowhere - it is
+# not in Homebrew, so this whole group used to skip on any Mac.  z80asm (Bas
+# Wijnen's, which is in Homebrew and in Debian) takes these sources unchanged
+# and assembles all nine, so either will do.  A dialect that produced different
+# bytes could not pass quietly: every check below compares the guest's output
+# against an exact string, so a mis-assembled program fails rather than drifts.
+if command -v pasmo >/dev/null 2>&1; then
+    assembler=pasmo
+    assemble() { pasmo "$1" "$2"; }
+elif command -v z80asm >/dev/null 2>&1; then
+    assembler=z80asm
+    assemble() { z80asm -o "$2" "$1"; }
+else
+    assembler=
+fi
+
+if [ -z "$assembler" ]; then
     echo
-    echo "SKIP  drive mapping tests (pasmo not on PATH)"
-    skipped=$((skipped + 6))
+    echo "SKIP  drive mapping tests (no assembler: install pasmo or z80asm)"
+    # 25 checks live behind this gate, not the 6 an earlier version counted
+    skipped=$((skipped + 25))
 else
     echo
     asm_ok=1
     for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren cli_tail con_eof con_spin; do
-        if ! pasmo "$root/tests/$src.asm" "$tmp/$src.com" >"$tmp/asm.log" 2>&1; then
+        if ! assemble "$root/tests/$src.asm" "$tmp/$src.com" >"$tmp/asm.log" 2>&1; then
             echo "FAIL  assembling tests/$src.asm"
             sed 's/^/        /' <"$tmp/asm.log"
             failed=$((failed + 1))
@@ -370,7 +425,7 @@ else
         printf 'program = %s/con_eof.com\n' "$tmp" >"$tmp/eof.cfg"
         # timeout, not because the fix needs one, but so a regression that
         # reinstates the spin fails the suite instead of hanging it.
-        ( cd "$sb" && timeout 30 "$emu" "$tmp/eof.cfg" </dev/null ) >"$tmp/eofgot" 2>/dev/null
+        ( cd "$sb" && run_bounded 30 "$emu" "$tmp/eof.cfg" </dev/null ) >"$tmp/eofgot" 2>/dev/null
         if [ "$(cat "$tmp/eofgot")" = "0D 1A " ]; then
             printf 'PASS  console: EOF gives CR once, then ^Z\n'
             passed=$((passed + 1))
@@ -383,7 +438,7 @@ else
         # A program that ignores ^Z too must still be stopped rather than
         # left spinning on a stream that will never produce another byte.
         printf 'program = %s/con_spin.com\n' "$tmp" >"$tmp/spin.cfg"
-        if ( cd "$sb" && timeout 30 "$emu" "$tmp/spin.cfg" </dev/null ) \
+        if ( cd "$sb" && run_bounded 30 "$emu" "$tmp/spin.cfg" </dev/null ) \
                >/dev/null 2>"$tmp/spinerr"; then
             if grep -q 'reads past end of input' "$tmp/spinerr"; then
                 printf 'PASS  console: a reader that ignores ^Z is stopped\n'
@@ -405,6 +460,57 @@ else
             "ZONLY.TXT" 'ZZZ'
     fi
 fi
+
+# ---------------------------------------------------------------------------
+# POSIX console.
+#
+# The terminal layer in src/os/linux/platform.cc is unreachable through a pipe:
+# enable_raw_mode() returns at once when is_terminal() is false, and
+# stdin_has_data() answers false for anything that is not a tty by design, so a
+# redirected run never touches termios and BDOS 6 never sees a byte. Everything
+# above therefore runs with that whole layer switched off.
+#
+# tests/pty_console.cc gives cpmemu a real terminal instead - a pty whose master
+# this script's child writes the bytes a keyboard would send into - and compares
+# what the CP/M guest received. It runs the same guest programs as the Windows
+# harness, from tests/con_guests.h, so a case named the same on both platforms
+# can be read side by side. Its first case measures the raw mode itself and says
+# what the IEXTEN clear is worth on the machine running it, so a pass is never
+# just a green tick.
+# ---------------------------------------------------------------------------
+
+echo
+case $(uname -s) in
+    MINGW*|MSYS*|CYGWIN*)
+        echo "SKIP  posix console (tests/win_console.cc covers this on Windows)"
+        skipped=$((skipped + 1))
+        ;;
+    *)
+        ptylog=$tmp/pty.log
+        if ! ${CXX:-c++} -std=c++11 -Wall -Wextra -o "$tmp/pty_console" \
+                 "$here/pty_console.cc" >"$tmp/ptybuild.log" 2>&1; then
+            printf 'FAIL  posix console (pty_console.cc did not compile)\n'
+            sed 's/^/        /' <"$tmp/ptybuild.log" | head -15
+            failed=$((failed + 1))
+        else
+            "$tmp/pty_console" "$emu" >"$ptylog" 2>&1
+            # Its own totals line would double count against this script's
+            grep -v -e '^[0-9][0-9]* passed' -e '^$' "$ptylog"
+            # Counting only the verdicts it printed would let a launch that
+            # never happened pass as an empty success, which is the one failure
+            # this section cannot be allowed to have
+            if grep -q '^\(PASS\|FAIL\|SKIP\)  ' "$ptylog"; then
+                passed=$((passed + $(grep -c '^PASS  ' "$ptylog")))
+                failed=$((failed + $(grep -c '^FAIL  ' "$ptylog")))
+                skipped=$((skipped + $(grep -c '^SKIP  ' "$ptylog")))
+            else
+                printf 'FAIL  posix console (pty_console reported nothing)\n'
+                tail -5 "$ptylog" | sed 's/^/        /'
+                failed=$((failed + 1))
+            fi
+        fi
+        ;;
+esac
 
 # ---------------------------------------------------------------------------
 # Windows cross-compile.

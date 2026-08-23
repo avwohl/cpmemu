@@ -20,6 +20,69 @@ CPMEMU_ZEX_TIMEOUT=7200 tests/run_tests.sh --zex
 `make -C src test` runs three of the quick tests as an eyeball check with no
 assertions; `tests/run_tests.sh` is the one that can fail.
 
+## POSIX console tests
+
+`tests/pty_console.cc` is the counterpart for everything that is not Windows.
+The terminal layer in `src/os/linux/platform.cc` cannot be reached through a
+pipe: `enable_raw_mode()` returns immediately when `is_terminal()` is false, and
+`stdin_has_data()` answers false for anything that is not a tty by design, so a
+redirected run never touches termios and BDOS 6 never sees a byte. Every other
+test in this file therefore runs with that whole layer switched off.
+
+So this one allocates a pty, hands the slave to cpmemu as stdin, writes the
+bytes a keyboard would send into the master, and compares what the CP/M guest
+received. `tests/run_tests.sh` builds and runs it on any POSIX host.
+
+The guest programs live in `tests/con_guests.h` and are shared with the Windows
+harness, so a case named the same on both platforms runs the same code and the
+two results can be read side by side.
+
+The case it exists for is `^V` and `^O`. BSD and XNU gate `VLNEXT` and
+`VDISCARD` on `IEXTEN` outside the `ICANON` block, so without the `IEXTEN` clear
+in `enable_raw_mode()` the line discipline eats those two bytes before the guest
+sees them. Linux does not - `IEXTEN` is inert there once `ICANON` is off - which
+is why a Linux pty could never show that clear was load-bearing. Measured on
+macOS 27, arm64: with the mask as written every byte `0x01`-`0x1F` and `0x7F`
+reaches the guest; with `IEXTEN` left set, `0x0F` and `0x16` vanish and nothing
+else changes.
+
+The first case is a control that re-measures this wherever it runs, and prints
+what the clear was worth on that machine:
+
+```
+PASS  control: the raw mode lets every control byte through
+      note: without the IEXTEN clear this platform loses: 0F(^O) 16(^V)
+            so the ^V and ^O cases below are testing something real.
+```
+
+On Linux that note says the opposite, and the `^V` and `^O` cases below it are
+then known to be passing for free rather than passing on merit.
+
+Two things it deliberately does not do. It does not make the pty the child's
+controlling terminal, because nothing under test needs one and a hangup would
+otherwise kill the guest before it could report. And it delivers end of input
+through a file, a pipe or `/dev/null` rather than by closing the master - not
+because closing the master fails (measured on macOS, with no master fd left
+anywhere, `select()` reports the slave readable and `read()` returns 0) but
+because a file, a pipe and `/dev/null` are what a redirected run actually uses,
+and they are the cases nothing else on POSIX covers without an assembler.
+
+One trap worth knowing if you write a probe of your own here: a master fd that
+survives into the child keeps the terminal alive, so the reader blocks forever
+with no EOF and no error. That looks exactly like a platform that cannot report
+a hangup, and it is easy to conclude the wrong thing from it.
+
+What it cannot answer: writing into a pty steps past the terminal program
+itself. If Terminal.app or iTerm binds a key for its own use, these tests still
+pass and the user still loses the key. For that, press the keys:
+
+```bash
+c++ -std=c++11 -Wall -Wextra -o pty_console tests/pty_console.cc
+./pty_console --manual src/cpmemu
+```
+
+which runs a hex echo so each key prints what the guest received.
+
 ## Windows console tests
 
 `tests/win_console.cc` is the only part of the suite that cannot run on Linux.
@@ -143,10 +206,18 @@ All simple flag tests match tnylpo exactly:
 
 ## Assembler
 
-Tests are assembled with z88dk:
+The committed `.com` files under `tests/` were assembled with z88dk:
 ```bash
 z88dk.z88dk-z80asm -b test.asm
 cp test.bin test.com
+```
+
+The drive mapping sources are assembled at test time instead, so no binary for
+them is committed. `tests/run_tests.sh` uses `pasmo` if it is on `PATH` and
+`z80asm` otherwise, and skips the group when neither is:
+```bash
+brew install z80asm        # macOS; pasmo is not in Homebrew
+apt install z80asm         # or pasmo
 ```
 
 ## Known Issues
@@ -195,11 +266,16 @@ console layer or the file system, which have their own tests or none.
 The CRC hunt that used to sit here is finished; both exercisers pass clean.
 What is left is coverage of everything they do not reach:
 
-1. The console layer has no automated test at all. A pty-driven harness is
-   the missing piece - `stdin_has_data()` returns false for a non-tty, so a
-   pipe cannot drive BDOS 6 on POSIX.
-2. There is no BDOS function 10 line-editor test, despite it being the most
-   intricate console code in the emulator.
+1. The console layer now has `tests/pty_console.cc` on POSIX and
+   `tests/win_console.cc` on Windows, including two BDOS function 10
+   line-editor cases. What neither covers is a person actually pressing the
+   keys; both have a `--manual` mode for that and nobody has run the POSIX one
+   yet on a terminal program other than the one it was written on.
+2. The drive mapping group needs an assembler. It takes `pasmo` or `z80asm`,
+   which covers Homebrew and Debian, but on a machine with neither it still
+   skips 25 checks - more than half the suite. Committing those nine `.com`
+   files as byte arrays the way `tests/con_guests.h` does would de-gate it
+   entirely.
 3. The 14 `tests/*.cc` unit tests are not built or run by any make target.
 4. There is no CI job running any of this; `.github/workflows/release.yml`
-   builds and packages only.
+   builds and packages only, and only for Linux and Windows.

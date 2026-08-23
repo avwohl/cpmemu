@@ -237,10 +237,15 @@ make test
 ### Z80 Instruction Tests
 
 ```bash
-cd src
-timeout 180 ./cpmemu ../tests/zexdoc.com    # Documented instructions
-timeout 180 ./cpmemu ../tests/zexall.com    # All instructions (slower)
+tests/run_tests.sh --zex
 ```
+
+Do not put a short cap on these by hand. Each suite takes about seven minutes,
+and a 180 second limit - which an earlier version of this document recommended -
+stops about five instruction groups in and leaves partial output that reads like
+a finished run. That mistake is written up in `tests/README.md`. The runner caps
+each at an hour and reports a truncated run as a failure rather than a pass;
+override it with `CPMEMU_ZEX_TIMEOUT` if a slower machine needs longer.
 
 ### 8080 Tests
 
