@@ -115,12 +115,50 @@ keybindings - so README.md gives the settings.json snippet to unbind it by hand
 and points at Insert as the alternative. ^V is fine on linux and macOS now that
 IEXTEN is cleared.
 
-- still worth doing by hand, none of the above was tested on real hardware:
-assemble a loop on BDOS 6 with E=0FFh that prints the hex of whatever it gets,
-run it, press Ctrl+R, expect 12. on a mac also press Ctrl+V and Ctrl+O - those
-are the two that were coming back as nothing before the IEXTEN fix. on windows
-press the arrow keys and confirm the diamond codes, and press Insert and expect
-16.
+DONE - the console status calls were lying, because stdin_has_data() and
+console_getchar() read through two different layers. stdin_has_data() selects
+on the raw fd; console_getchar() went through getchar(). one read(2) pulls a
+whole burst into stdio's buffer, select() cannot see past the first byte, and
+BDOS 6, BDOS 11 and BIOS CONST then all answer "no character" while the rest of
+the input sits in that buffer. reproduced on a pty: writing 12 16 0F 1A in a
+single write() to a BDOS 6 poll loop delivered "12 " and then spun forever,
+three runs out of three. writing one more byte later unwedged it and the rest
+drained in order, which is what proves stdio was holding them and not the
+kernel. invisible when someone types one key at a time, which is exactly why
+the hand test below would never have caught it - it needs a paste, a fast
+typist, or any escape sequence. a POSIX arrow key is ESC [ A, so a
+WordStar-style program polling BDOS 6 took the ESC and then stalled with "[A"
+stuck in the buffer until the next keystroke: the POSIX counterpart of the
+windows arrow-key bug above.
+
+fixed by deleting the second buffer rather than trying to keep two of them in
+step. console_getchar() now takes one byte with read(2), so the kernel is the
+only place input is queued and select() is authoritative again. EINTR retries;
+a 0-byte read is EOF and returns -1, exactly as getchar() did - checked by
+diffing both builds byte for byte on an exhausted stdin. one syscall per
+character is free at console rates. the same split existed on the windows pipe
+path, PeekNamedPipe against getchar(), and is fixed the same way with _read().
+the windows console path never had it: _kbhit() and _getch() share the CRT's
+own console buffer. after the fix the same pty burst gives 12 16 0F 1A three
+runs out of three, and ESC [ A arrives as 1B 5B 41 instead of stalling.
+
+- still worth doing by hand on a mac and on windows. the POSIX half of this is
+now done: driving the BDOS 6 hex loop through a linux pty gives 12 for Ctrl+R,
+16 for Ctrl+V and 0F for Ctrl+O, which is the check this item asked for. what a
+linux pty cannot prove is the thing the IEXTEN fix was actually for, since
+BSD/XNU gates VLNEXT and VDISCARD on IEXTEN outside the ICANON block - so ^V
+and ^O still want a real mac. windows still needs a real console for the arrow
+keys and for Insert: the extended-key path sits behind is_terminal(), so
+redirected stdin cannot reach the diamond table at all. whatever harness gets
+written, it has to be a pty and not a pipe - stdin_has_data() returns false for
+a non-tty by design, so BDOS 6 never sees anything over a pipe on POSIX.
+
+- noticed while testing the above and deliberately left alone: BDOS 1 turns an
+EOF into CR, so a program looping on BDOS 1 over an exhausted stdin spins
+forever emitting carriage returns instead of ever finishing. long-standing, and
+byte-for-byte identical before and after the read(2) change, so it is not part
+of that fix - but it does mean any piped BDOS 1 test needs a sentinel byte such
+as ^Z to stop on.
 
 - tests/run_tests.sh does not run, and did not before any of this work. it has
 CRLF line endings, so bash dies on `line 3: $'\r': command not found` and then

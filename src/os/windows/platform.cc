@@ -143,8 +143,19 @@ int console_getchar() {
     }
 
     if (!is_terminal()) {
-        // For non-terminal, use standard getchar
-        return getchar();
+        // Read the pipe or file directly rather than through getchar().  The
+        // status check above asks PeekNamedPipe what the pipe holds, and a
+        // stdio buffer between the two would hide bytes 2..N of a burst from
+        // it: every status call would report "no character" while input sat
+        // in the buffer.  _read is the CRT's unbuffered layer, so the two
+        // agree.  init() has already put stdin in _O_BINARY, so this reads the
+        // same bytes getchar() did - only without the buffer.  The console
+        // path below never had the split: _kbhit() and _getch() already share
+        // the CRT's own console buffer.
+        unsigned char c;
+        int n = _read(_fileno(stdin), &c, 1);
+        if (n != 1) return -1;  // 0 is EOF, -1 is an error
+        return c;
     }
 
     // For console, use _getch() for unbuffered input

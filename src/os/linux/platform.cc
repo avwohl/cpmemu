@@ -9,6 +9,7 @@
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 
@@ -40,9 +41,11 @@ void enable_raw_mode() {
     }
 
     struct termios raw = original_termios;
-    // These are the same clears cfmakeraw() performs, spelled out by hand:
-    // cfmakeraw is gated behind __USE_MISC / _DARWIN_C_SOURCE and we build with a
-    // strict -std=c++11, so its visibility is not guaranteed on every target.
+    // These are the same clears cfmakeraw() performs, spelled out by hand.
+    // Not for visibility reasons - g++ predefines _GNU_SOURCE whatever -std
+    // says, so cfmakeraw is declared here - but because we want one clear fewer
+    // than it makes, and that is easier to see written out than subtracted
+    // afterwards.  See the c_cflag note below for which clear and why.
     // Disable canonical mode (line buffering), echo, and signal generation
     // ISIG disabled so ^C passes through to CP/M program instead of killing emulator
     // IEXTEN disabled so the line discipline stops eating VLNEXT (^V) and
@@ -85,10 +88,23 @@ bool stdin_has_data() {
     return select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv) > 0;
 }
 
+// Read through read(2) rather than getchar(), so that stdin_has_data() above
+// stays truthful.  select() reports what the kernel holds; a stdio buffer
+// between the two keeps bytes 2..N of a burst where select() cannot see them,
+// and every status call answers "no character" while the input sits waiting.
+// Bursts are ordinary: a paste, a fast typist, and every escape sequence - a
+// POSIX arrow key is ESC [ A, so a program polling BDOS 6 would take the ESC
+// and then stall with "[A" stuck in the buffer until the next keystroke.
+// One byte per read leaves the kernel as the only place input is queued.
 int console_getchar() {
-    int ch = getchar();
-    if (ch == EOF) return -1;
-    return ch;
+    for (;;) {
+        unsigned char c;
+        ssize_t n = read(STDIN_FILENO, &c, 1);
+        if (n == 1) return c;
+        if (n == 0) return -1;          // EOF
+        if (errno == EINTR) continue;   // a signal, not an error
+        return -1;
+    }
 }
 
 bool console_last_char_synthesized() {
