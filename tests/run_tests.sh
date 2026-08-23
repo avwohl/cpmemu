@@ -216,7 +216,7 @@ if ! command -v pasmo >/dev/null 2>&1; then
 else
     echo
     asm_ok=1
-    for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren cli_tail; do
+    for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren cli_tail con_eof con_spin; do
         if ! pasmo "$root/tests/$src.asm" "$tmp/$src.com" >"$tmp/asm.log" 2>&1; then
             echo "FAIL  assembling tests/$src.asm"
             sed 's/^/        /' <"$tmp/asm.log"
@@ -362,6 +362,42 @@ else
             "-X --bogus" ' -X --BOGUS'
         check_drive "cli: CP/M option tail is untouched" "$tmp/cli_tail.com" "$tmp/tail.cfg" \
             "TEST,TEST.COM/N/E" ' TEST,TEST.COM/N/E'
+
+        # --- end of console input -------------------------------------------
+        # The first read past the end still answers CR, so a part-typed line
+        # submits; after that it answers ^Z and a program that checks for it
+        # stops on its own.  Before this, BDOS 1 answered CR forever.
+        printf 'program = %s/con_eof.com\n' "$tmp" >"$tmp/eof.cfg"
+        # timeout, not because the fix needs one, but so a regression that
+        # reinstates the spin fails the suite instead of hanging it.
+        ( cd "$sb" && timeout 30 "$emu" "$tmp/eof.cfg" </dev/null ) >"$tmp/eofgot" 2>/dev/null
+        if [ "$(cat "$tmp/eofgot")" = "0D 1A " ]; then
+            printf 'PASS  console: EOF gives CR once, then ^Z\n'
+            passed=$((passed + 1))
+        else
+            printf 'FAIL  console: EOF gives CR once, then ^Z\n'
+            printf '    expected: 0D 1A \n    got:\n'; show "$tmp/eofgot"
+            failed=$((failed + 1))
+        fi
+
+        # A program that ignores ^Z too must still be stopped rather than
+        # left spinning on a stream that will never produce another byte.
+        printf 'program = %s/con_spin.com\n' "$tmp" >"$tmp/spin.cfg"
+        if ( cd "$sb" && timeout 30 "$emu" "$tmp/spin.cfg" </dev/null ) \
+               >/dev/null 2>"$tmp/spinerr"; then
+            if grep -q 'reads past end of input' "$tmp/spinerr"; then
+                printf 'PASS  console: a reader that ignores ^Z is stopped\n'
+                passed=$((passed + 1))
+            else
+                printf 'FAIL  console: a reader that ignores ^Z is stopped\n'
+                printf '        exited without the diagnostic\n'
+                failed=$((failed + 1))
+            fi
+        else
+            printf 'FAIL  console: a reader that ignores ^Z is stopped\n'
+            printf '        did not exit within 30s\n'
+            failed=$((failed + 1))
+        fi
 
         # With no drive_X at all, resolution must be what it always was.
         printf 'program = %s/drv_read.com\n' "$tmp" >"$tmp/nodrv.cfg"

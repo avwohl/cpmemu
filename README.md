@@ -192,6 +192,15 @@ A command-line flag overrides the config file: `--no-ctrl-c-exit` turns the exit
 off even when the config file sets `ctrl_c_exit = true`. This holds wherever the
 flag is written, before the config file or after it.
 
+### End of redirected input
+
+When stdin is a file or a pipe and it runs out, the first console read still
+returns CR, so a line the program was part way through submits. Every read
+after that returns `^Z`, CP/M's end-of-input character, which is what the BIOS
+console call has always returned — a program that checks for it stops on its
+own. A program that checks for neither is stopped after 1024 reads past the
+end, with a message on stderr, rather than being left to loop forever.
+
 ## Console and Keyboard
 
 ### The ^C Escape Hatch

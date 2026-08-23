@@ -164,10 +164,31 @@ static bool check_ctrl_c_exit(int ch) {
 // keystroke and must not be handed a NUL the user never typed - so skip it and
 // wait for the next key.  On POSIX nothing is ever synthesized and this is a
 // straight pass-through.
+// Consecutive blocking console reads that came back at end of input.
+// Redirected input runs out, and a program that keeps reading past that point
+// would otherwise never stop - BDOS 1 hands back CR each time, so the loop is
+// not even quiet about it.  Reset by any real keystroke or byte.
+static int consecutive_console_eof = 0;
+static const int CONSOLE_EOF_LIMIT = 1024;
+
 static int console_getchar_blocking() {
   int ch = platform::console_getchar();
   while (ch == 0 && platform::console_last_char_synthesized()) {
     ch = platform::console_getchar();
+  }
+  if (ch == -1 || ch == EOF) {
+    if (++consecutive_console_eof >= CONSOLE_EOF_LIMIT) {
+      // Nothing is going to change: stdin is finished and the guest is still
+      // asking.  Leaving is better than spinning, and it is what a warm boot
+      // amounts to here anyway.
+      fprintf(stderr, "\n[Exiting: %d console reads past end of input]\n",
+              consecutive_console_eof);
+      do_save_memory();
+      platform::disable_raw_mode();
+      exit(0);
+    }
+  } else {
+    consecutive_console_eof = 0;
   }
   return ch;
 }
@@ -1544,7 +1565,12 @@ void CPMEmulator::bdos_write_string() {
 
 void CPMEmulator::bdos_read_console() {
   int ch = console_getchar_blocking();
-  if (ch == -1 || ch == EOF) ch = '\r';  // EOF becomes CR (Enter) for non-interactive use
+  // The first read past the end of input still answers CR, so a line the
+  // guest was part way through submits and nothing that worked before
+  // changes.  After that it answers ^Z, which is CP/M's end-of-input
+  // character and what BIOS CONIN here has always returned - a program that
+  // checks for it now stops on its own instead of reading CR forever.
+  if (ch == -1 || ch == EOF) ch = (consecutive_console_eof == 1) ? '\r' : 0x1A;
   check_ctrl_c_exit(ch);  // Track ^C for exit, pass through to program
   if (ch == '\n') ch = '\r';  // Convert LF to CR for CP/M
   cpu->set_reg8(ch & 0x7F, qkz80::reg_A);

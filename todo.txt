@@ -19,12 +19,6 @@ but not built. it uses only calls the same file already makes elsewhere, and
 init() has already put stdin in _O_BINARY so it reads the same bytes getchar()
 did, but the next windows build is its first real compile.
 
-- BDOS 1 turns an EOF into CR, so a program looping on BDOS 1 over an
-exhausted stdin spins forever emitting carriage returns instead of ever
-finishing. long-standing, and unchanged by the read(2) work. it also means any
-piped BDOS 1 test needs a sentinel byte such as ^Z to stop on. worth deciding
-whether repeated EOF should instead terminate the program.
-
 - ctrl+up and ctrl+down are not in the windows extended-key table, so they miss
 the lookup, come back as a synthesized 0, and are swallowed - the user sees
 nothing. ctrl+left and ctrl+right are mapped, to ^A and ^F. README.md documents
