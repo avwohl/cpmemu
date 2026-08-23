@@ -164,6 +164,133 @@ check "DJNZ loop"                 tests/test_djnz.com   '321\r\n'
 check "N flag"                    tests/test_n_flag.com '20\r\n02\r\n00\r\n'
 check "flag comparison (tflags)"  tests/tflags.com      '94\r\n51\r\n10\r\n3E\r\n'
 
+# ---------------------------------------------------------------------------
+# Drive mapping (BDOS 14/15/17/18/22/24 against drive_X directories).
+#
+# These need an assembler, because committing a .com for each would put five
+# more opaque binaries in the tree.  pasmo is what tests/README.md names; if
+# it is missing the whole group skips rather than failing.
+# ---------------------------------------------------------------------------
+
+drive_sandbox() {
+    sb=$tmp/sb
+    rm -rf "$sb"
+    mkdir -p "$sb/a" "$sb/b"
+    printf 'AAA' >"$sb/a/hello.txt"
+    printf 'BBB' >"$sb/b/hello.txt"
+    printf 'CCC' >"$sb/b/other.txt"
+    printf 'ZZZ' >"$sb/zonly.txt"      # cwd decoy: must never be reached from a mapped drive
+    { echo "drive_A = $sb/a"; echo "drive_B = $sb/b"; } >"$sb/drives.cfg"
+}
+
+# check_drive <name> <program.com> <cfg> <arg> <expected-stdout>
+check_drive() {
+    local name=$1 prog=$2 cfg=$3 arg=$4 expected=$5
+    local got=$tmp/dgot want=$tmp/dwant rc
+
+    ( cd "$sb" && "$emu" "$cfg" $arg ) >"$got" 2>"$tmp/derr"
+    rc=$?
+    printf '%b' "$expected" >"$want"
+
+    if [ $rc -ne 0 ]; then
+        printf 'FAIL  %s\n        emulator exited %d\n' "$name" "$rc"
+        sed 's/^/        /' <"$tmp/derr"
+        failed=$((failed + 1))
+        return
+    fi
+    if cmp -s "$want" "$got"; then
+        printf 'PASS  %s\n' "$name"
+        passed=$((passed + 1))
+    else
+        printf 'FAIL  %s\n' "$name"
+        printf '    expected:\n'; show "$want"
+        printf '    got:\n';      show "$got"
+        failed=$((failed + 1))
+    fi
+}
+
+if ! command -v pasmo >/dev/null 2>&1; then
+    echo
+    echo "SKIP  drive mapping tests (pasmo not on PATH)"
+    skipped=$((skipped + 6))
+else
+    echo
+    asm_ok=1
+    for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren; do
+        if ! pasmo "$root/tests/$src.asm" "$tmp/$src.com" >"$tmp/asm.log" 2>&1; then
+            echo "FAIL  assembling tests/$src.asm"
+            sed 's/^/        /' <"$tmp/asm.log"
+            failed=$((failed + 1))
+            asm_ok=0
+        fi
+    done
+    if [ $asm_ok -eq 1 ]; then
+        drive_sandbox
+        cfg=$sb/drives.cfg
+
+        # An explicit drive letter picks the directory, and the two drives
+        # hold different bytes under the same CP/M name.
+        printf 'program = %s/drv_read.com\n' "$tmp" >"$tmp/read.cfg"
+        cat "$cfg" >>"$tmp/read.cfg"
+        check_drive "drive: A:HELLO.TXT reads A" "$tmp/drv_read.com" "$tmp/read.cfg" "A:HELLO.TXT" 'AAA'
+        check_drive "drive: B:HELLO.TXT reads B" "$tmp/drv_read.com" "$tmp/read.cfg" "B:HELLO.TXT" 'BBB'
+
+        # The one that matters most: a mapped drive must not fall back to the
+        # working directory.  zonly.txt exists only there, so a fallback would
+        # report success on the wrong file.
+        check_drive "drive: no fallback to cwd" "$tmp/drv_read.com" "$tmp/read.cfg" "B:ZONLY.TXT" 'NF'
+
+        # BDOS 14 selects B, then an FCB with dr=0 must follow it.
+        printf 'program = %s/drv_sel.com\n' "$tmp" >"$tmp/sel.cfg"
+        cat "$cfg" >>"$tmp/sel.cfg"
+        check_drive "drive: BDOS 14 sets the default" "$tmp/drv_sel.com" "$tmp/sel.cfg" "" 'BBB'
+
+        # Search is scoped to the drive: B has two files, and the cwd decoy is
+        # not among them.
+        printf 'program = %s/drv_dir.com\n' "$tmp" >"$tmp/dir.cfg"
+        cat "$cfg" >>"$tmp/dir.cfg"
+        check_drive "drive: search scopes to the drive" "$tmp/drv_dir.com" "$tmp/dir.cfg" "B:" \
+            'OTHER   TXT\r\nHELLO   TXT\r\n'
+
+        # Login vector reports exactly the configured drives.
+        printf 'program = %s/drv_login.com\n' "$tmp" >"$tmp/login.cfg"
+        cat "$cfg" >>"$tmp/login.cfg"
+        check_drive "drive: login vector" "$tmp/drv_login.com" "$tmp/login.cfg" "" '0003'
+
+        # Make writes into the drive directory, not the working directory.
+        printf 'program = %s/drv_make.com\n' "$tmp" >"$tmp/make.cfg"
+        cat "$cfg" >>"$tmp/make.cfg"
+        check_drive "drive: make lands on the drive" "$tmp/drv_make.com" "$tmp/make.cfg" "B:NEW.TXT" 'MADE'
+        if [ -f "$sb/b/new.txt" ] && [ ! -f "$sb/new.txt" ]; then
+            printf 'PASS  drive: make wrote to B, not to the cwd\n'
+            passed=$((passed + 1))
+        else
+            printf 'FAIL  drive: make wrote to B, not to the cwd\n'
+            [ -f "$sb/b/new.txt" ] || printf '        missing %s\n' "$sb/b/new.txt"
+            [ -f "$sb/new.txt" ] && printf '        stray %s\n' "$sb/new.txt"
+            failed=$((failed + 1))
+        fi
+
+        # A rename on a mapped drive stays inside it, and must not plant a
+        # drive-less alias that answers for other drives too.
+        printf 'program = %s/drv_ren.com\n' "$tmp" >"$tmp/ren.cfg"
+        cat "$cfg" >>"$tmp/ren.cfg"
+        check_drive "drive: rename stays on the drive" "$tmp/drv_ren.com" "$tmp/ren.cfg" \
+            "B:OTHER.TXT RENAMED.TXT" 'REN'
+        printf 'program = %s/drv_read.com\n' "$tmp" >"$tmp/rd2.cfg"
+        cat "$cfg" >>"$tmp/rd2.cfg"
+        check_drive "drive: renamed file readable on B" "$tmp/drv_read.com" "$tmp/rd2.cfg" \
+            "B:RENAMED.TXT" 'CCC'
+        check_drive "drive: rename leaks no cross-drive alias" "$tmp/drv_read.com" "$tmp/rd2.cfg" \
+            "A:RENAMED.TXT" 'NF'
+
+        # With no drive_X at all, resolution must be what it always was.
+        printf 'program = %s/drv_read.com\n' "$tmp" >"$tmp/nodrv.cfg"
+        check_drive "drive: none configured behaves as before" "$tmp/drv_read.com" "$tmp/nodrv.cfg" \
+            "ZONLY.TXT" 'ZZZ'
+    fi
+fi
+
 if [ $run_zex -eq 1 ]; then
     echo
     check_zex "zexdoc (documented instructions)" tests/zexdoc.com

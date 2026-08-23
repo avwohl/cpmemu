@@ -24,6 +24,7 @@ so a typo produces no error at all.
 | `printer` | File to receive printer output. |
 | `aux_input` | File to read for AUX input. |
 | `aux_output` | File to receive AUX output. |
+| `drive_A` … `drive_P` | Host directory behind a CP/M drive letter. |
 
 `$VAR` and `${VAR}` are expanded in every value. An unset variable expands to
 nothing, so `${MISSING}/mbasic.com` becomes `/mbasic.com` and fails with a
@@ -80,24 +81,57 @@ elsewhere in the repo. None of them do anything:
 ```ini
 *.BAS = text                  # no path: registers the path "text", never opens
 *.BAS = /some/dir/*.bas text  # no wildcard substitution on the Unix side
-drive_A = .                   # drive_X is not a directive at all
-drive_B = /some/dir           # becomes a mapping for a file named DRIVE_B
 verbose = 0                   # not a directive; becomes a mapping named VERBOSE
 args = TEST.BAS               # not a directive
 ```
 
 To set the mode for a whole class of files, use `default_mode`. To expose a
-directory of files, `cd` into it: a name with no mapping is looked up
-lowercased in the working directory, which is how a directory of `.bas` files
-is normally reached.
+directory of files, either give it a drive letter (below) or `cd` into it: a
+name with no mapping is looked up lowercased in the working directory.
 
 ```ini
 default_mode = text
 cd = /path/to/my/basic/files
 ```
 
-`todo.txt` records per-drive mapping, wildcard Unix paths and mode-only
-mappings as missing features.
+`todo.txt` records wildcard Unix paths and mode-only mappings as missing.
+
+## Drives
+
+`drive_A` through `drive_P` back a CP/M drive letter with a host directory:
+
+```ini
+drive_A = ${HOME}/cpm/work
+drive_B = ${HOME}/cpm/basic
+```
+
+`B:PROG.BAS` then resolves inside `drive_B`, `DIR B:` lists that directory
+and nothing else, and a file made on `B:` is written there. The lookup tries
+the lowercased name first, then the name as CP/M spells it.
+
+**A configured drive is confined to its directory.** If `B:MISSING.TXT` is
+not in `drive_B`, the open fails — it does not fall back to the working
+directory and quietly open something else. That fallback is what makes a
+wrong file look like a right one.
+
+**An unconfigured drive is the working directory.** All sixteen start that
+way, so a config with no `drive_` line behaves exactly as it did before
+drives existed. Real CP/M would answer `Bdos Err On X: Select` for a drive
+with no disk; this emulator has no disks and every letter has always meant
+the working directory, so making unconfigured drives fatal would break
+command lines that work today. The divergence is deliberate.
+
+Two encodings meet here and the config uses neither directly: the drive byte
+in an FCB is 1-based with 0 meaning "the selected drive", while BDOS 14 and
+BDOS 25 are 0-based. `drive_A` is simply drive A.
+
+`BDOS 24` (login vector) reports A plus every configured or selected drive —
+not all sixteen, which would send `STAT DSK:` walking drives that are not
+there.
+
+Note that `cpmemu prog.com B:FILE.TXT` has always parsed the `B:` into the
+FCB; before drives it was parsed and ignored. With `drive_B` configured that
+argument now resolves inside B's directory.
 
 ## Where the CP/M binaries go
 

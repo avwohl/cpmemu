@@ -103,6 +103,12 @@ program = ${HOME}/cpm/mbasic.com
 drive_B = $HOME/basic_programs
 ```
 
+`drive_A` through `drive_P` back a CP/M drive letter with a host directory.
+A configured drive is confined to it: `B:MISSING.TXT` fails rather than
+falling back to the working directory. An unconfigured drive is the working
+directory, which is what every drive letter was before this existed. See
+`examples/README.md` for the full rules.
+
 ## Example Configuration Files
 
 ### MBASIC with Test Suite

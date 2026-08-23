@@ -268,6 +268,14 @@ private:
   qkz80* cpu;
   qkz80_uint8 current_drive;
   qkz80_uint8 current_user;
+  // Host directory backing each CP/M drive, index 0 = A: through 15 = P:.
+  // An empty string means the drive is not configured, which is the default
+  // for all sixteen and makes every lookup behave exactly as it did before
+  // drives existed: relative to the process working directory.
+  std::string drive_dirs[16];
+  // Bit 0 = A: .. bit 15 = P:.  A drive is logged in once it is configured
+  // or selected.  A: is always logged in, as on a real machine that booted.
+  qkz80_uint16 login_vector;
   qkz80_uint16 current_dma;
   bool debug;
   FileMode default_mode;
@@ -293,7 +301,27 @@ private:
   bool printer_echo;       // ^P: mirror console output to printer_file
 
   // Directory search state for BDOS 17/18
-  std::vector<std::string> search_results;  // List of matching files
+  // One directory hit.  The host path and the CP/M name are kept separately
+  // on purpose: the path is what gets stat'ed and opened, the name is what
+  // goes into the directory entry.  Deriving the name from the path - which
+  // is what this used to do - loses it whenever the two differ, and they
+  // always differ for a mapping or a drive directory.
+  struct SearchResult {
+    std::string path;
+    char name[8];
+    char ext[3];
+  };
+  std::vector<SearchResult> search_results;  // List of matching files
+  static SearchResult make_search_result(const std::string& path,
+                                         const char name[8], const char ext[3]) {
+    SearchResult r;
+    r.path = path;
+    memcpy(r.name, name, 8);
+    memcpy(r.ext, ext, 3);
+    return r;
+  }
+  // Write one 32-byte CP/M directory entry at the current DMA address.
+  void write_dir_entry(const SearchResult& r);
   size_t search_index;                       // Current position in search
   std::string search_pattern;                // FCB pattern for search
   qkz80_uint8 search_user;                   // User number for search
@@ -310,7 +338,7 @@ public:
   int bios_disk_mode;
 
   CPMEmulator(qkz80* acpu, bool adebug = false)
-    : cpu(acpu), current_drive(0), current_user(0),
+    : cpu(acpu), current_drive(0), current_user(0), login_vector(0x0001),
       current_dma(DEFAULT_DMA), debug(adebug),
       default_mode(MODE_AUTO), default_eol_convert(true),
       printer_file(nullptr), aux_in_file(nullptr),
@@ -344,8 +372,33 @@ public:
 private:
   // File I/O helpers
   FileMode detect_file_mode(const std::string& filename, const std::string& unix_path);
-  std::string find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out, bool* eol_out);
+  std::string find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out, bool* eol_out,
+                                qkz80_uint8 fcb_drive);
   bool match_pattern(const std::string& pattern, const std::string& text);
+
+  // Decode an FCB drive byte to a 0-based drive index.
+  // The two CP/M drive encodings are different and must not be conflated:
+  // FCB byte 0 is 1-based with 0 meaning "whatever drive is selected"
+  // (0 = default, 1 = A:, ... 16 = P:), while BDOS 14 and BDOS 25 are
+  // 0-based (0 = A:).  Anything out of range - including the 0x3F '?' that
+  // a search FCB may carry to mean "match every entry" - falls back to the
+  // current drive rather than indexing off the end of the table.
+  int fcb_drive_index(qkz80_uint8 dr) const {
+    if (dr == 0 || dr > 16) return current_drive;
+    return dr - 1;
+  }
+  // Configured host directory for a decoded index, or "" when unconfigured.
+  const std::string& drive_dir(int idx) const { return drive_dirs[idx & 15]; }
+  // Join a drive directory to a leaf name.  Forward slash on purpose: every
+  // path in the configs is written that way and Windows accepts it.
+  static std::string join_path(const std::string& dir, const std::string& leaf) {
+    if (dir.empty()) return leaf;
+    std::string d = dir;
+    while (d.size() > 1 && (d[d.size() - 1] == '/' || d[d.size() - 1] == '\\')) {
+      d.erase(d.size() - 1);
+    }
+    return d + "/" + leaf;
+  }
 
   // EOL and EOF handling
   size_t read_with_conversion(OpenFile& of, uint8_t* buffer, size_t size);
@@ -418,7 +471,6 @@ private:
   // Helper functions
   std::string fcb_to_filename(qkz80_uint16 fcb_addr);
   void filename_to_fcb(const std::string& filename, qkz80_uint16 fcb_addr);
-  std::string find_unix_file(const std::string& cpm_name);
   void read_fcb(qkz80_uint16 addr, FCB* fcb);
   void write_fcb(qkz80_uint16 addr, const FCB* fcb);
   std::string normalize_cpm_filename(const std::string& name);
@@ -646,7 +698,8 @@ bool CPMEmulator::match_pattern(const std::string& pattern, const std::string& t
   return false;
 }
 
-std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out, bool* eol_out) {
+std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out,
+                                           bool* eol_out, qkz80_uint8 fcb_drive) {
   std::string normalized = normalize_cpm_filename(cpm_name);
 
   // Check new file mappings with patterns
@@ -672,6 +725,28 @@ std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode
     *mode_out = detect_file_mode(normalized, it->second);
     *eol_out = default_eol_convert;
     return it->second;
+  }
+
+  // A configured drive is a directory, and the search is confined to it.
+  // The confinement is the point: without the early return below, opening
+  // B:MISSING.TXT would fall through to the working directory and quietly
+  // succeed on an unrelated file, which reads to the guest as success.
+  // An unconfigured drive skips this block entirely, so with no drive_X in
+  // the config every lookup resolves exactly as it did before drives.
+  const std::string& ddir = drive_dir(fcb_drive_index(fcb_drive));
+  if (!ddir.empty()) {
+    std::string lower_leaf;
+    for (char c : normalized) lower_leaf += tolower(c);
+    const std::string candidates[2] = { join_path(ddir, lower_leaf),
+                                        join_path(ddir, normalized) };
+    for (int i = 0; i < 2; i++) {
+      if (platform::get_file_type(candidates[i].c_str()) != platform::FileType::NotFound) {
+        *mode_out = detect_file_mode(normalized, candidates[i]);
+        *eol_out = default_eol_convert;
+        return candidates[i];
+      }
+    }
+    return "";  // Confined: never fall back to the working directory
   }
 
   // Try lowercase version in current directory
@@ -843,10 +918,18 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
     std::string value = line.substr(eq + 1);
 
     // Trim key and value
-    key = key.substr(0, key.find_last_not_of(" \t") + 1);
-    key = key.substr(key.find_first_not_of(" \t"));
-    value = value.substr(value.find_first_not_of(" \t"));
-    value = value.substr(0, value.find_last_not_of(" \t") + 1);
+    // find_first_not_of returns npos for an all-blank field, and substr(npos)
+    // throws.  A directive with an empty value is a plausible typo, so trim
+    // defensively rather than aborting the emulator on it.
+    size_t kb = key.find_first_not_of(" \t");
+    key = (kb == std::string::npos) ? "" : key.substr(kb, key.find_last_not_of(" \t") - kb + 1);
+    size_t vb = value.find_first_not_of(" \t");
+    value = (vb == std::string::npos) ? "" : value.substr(vb, value.find_last_not_of(" \t") - vb + 1);
+
+    if (key.empty()) {
+      fprintf(stderr, "Config line %d: missing key before '='\n", line_num);
+      continue;
+    }
 
     // Expand environment variables in value
     value = expand_env_vars(value);
@@ -882,6 +965,33 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
       set_aux_input_file(value);
     } else if (key == "aux_output") {
       set_aux_output_file(value);
+    } else if (key.size() == 7 && (key[5] == '_' || key[5] == ' ') &&
+               (key.compare(0, 5, "drive") == 0 || key.compare(0, 5, "DRIVE") == 0 ||
+                key.compare(0, 5, "Drive") == 0)) {
+      // drive_A .. drive_P: back a CP/M drive letter with a host directory.
+      // Matched before the file-mapping fallback below, which is where these
+      // used to land - a drive_B line silently became a mapping for a CP/M
+      // file called DRIVE_B and did nothing.
+      char letter = toupper(key[6]);
+      if (letter < 'A' || letter > 'P') {
+        fprintf(stderr, "Config line %d: '%s' is not a drive between A and P\n",
+                line_num, key.c_str());
+      } else if (value.empty()) {
+        fprintf(stderr, "Config line %d: drive %c: given no directory\n",
+                line_num, letter);
+      } else {
+        int idx = letter - 'A';
+        if (platform::get_file_type(value.c_str()) != platform::FileType::Directory) {
+          // Not fatal: the directory may be created before the guest runs.
+          fprintf(stderr, "Config line %d: warning: drive %c: '%s' is not a directory\n",
+                  line_num, letter, value.c_str());
+        }
+        drive_dirs[idx] = value;
+        login_vector |= (qkz80_uint16)(1u << idx);
+        if (debug) {
+          fprintf(stderr, "Drive %c: -> %s\n", letter, value.c_str());
+        }
+      }
     } else {
       // Assume it's a file mapping: pattern = path [mode]
       FileMode mode = default_mode;
@@ -1105,40 +1215,6 @@ void CPMEmulator::filename_to_fcb(const std::string& filename, qkz80_uint16 fcb_
       mem[fcb_addr + 9 + i] = ' ';
     }
   }
-}
-
-std::string CPMEmulator::find_unix_file(const std::string& cpm_name) {
-  // First check file mapping
-  std::string normalized = normalize_cpm_filename(cpm_name);
-
-  auto it = file_map.find(normalized);
-  if (it != file_map.end()) {
-    return it->second;
-  }
-
-  // Try lowercase version in current directory
-  std::string lowercase;
-  for (char c : normalized) {
-    lowercase += tolower(c);
-  }
-
-  // Check if file exists
-  if (platform::get_file_type(lowercase.c_str()) != platform::FileType::NotFound) {
-    return lowercase;
-  }
-
-  // Try as-is
-  if (platform::get_file_type(normalized.c_str()) != platform::FileType::NotFound) {
-    return normalized;
-  }
-
-  // Try with ./ prefix
-  std::string with_prefix = "./" + lowercase;
-  if (platform::get_file_type(with_prefix.c_str()) != platform::FileType::NotFound) {
-    return with_prefix;
-  }
-
-  return "";  // Not found
 }
 
 bool CPMEmulator::handle_pc(qkz80_uint16 pc) {
@@ -1643,7 +1719,14 @@ void CPMEmulator::bdos_get_current_drive() {
 }
 
 void CPMEmulator::bdos_set_drive() {
+  // E is 0-based here (0 = A:), unlike the 1-based FCB drive byte.
   current_drive = cpu->get_reg8(qkz80::reg_E) & 0x0F;
+  login_vector |= (qkz80_uint16)(1u << current_drive);
+  // The low nibble of 0x0004 is the current drive and the BDOS keeps it up
+  // to date, so a program that reads it there sees the same answer BDOS 25
+  // gives.  It was written once at startup and never updated before.
+  qkz80_uint8* mem = cpu->get_mem();
+  mem[DRVUSER_ADDR] = (mem[DRVUSER_ADDR] & 0xF0) | current_drive;
   if (debug) {
     fprintf(stderr, "Set drive to %c:\n", 'A' + current_drive);
   }
@@ -1676,7 +1759,8 @@ void CPMEmulator::bdos_open_file() {
 
   FileMode mode;
   bool eol_convert;
-  std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert);
+  std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert,
+                                            cpu->get_mem()[fcb_addr]);
 
   if (debug || debug_bdos_funcs.count(15)) {
     fprintf(stderr, "BDOS Open: '%s' -> '%s' (mode: %s)\n", filename.c_str(),
@@ -1855,6 +1939,15 @@ void CPMEmulator::bdos_make_file() {
     unix_name += tolower(c);
   }
 
+  // Make does not go through find_unix_file_ex - there is nothing to find
+  // yet - so it has to apply the drive directory itself.  Without this a
+  // guest that makes B:FOO.TXT and then opens B:FOO.TXT gets two different
+  // files: the make lands in the working directory, the open looks in B:.
+  const std::string& ddir = drive_dir(fcb_drive_index(cpu->get_mem()[fcb_addr]));
+  if (!ddir.empty()) {
+    unix_name = join_path(ddir, unix_name);
+  }
+
   FILE* fp = fopen(unix_name.c_str(), "w+b");
   if (!fp) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
@@ -1894,7 +1987,8 @@ void CPMEmulator::bdos_delete_file() {
 
   FileMode mode;
   bool eol_convert;
-  std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert);
+  std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert,
+                                            cpu->get_mem()[fcb_addr]);
 
   if (debug || debug_bdos_funcs.count(19)) {
     fprintf(stderr, "Delete file: %s -> %s\n", filename.c_str(),
@@ -1997,7 +2091,8 @@ void CPMEmulator::bdos_file_size() {
 
   FileMode mode;
   bool eol_convert;
-  std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert);
+  std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert,
+                                            cpu->get_mem()[fcb_addr]);
 
   if (unix_path.empty()) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error: file not found
@@ -2060,7 +2155,10 @@ void CPMEmulator::bdos_rename_file() {
 
   FileMode mode;
   bool eol_convert;
-  std::string old_path = find_unix_file_ex(old_name, &mode, &eol_convert);
+  // CP/M 2.2 takes the drive from the first FCB only and cannot rename a
+  // file onto another drive; the destination keeps the source's directory.
+  std::string old_path = find_unix_file_ex(old_name, &mode, &eol_convert,
+                                           cpu->get_mem()[fcb_addr]);
 
   if (old_path.empty()) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error: old file not found
@@ -2089,8 +2187,14 @@ void CPMEmulator::bdos_rename_file() {
   if (rename(old_path.c_str(), new_path.c_str()) != 0) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
   } else {
-    // Update file mapping
-    file_map[normalize_cpm_filename(new_name)] = new_path;
+    // Remember where the renamed file went, but only when the drive is not
+    // configured.  file_map has no drive dimension and is consulted before
+    // the drive directory, so an entry planted here for a file on B: would
+    // answer for A:NEWNAME too.  On a configured drive the rename stays
+    // inside that directory and the drive lookup finds it without help.
+    if (drive_dir(fcb_drive_index(cpu->get_mem()[fcb_addr])).empty()) {
+      file_map[normalize_cpm_filename(new_name)] = new_path;
+    }
     cpu->set_reg8(0, qkz80::reg_A);  // Success
   }
 }
@@ -2128,9 +2232,22 @@ void CPMEmulator::bdos_reset_disk() {
   }
   open_files.clear();
 
+  // A stale search now names files in a specific directory, so it cannot be
+  // allowed to outlive the reset.
+  search_results.clear();
+  search_index = 0;
+
   // Reset to drive A, user 0
   current_drive = 0;
   current_user = 0;
+  // Back to whatever the configuration logged in, dropping drives that were
+  // only reachable because BDOS 14 had selected them.
+  login_vector = 0x0001;
+  for (int i = 0; i < 16; i++) {
+    if (!drive_dirs[i].empty()) login_vector |= (qkz80_uint16)(1u << i);
+  }
+  qkz80_uint8* rmem = cpu->get_mem();
+  rmem[DRVUSER_ADDR] = 0x00;
 
   // No return value
 }
@@ -2204,9 +2321,10 @@ void CPMEmulator::bdos_search_first() {
   memcpy(pattern_name, &mem[fcb_addr + 1], 8);
   memcpy(pattern_ext, &mem[fcb_addr + 9], 3);
 
-  // Get drive from FCB (0 = default)
-  qkz80_uint8 fcb_drive = mem[fcb_addr];
-  (void)fcb_drive;  // We only support current directory
+  // A search is scoped to the FCB's drive.  An unconfigured drive scans ".",
+  // which is what every search did before drives existed.
+  const std::string& search_ddir = drive_dir(fcb_drive_index(mem[fcb_addr]));
+  std::string scan_dir = search_ddir.empty() ? std::string(".") : search_ddir;
 
   // Get user from FCB byte 0 for '?' user matching
   search_user = current_user;
@@ -2236,7 +2354,7 @@ void CPMEmulator::bdos_search_first() {
     if (!unix_to_cpm_83(mapping.cpm_pattern, file_name, file_ext)) continue;
 
     if (match_fcb_pattern(pattern_name, pattern_ext, file_name, file_ext)) {
-      search_results.push_back(mapping.unix_pattern);
+      search_results.push_back(make_search_result(mapping.unix_pattern, file_name, file_ext));
       // Remember this CP/M name to avoid duplicates
       std::string cpm_name = std::string(file_name, 8) + std::string(file_ext, 3);
       added_cpm_names.insert(cpm_name);
@@ -2256,13 +2374,13 @@ void CPMEmulator::bdos_search_first() {
     if (added_cpm_names.count(cpm_name)) continue;  // Already added
 
     if (match_fcb_pattern(pattern_name, pattern_ext, file_name, file_ext)) {
-      search_results.push_back(pair.second);
+      search_results.push_back(make_search_result(pair.second, file_name, file_ext));
       added_cpm_names.insert(cpm_name);
     }
   }
 
   // Scan current directory for files with valid CP/M names
-  std::vector<platform::DirEntry> dir_entries = platform::list_directory(".");
+  std::vector<platform::DirEntry> dir_entries = platform::list_directory(scan_dir.c_str());
   if (dir_entries.empty() && search_results.empty()) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
     return;
@@ -2281,7 +2399,8 @@ void CPMEmulator::bdos_search_first() {
     if (added_cpm_names.count(cpm_name)) continue;
 
     if (match_fcb_pattern(pattern_name, pattern_ext, file_name, file_ext)) {
-      search_results.push_back(entry.name);
+      search_results.push_back(make_search_result(join_path(scan_dir, entry.name),
+                                                 file_name, file_ext));
       added_cpm_names.insert(cpm_name);
     }
   }
@@ -2304,20 +2423,29 @@ void CPMEmulator::bdos_search_first() {
   // Bytes 12-15: extent info (EX, S1, S2, RC)
   // Bytes 16-31: allocation map
 
-  char file_name[8], file_ext[3];
-  unix_to_cpm_83(search_results[0], file_name, file_ext);
+  write_dir_entry(search_results[0]);
 
-  // Get file size for extent calculation
-  int64_t file_size = platform::get_file_size(search_results[0].c_str());
+  search_index = 1;  // Next call returns second result
+
+  // Return 0 (directory code) to indicate entry found in first 32 bytes of DMA
+  cpu->set_reg8(0, qkz80::reg_A);
+}
+
+// Write one 32-byte CP/M directory entry at the DMA address.
+// Byte 0 is the USER number, not the drive: CP/M 2.2 uses 0-15 for a user
+// and 0xE5 for an erased entry, and DIR, STAT and PIP all read it that way.
+void CPMEmulator::write_dir_entry(const SearchResult& r) {
+  qkz80_uint8* mem = cpu->get_mem();
+
+  int64_t file_size = platform::get_file_size(r.path.c_str());
   if (file_size < 0) file_size = 0;
   int records = (file_size + 127) / 128;  // Number of 128-byte records
   int rc = records > 128 ? 128 : records; // Record count in this extent
 
-  // Write directory entry at DMA
   memset(&mem[current_dma], 0, 32);
   mem[current_dma + 0] = search_user;  // User number
-  memcpy(&mem[current_dma + 1], file_name, 8);
-  memcpy(&mem[current_dma + 9], file_ext, 3);
+  memcpy(&mem[current_dma + 1], r.name, 8);
+  memcpy(&mem[current_dma + 9], r.ext, 3);
   mem[current_dma + 12] = 0;  // EX (extent)
   mem[current_dma + 13] = 0;  // S1
   mem[current_dma + 14] = 0;  // S2
@@ -2326,11 +2454,6 @@ void CPMEmulator::bdos_search_first() {
   for (int i = 16; i < 32; i++) {
     mem[current_dma + i] = (i - 16 < (records + 7) / 8) ? 0x01 : 0x00;
   }
-
-  search_index = 1;  // Next call returns second result
-
-  // Return 0 (directory code) to indicate entry found in first 32 bytes of DMA
-  cpu->set_reg8(0, qkz80::reg_A);
 }
 
 void CPMEmulator::bdos_search_next() {
@@ -2343,30 +2466,9 @@ void CPMEmulator::bdos_search_next() {
     return;
   }
 
-  qkz80_uint8* mem = cpu->get_mem();
-
-  // Build directory entry for next file
-  char file_name[8], file_ext[3];
-  unix_to_cpm_83(search_results[search_index], file_name, file_ext);
-
-  // Get file size
-  int64_t file_size = platform::get_file_size(search_results[search_index].c_str());
-  if (file_size < 0) file_size = 0;
-  int records = (file_size + 127) / 128;
-  int rc = records > 128 ? 128 : records;
-
-  // Write directory entry at DMA
-  memset(&mem[current_dma], 0, 32);
-  mem[current_dma + 0] = search_user;
-  memcpy(&mem[current_dma + 1], file_name, 8);
-  memcpy(&mem[current_dma + 9], file_ext, 3);
-  mem[current_dma + 12] = 0;
-  mem[current_dma + 13] = 0;
-  mem[current_dma + 14] = 0;
-  mem[current_dma + 15] = rc;
-  for (int i = 16; i < 32; i++) {
-    mem[current_dma + i] = (i - 16 < (records + 7) / 8) ? 0x01 : 0x00;
-  }
+  // Search Next needs no drive state: each result already carries its own
+  // path and name, so a BDOS 14 between First and Next cannot redirect it.
+  write_dir_entry(search_results[search_index]);
 
   search_index++;
 
@@ -2375,10 +2477,12 @@ void CPMEmulator::bdos_search_next() {
 }
 
 void CPMEmulator::bdos_get_login_vector() {
-  // Return bitmap of logged in drives
-  // For simplicity, say drive A is logged in
-  cpu->set_reg8(0x01, qkz80::reg_L);  // Drive A
-  cpu->set_reg8(0x00, qkz80::reg_H);
+  // Bitmap of logged-in drives, bit 0 = A: through bit 15 = P:.  A: is
+  // always in it; a drive joins when it is configured or selected.
+  // Deliberately not 0xFFFF: claiming all sixteen exist sends STAT DSK:
+  // walking drives that have no directory behind them.
+  cpu->set_reg8(login_vector & 0xFF, qkz80::reg_L);
+  cpu->set_reg8((login_vector >> 8) & 0xFF, qkz80::reg_H);
 }
 
 void CPMEmulator::bdos_get_allocation_vector() {
@@ -2473,12 +2577,15 @@ void CPMEmulator::bios_call(int offset) {
     if (debug || debug_bios_offsets.count(offset)) {
       fprintf(stderr, "BIOS SELDSK: drive %c\n", 'A' + drive);
     }
-    if (drive == 0) {
-      // Drive A: - return DPH address in HL
+    if (drive < 16) {
+      // Every drive letter is selectable, because an unconfigured drive is
+      // a synonym for the working directory rather than an absent disk.
+      // Telling the BIOS otherwise while the BDOS accepts B: would have the
+      // same emulator give two different answers about the same drive.
       cpu->set_reg8(DPH_ADDR & 0xFF, qkz80::reg_L);
       cpu->set_reg8((DPH_ADDR >> 8) & 0xFF, qkz80::reg_H);
     } else {
-      // Invalid drive - return 0
+      // Out of range - return 0
       cpu->set_reg8(0x00, qkz80::reg_L);
       cpu->set_reg8(0x00, qkz80::reg_H);
     }
