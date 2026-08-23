@@ -252,6 +252,8 @@ On Windows, a special key is translated to the WordStar diamond control code:
 | Delete | ^G |
 | Ctrl+Left | ^A |
 | Ctrl+Right | ^F |
+| Ctrl+Up | ^W |
+| Ctrl+Down | ^Z |
 
 A special key that is not in the table is swallowed rather than passed through.
 A translated PgDn does not count toward the ^C exit. At a function 10 prompt the

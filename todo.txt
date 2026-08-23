@@ -1,29 +1,22 @@
 Todo list.  Open items only - finished work is written up in the commit
 messages that made the changes, not kept here.
 
-- the console work still needs a hand test on a mac and on windows. the POSIX
-half is done: driving a BDOS 6 hex-echo loop through a linux pty gives 12 for
-Ctrl+R, 16 for Ctrl+V and 0F for Ctrl+O. what a linux pty cannot prove is the
-thing the IEXTEN clear was actually for, because BSD/XNU gates VLNEXT and
-VDISCARD on IEXTEN outside the ICANON block - so ^V and ^O want a real mac.
-windows needs a real console for the arrow keys and for Insert (expect 16):
-the extended-key path sits behind is_terminal(), so redirected stdin never
-reaches the diamond table at all. any harness has to be a pty and not a pipe,
-because stdin_has_data() returns false for a non-tty by design and BDOS 6
-therefore never sees anything over a pipe on POSIX.
+- the console work still needs running on a mac and on windows. everything
+that can be checked without them now is: the POSIX half is verified by driving
+a BDOS 6 hex-echo loop through a linux pty, which gives 12 for Ctrl+R, 16 for
+Ctrl+V and 0F for Ctrl+O, and tests/run_tests.sh cross-compiles the windows
+build so a change that breaks only that half cannot go unnoticed.
 
-- the windows half of the read(2) fix has never been compiled. there is no
-mingw cross-compiler on the development box, so console_getchar()'s
-_read(_fileno(stdin), ...) branch in src/os/windows/platform.cc was reviewed
-but not built. it uses only calls the same file already makes elsewhere, and
-init() has already put stdin in _O_BINARY so it reads the same bytes getchar()
-did, but the next windows build is its first real compile.
-
-- ctrl+up and ctrl+down are not in the windows extended-key table, so they miss
-the lookup, come back as a synthesized 0, and are swallowed - the user sees
-nothing. ctrl+left and ctrl+right are mapped, to ^A and ^F. README.md documents
-only the two that exist, so the docs are honest, but the pair is a gap worth
-filling if a WordStar user asks for it.
+what is left needs the hardware. a linux pty cannot prove the thing the IEXTEN
+clear was for, because BSD/XNU gates VLNEXT and VDISCARD on IEXTEN outside the
+ICANON block, so ^V and ^O want a real mac. windows needs a real console for
+the arrow keys, for Insert (expect 16) and for the ctrl+arrow pairs: the
+extended-key path sits behind is_terminal(), so redirected stdin never reaches
+the diamond table at all, and no cross-compile exercises _getch. wine is not a
+substitute - its console layer does not reproduce _getch/_kbhit faithfully
+enough for a pass to mean anything. any harness has to be a pty and not a
+pipe, because stdin_has_data() returns false for a non-tty by design and BDOS
+6 therefore never sees anything over a pipe on POSIX.
 
 - there is no issue tracker or TODO convention in this repo (docs/archive holds
 stale narrative notes, and README.md has no Contributing section), which is why

@@ -74,6 +74,22 @@ cd src
 mingw32-make -f Makefile.win
 ```
 
+### Cross-compiling for Windows from Linux
+
+Useful for checking that a change has not broken the Windows-only half of
+`src/os/windows/platform.cc`, which no Linux build touches:
+
+```bash
+sudo apt install g++-mingw-w64-x86-64
+cd src
+make -f Makefile.win CXX=x86_64-w64-mingw32-g++ AR=x86_64-w64-mingw32-ar
+```
+
+`tests/run_tests.sh` does this automatically into a temporary directory when
+the cross-compiler is on `PATH`, and skips the check when it is not. It proves
+the Windows code compiles; the console path still needs a real Windows console
+to exercise, because `_getch`/`_kbhit` only behave correctly there.
+
 ### Using CMake (Cross-Platform)
 
 **Prerequisites:**

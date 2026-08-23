@@ -103,8 +103,10 @@ static const ExtendedKey extended_keys[] = {
     { 0x51, 0x03,   -1 },  // PgDn       -> ^C
     { 0x52, 0x16,   -1 },  // Insert     -> ^V
     { 0x53, 0x07,   -1 },  // Delete     -> ^G
-    { 0x73, 0x01,   -1 },  // Ctrl+Left  -> ^A
-    { 0x74, 0x06,   -1 }   // Ctrl+Right -> ^F
+    { 0x73, 0x01,   -1 },  // Ctrl+Left  -> ^A  word left
+    { 0x74, 0x06,   -1 },  // Ctrl+Right -> ^F  word right
+    { 0x8D, 0x17,   -1 },  // Ctrl+Up    -> ^W  scroll up one line
+    { 0x91, 0x1A,   -1 }   // Ctrl+Down  -> ^Z  scroll down one line
 };
 
 static int pending_char = -1;         // second character of a translation, not read yet

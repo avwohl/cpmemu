@@ -406,6 +406,44 @@ else
     fi
 fi
 
+# ---------------------------------------------------------------------------
+# Windows cross-compile.
+#
+# os/windows/platform.cc is not built by any Linux or CI job, so a change that
+# breaks only the Windows half used to sit undetected until someone built on
+# Windows. A cross-compile catches that in seconds. It proves the code
+# compiles, nothing more - the console path still needs a real Windows console
+# to exercise.
+# ---------------------------------------------------------------------------
+
+echo
+if ! command -v x86_64-w64-mingw32-g++ >/dev/null 2>&1; then
+    echo "SKIP  windows cross-compile (x86_64-w64-mingw32-g++ not on PATH)"
+    skipped=$((skipped + 1))
+else
+    wintmp=$tmp/win
+    rm -rf "$wintmp"
+    mkdir -p "$wintmp"
+    cp -r "$root/src/." "$wintmp/"
+    rm -f "$wintmp"/*.o "$wintmp"/*.a "$wintmp"/cpmemu "$wintmp"/cpmemu.exe
+    if ( cd "$wintmp" && make -f Makefile.win \
+             CXX=x86_64-w64-mingw32-g++ AR=x86_64-w64-mingw32-ar ) \
+           >"$tmp/win.log" 2>&1 && [ -f "$wintmp/cpmemu.exe" ]; then
+        if grep -q 'warning:' "$tmp/win.log"; then
+            printf 'FAIL  windows cross-compile (warnings)\n'
+            grep 'warning:' "$tmp/win.log" | sed 's/^/        /' | head -10
+            failed=$((failed + 1))
+        else
+            printf 'PASS  windows cross-compile (clean)\n'
+            passed=$((passed + 1))
+        fi
+    else
+        printf 'FAIL  windows cross-compile\n'
+        tail -15 "$tmp/win.log" | sed 's/^/        /'
+        failed=$((failed + 1))
+    fi
+fi
+
 if [ $run_zex -eq 1 ]; then
     echo
     check_zex "zexdoc (documented instructions)" tests/zexdoc.com
