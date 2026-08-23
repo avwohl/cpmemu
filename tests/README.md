@@ -20,6 +20,35 @@ CPMEMU_ZEX_TIMEOUT=7200 tests/run_tests.sh --zex
 `make -C src test` runs three of the quick tests as an eyeball check with no
 assertions; `tests/run_tests.sh` is the one that can fail.
 
+## Windows console tests
+
+`tests/win_console.cc` is the only part of the suite that cannot run on Linux.
+The extended key path in `src/os/windows/platform.cc` sits behind
+`is_terminal()`, and `_getch()`/`_kbhit()` read the console input buffer rather
+than stdin, so nothing arriving through a pipe touches it. The test therefore
+drives a real console: it starts cpmemu with stdin bound to the console it is
+attached to, writes the `INPUT_RECORD`s a keyboard would produce with
+`WriteConsoleInput`, and compares the bytes the CP/M guest received.
+
+```cmd
+tests\win_console.bat
+tests\win_console.bat path\to\cpmemu.exe
+```
+
+`tests/run_tests.sh` runs it when it is running on Windows and prints
+`SKIP  windows console` everywhere else.
+
+One thing it cannot answer: `WriteConsoleInput` writes into the console input
+buffer directly, so it steps past whatever the terminal program does with a
+keystroke first. If Windows Terminal ever binds ctrl+left for itself, these
+tests still pass and the user still loses the key. For that, press the keys:
+
+```cmd
+tests\win_console.exe --manual path\to\cpmemu.exe
+```
+
+which runs a hex echo so each key prints what the guest received.
+
 ## Test Programs
 
 ### Simple Tests

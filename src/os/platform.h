@@ -28,7 +28,12 @@ void disable_raw_mode();
 // Check if stdin is connected to a terminal/console
 bool is_terminal();
 
-// Check if input is available on stdin without blocking
+// Check if input is available on stdin without blocking.
+// True means the next console_getchar() returns a character without waiting.
+// On Windows this may take a key off the console to find out: _kbhit() reports
+// keys that translate to nothing here, and a status call that counted those
+// would promise a character the following read could not produce.  Keys it
+// discards are ones console_getchar() would have discarded anyway.
 bool stdin_has_data();
 
 // Read a single character from console (unbuffered)

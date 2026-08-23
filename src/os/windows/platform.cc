@@ -20,6 +20,9 @@
 #ifndef ENABLE_EXTENDED_FLAGS
 #define ENABLE_EXTENDED_FLAGS 0x0080
 #endif
+#ifndef ENABLE_VIRTUAL_TERMINAL_INPUT
+#define ENABLE_VIRTUAL_TERMINAL_INPUT 0x0200
+#endif
 
 namespace platform {
 
@@ -67,11 +70,25 @@ void enable_raw_mode() {
     // for the quick edit bit to be honoured.
     raw_mode |= ENABLE_EXTENDED_FLAGS;
     raw_mode &= ~(ENABLE_QUICK_EDIT_MODE | ENABLE_MOUSE_INPUT);
+    // The mode is inherited, so this bit can already be on from whatever ran in
+    // this console before us.  With it on the console hands _getch() the VT
+    // sequence for a key instead of the 0xE0 prefix pair, so Up arrives as
+    // 1B 5B 41 and the extended key table below never fires at all: measured,
+    // not guessed.  The whole console path here decodes key codes, so it has to
+    // be off.  disable_raw_mode() puts it back with the rest of the saved mode.
+    raw_mode &= ~ENABLE_VIRTUAL_TERMINAL_INPUT;
     SetConsoleMode(hStdin, raw_mode);
 }
 
 bool is_terminal() {
-    return _isatty(_fileno(stdin)) != 0;
+    // Not _isatty(): the CRT sets that for any character device, NUL included,
+    // so `cpmemu prog.com < NUL` was called a console.  The read then went to
+    // _getch(), which opens CONIN$ itself and hands the guest whatever is typed
+    // at the real keyboard while the redirect is ignored, and a guest waiting
+    // for end of input waited for ever.  Asking the console for its mode asks
+    // the question that is actually meant: a pipe, a file and NUL all fail it.
+    DWORD mode = 0;
+    return GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode) != 0;
 }
 
 // ============================================================================
@@ -109,19 +126,92 @@ static const ExtendedKey extended_keys[] = {
     { 0x91, 0x1A,   -1 }   // Ctrl+Down  -> ^Z  scroll down one line
 };
 
-static int pending_char = -1;         // second character of a translation, not read yet
+// Characters a key has already produced but the guest has not taken yet.  Two
+// slots because one key can be two characters: Home is ^Q ^S.  _kbhit() cannot
+// see these, so without the queue the second half of Home and End is invisible
+// to BDOS 6 and BIOS CONST.
+static int queued_chars[2];
+static bool queued_synth[2];
+static int queued_count = 0;
 static bool last_synthesized = false; // last character came from a special key
 
+static void queue_add(int ch, bool synthesized) {
+    if (queued_count < 2) {
+        queued_chars[queued_count] = ch;
+        queued_synth[queued_count] = synthesized;
+        queued_count++;
+    }
+}
+
+static int queue_take() {
+    int ch = queued_chars[0];
+    last_synthesized = queued_synth[0];
+    queued_chars[0] = queued_chars[1];
+    queued_synth[0] = queued_synth[1];
+    queued_count--;
+    return ch;
+}
+
+// Take one key from the console and queue what the guest should see for it.
+// Returns -1 at end of input, 0 when the key produced nothing the guest can
+// use, 1 when it queued at least one character.
+static int read_one_key() {
+    int ch = _getch();
+    if (ch == EOF) return -1;
+
+    // 0x00 and 0xE0 are the special key prefixes.  The scan code has to be
+    // consumed here, otherwise it is read later as an ordinary keystroke.
+    if (ch != 0x00 && ch != 0xE0) {
+        queue_add(ch, false);
+        return 1;
+    }
+
+    // 0xE0 is also an ordinary character in every OEM code page, so the byte
+    // alone does not prove a special key.  The CRT stashes the scan code where
+    // _kbhit() can see it immediately, so a false prefix is one the second read
+    // would block on - hand it to the guest instead.
+    if (!_kbhit()) {
+        queue_add(ch, false);
+        return 1;
+    }
+
+    int scan = _getch();
+    if (scan == EOF) return -1;
+    const size_t count = sizeof(extended_keys) / sizeof(extended_keys[0]);
+    for (size_t i = 0; i < count; i++) {
+        if (extended_keys[i].scan == scan) {
+            // Whatever goes in the queue now was made up by us, not typed
+            queue_add(extended_keys[i].first, true);
+            if (extended_keys[i].second >= 0) {
+                queue_add(extended_keys[i].second, true);
+            }
+            return 1;
+        }
+    }
+    return 0;  // an F key, say: not a character, and not an error either
+}
+
 bool stdin_has_data() {
-    // A queued second character is input that _kbhit() cannot see, so without
-    // this the second half of Home and End is invisible to BDOS 6 and BIOS CONST
-    if (pending_char >= 0) {
+    if (queued_count > 0) {
         return true;
     }
 
     if (!is_terminal()) {
-        // For non-terminal (pipe/file), check if data is available
+        // PeekNamedPipe fails outright on a handle that is not a pipe, and the
+        // old code read that failure as "no input".  With stdin redirected from
+        // a file rather than a pipe, every status call therefore said no, so a
+        // guest polling BDOS 6 sat there forever with its input sitting on disk
+        // unread - while the same bytes through a pipe worked.  Ask what the
+        // handle is first, and answer a file from its own position.
         HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
+        DWORD type = GetFileType(h) & ~(DWORD)FILE_TYPE_REMOTE;
+        if (type == FILE_TYPE_DISK) {
+            // Through the CRT handle, so this agrees with the _read() below
+            int fd = _fileno(stdin);
+            __int64 pos = _telli64(fd);
+            __int64 len = _filelengthi64(fd);
+            return pos >= 0 && len >= 0 && pos < len;
+        }
         DWORD available = 0;
         if (PeekNamedPipe(h, NULL, 0, NULL, &available, NULL)) {
             return available > 0;
@@ -129,19 +219,28 @@ bool stdin_has_data() {
         return false;
     }
 
-    // For console, use _kbhit()
-    return _kbhit() != 0;
+    // _kbhit() answers for the key, not for what the key means here, and it
+    // says yes to an F key, to alt+letter and to ctrl+Home - none of which the
+    // table below translates.  Answering yes to those was a lie the caller
+    // could not survive: a guest that polls BIOS CONST and then reads got a
+    // promise of a character, and the read blocked until some later keystroke
+    // arrived, which looks exactly like the emulator hanging on one F1.  So
+    // take the key here and let the queue, not _kbhit(), be the answer.  The
+    // ones that mean nothing are dropped, which is where they were headed.
+    while (queued_count == 0 && _kbhit()) {
+        if (read_one_key() < 0) {
+            break;
+        }
+    }
+    return queued_count > 0;
 }
 
 int console_getchar() {
     last_synthesized = false;
 
-    // Hand back the queued half of a two character translation first
-    if (pending_char >= 0) {
-        int queued = pending_char;
-        pending_char = -1;
-        last_synthesized = true;
-        return queued;
+    // Hand back what an earlier key produced before reading another one
+    if (queued_count > 0) {
+        return queue_take();
     }
 
     if (!is_terminal()) {
@@ -160,40 +259,18 @@ int console_getchar() {
         return c;
     }
 
-    // For console, use _getch() for unbuffered input
-    int ch = _getch();
-    if (ch == EOF) return -1;
+    // For console, read one key with _getch() and hand back what it produced
+    int r = read_one_key();
+    if (r < 0) return -1;
+    if (queued_count > 0) return queue_take();
 
-    // 0x00 and 0xE0 are the special key prefixes.  The scan code has to be
-    // consumed here, otherwise it is read later as an ordinary keystroke.
-    if (ch == 0x00 || ch == 0xE0) {
-        // 0xE0 is also an ordinary character in every OEM code page, so the
-        // byte alone does not prove a special key.  The CRT stashes the scan
-        // code where _kbhit() can see it immediately, so a false prefix is one
-        // the second read would block on - hand it to the guest instead.
-        if (!_kbhit()) {
-            return ch;
-        }
-        int scan = _getch();
-        if (scan == EOF) return -1;
-        // Whatever we return now was made up by us, not typed by the user
-        last_synthesized = true;
-        const size_t count = sizeof(extended_keys) / sizeof(extended_keys[0]);
-        for (size_t i = 0; i < count; i++) {
-            if (extended_keys[i].scan == scan) {
-                if (extended_keys[i].second >= 0) {
-                    pending_char = extended_keys[i].second;
-                }
-                return extended_keys[i].first;
-            }
-        }
-        // Untranslated special key (an F key, say): report "no character"
-        // rather than reading again.  BDOS 6 polls stdin_has_data() before
-        // calling us, so a second read here would block after it said yes.
-        return 0;
-    }
-
-    return ch;
+    // Untranslated special key (an F key, say): report "no character" rather
+    // than reading again, which would block.  A caller that must have a real
+    // keystroke skips this and asks again; a polled caller wants exactly this.
+    // Reached only when the caller did not check stdin_has_data() first, since
+    // that call drops these keys before they get this far.
+    last_synthesized = true;
+    return 0;
 }
 
 bool console_last_char_synthesized() {

@@ -444,6 +444,48 @@ else
     fi
 fi
 
+# ---------------------------------------------------------------------------
+# Windows console.
+#
+# The extended key path in os/windows/platform.cc sits behind is_terminal(),
+# and _getch()/_kbhit() read the console input buffer rather than stdin, so no
+# pipe reaches any of it and the cross-compile above only proves it builds.
+# tests/win_console.cc drives a real console instead, by writing the
+# INPUT_RECORDs a keyboard produces into it. That needs Windows, so everywhere
+# else this can only say so.
+# ---------------------------------------------------------------------------
+
+echo
+case $(uname -s) in
+    MINGW*|MSYS*|CYGWIN*)
+        winlog=$tmp/wincon.log
+        winbat=$(cygpath -w "$root/tests/win_console.bat")
+        # No emulator argument: the batch file already defaults to the one this
+        # tree builds, and cmd /c splits a second argument that has a space in
+        # it however it is quoted, which a checkout under "My Documents" would
+        # hit.  One argument survives, because cmd strips the single pair.
+        MSYS_NO_PATHCONV=1 cmd.exe /c "$winbat" >"$winlog" 2>&1
+        # Its own totals line would double count against this script's
+        grep -v -e '^[0-9][0-9]* passed' -e '^$' "$winlog"
+        # Counting only the verdicts it printed would let a launch that never
+        # happened pass as an empty success, which is the one failure this
+        # section cannot be allowed to have
+        if grep -q '^\(PASS\|FAIL\|SKIP\)  ' "$winlog"; then
+            passed=$((passed + $(grep -c '^PASS  ' "$winlog")))
+            failed=$((failed + $(grep -c '^FAIL  ' "$winlog")))
+            skipped=$((skipped + $(grep -c '^SKIP  ' "$winlog")))
+        else
+            printf 'FAIL  windows console (win_console.bat reported nothing)\n'
+            tail -5 "$winlog" | sed 's/^/        /'
+            failed=$((failed + 1))
+        fi
+        ;;
+    *)
+        echo "SKIP  windows console (needs a real Windows console)"
+        skipped=$((skipped + 1))
+        ;;
+esac
+
 if [ $run_zex -eq 1 ]; then
     echo
     check_zex "zexdoc (documented instructions)" tests/zexdoc.com

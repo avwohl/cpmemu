@@ -87,8 +87,32 @@ make -f Makefile.win CXX=x86_64-w64-mingw32-g++ AR=x86_64-w64-mingw32-ar
 
 `tests/run_tests.sh` does this automatically into a temporary directory when
 the cross-compiler is on `PATH`, and skips the check when it is not. It proves
-the Windows code compiles; the console path still needs a real Windows console
-to exercise, because `_getch`/`_kbhit` only behave correctly there.
+the Windows code compiles, and nothing more: `_getch`/`_kbhit` only behave on a
+real console, which is what `tests/win_console.bat` is for.
+
+### Testing the console on Windows
+
+```cmd
+cd src
+do_build.bat
+
+cd ..\tests
+win_console.bat
+```
+
+`win_console.bat` builds `win_console.cc` with the same Visual Studio as
+`src\do_build.bat`, then drives a real console: it starts cpmemu with stdin
+bound to that console, writes the `INPUT_RECORD`s a keyboard would produce, and
+compares the bytes the CP/M guest received. It is the only part of the suite
+that cannot run on Linux, because the extended key path sits behind
+`is_terminal()` and no pipe reaches it.
+
+To check the keys by hand instead - which is the only way to find out whether
+the terminal program itself swallows one before the console ever sees it:
+
+```cmd
+win_console.exe --manual ..\src\cpmemu.exe
+```
 
 ### Using CMake (Cross-Platform)
 
