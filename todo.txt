@@ -37,12 +37,6 @@ nothing. ctrl+left and ctrl+right are mapped, to ^A and ^F. README.md documents
 only the two that exist, so the docs are honest, but the pair is a gap worth
 filling if a WordStar user asks for it.
 
-- two file-mapping forms do nothing and say nothing.  a wildcard on the unix
-side (`*.BAS = /dir/*.bas`) opens that literal path and fails, and a mode-only
-mapping (`*.BAS = text`) registers "text" as the path.  the workarounds are a
-drive letter for a directory, `default_mode` for a class of files, and one
-exact mapping per file kept outside either.
-
 - an unrecognised config key is silently treated as a file mapping, so a typo
 produces no error whatsoever.  `verbsoe = 1` becomes a mapping for a CP/M file
 named VERBSOE and nothing says so.  warning on a key that looks like a

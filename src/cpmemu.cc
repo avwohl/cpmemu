@@ -374,6 +374,12 @@ private:
   FileMode detect_file_mode(const std::string& filename, const std::string& unix_path);
   std::string find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out, bool* eol_out,
                                 qkz80_uint8 fcb_drive);
+  // Substitute the text a CP/M pattern matched into a '*' on the host side,
+  // so `*.BAS = /dir/*.bas` reaches /dir/<stem>.bas rather than a file
+  // literally called '*.bas'.
+  std::string expand_unix_pattern(const std::string& cpm_pattern,
+                                  const std::string& unix_pattern,
+                                  const std::string& normalized) const;
   bool match_pattern(const std::string& pattern, const std::string& text);
 
   // Decode an FCB drive byte to a 0-based drive index.
@@ -698,23 +704,65 @@ bool CPMEmulator::match_pattern(const std::string& pattern, const std::string& t
   return false;
 }
 
+// Replace a '*' on the host side of a mapping with the text the CP/M pattern
+// matched.  `*.BAS = /dir/*.bas` looking up PRINTSEP.BAS yields
+// /dir/printsep.bas.  For `*` and `*.*` the whole name stands in, extension
+// included, since that is what those patterns match.  A host path with no
+// '*' is returned untouched, so every mapping written before this existed
+// resolves exactly as it did.
+std::string CPMEmulator::expand_unix_pattern(const std::string& cpm_pattern,
+                                             const std::string& unix_pattern,
+                                             const std::string& normalized) const {
+  size_t star = unix_pattern.find('*');
+  if (star == std::string::npos) return unix_pattern;
+
+  std::string stand_in = normalized;
+  size_t pat_dot = cpm_pattern.find('.');
+  if (pat_dot == 1 && cpm_pattern[0] == '*' && cpm_pattern != "*.*") {
+    // '*.EXT' matched the stem only, so the extension comes from the host
+    // side of the mapping rather than from the name being looked up.
+    size_t dot = normalized.find('.');
+    if (dot != std::string::npos) stand_in = normalized.substr(0, dot);
+  }
+  for (char& c : stand_in) c = tolower(c);
+
+  return unix_pattern.substr(0, star) + stand_in + unix_pattern.substr(star + 1);
+}
+
 std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out,
                                            bool* eol_out, qkz80_uint8 fcb_drive) {
   std::string normalized = normalize_cpm_filename(cpm_name);
 
+  // A mapping with no host path is a mode rule rather than a location: it
+  // says how a name should be treated wherever it is eventually found.
+  // Collected first, applied to whatever path the steps below settle on.
+  bool have_mode_rule = false;
+  FileMode rule_mode = MODE_AUTO;
+  bool rule_eol = default_eol_convert;
+  for (const auto& mapping : file_mappings) {
+    if (mapping.unix_pattern.empty() && match_pattern(mapping.cpm_pattern, normalized)) {
+      have_mode_rule = true;
+      rule_mode = mapping.mode;
+      rule_eol = mapping.eol_convert;
+    }
+  }
+
   // Check new file mappings with patterns
   for (const auto& mapping : file_mappings) {
+    if (mapping.unix_pattern.empty()) continue;  // mode rule, handled above
     if (match_pattern(mapping.cpm_pattern, normalized)) {
-      if (platform::get_file_type(mapping.unix_pattern.c_str()) != platform::FileType::NotFound) {
+      std::string target = expand_unix_pattern(mapping.cpm_pattern, mapping.unix_pattern,
+                                               normalized);
+      if (platform::get_file_type(target.c_str()) != platform::FileType::NotFound) {
         *mode_out = mapping.mode;
         *eol_out = mapping.eol_convert;
 
         // Auto-detect if needed
         if (*mode_out == MODE_AUTO) {
-          *mode_out = detect_file_mode(normalized, mapping.unix_pattern);
+          *mode_out = detect_file_mode(normalized, target);
         }
 
-        return mapping.unix_pattern;
+        return target;
       }
     }
   }
@@ -741,8 +789,9 @@ std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode
                                         join_path(ddir, normalized) };
     for (int i = 0; i < 2; i++) {
       if (platform::get_file_type(candidates[i].c_str()) != platform::FileType::NotFound) {
-        *mode_out = detect_file_mode(normalized, candidates[i]);
-        *eol_out = default_eol_convert;
+        *mode_out = have_mode_rule ? rule_mode : detect_file_mode(normalized, candidates[i]);
+        *eol_out = have_mode_rule ? rule_eol : default_eol_convert;
+        if (*mode_out == MODE_AUTO) *mode_out = detect_file_mode(normalized, candidates[i]);
         return candidates[i];
       }
     }
@@ -756,15 +805,17 @@ std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode
   }
 
   if (platform::get_file_type(lowercase.c_str()) != platform::FileType::NotFound) {
-    *mode_out = detect_file_mode(normalized, lowercase);
-    *eol_out = default_eol_convert;
+    *mode_out = have_mode_rule ? rule_mode : detect_file_mode(normalized, lowercase);
+    *eol_out = have_mode_rule ? rule_eol : default_eol_convert;
+    if (*mode_out == MODE_AUTO) *mode_out = detect_file_mode(normalized, lowercase);
     return lowercase;
   }
 
   // Try as-is
   if (platform::get_file_type(normalized.c_str()) != platform::FileType::NotFound) {
-    *mode_out = detect_file_mode(normalized, normalized);
-    *eol_out = default_eol_convert;
+    *mode_out = have_mode_rule ? rule_mode : detect_file_mode(normalized, normalized);
+    *eol_out = have_mode_rule ? rule_eol : default_eol_convert;
+    if (*mode_out == MODE_AUTO) *mode_out = detect_file_mode(normalized, normalized);
     return normalized;
   }
 
@@ -996,6 +1047,15 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
       // Assume it's a file mapping: pattern = path [mode]
       FileMode mode = default_mode;
       bool eol_convert = default_eol_convert;
+
+      // A value that is nothing but a mode sets the mode for every name the
+      // pattern matches, wherever the file turns out to live.  This used to
+      // register "text" as though it were a path, which never opened.
+      if (value == "text" || value == "binary") {
+        add_file_mapping_ex(key, "", value == "text" ? MODE_TEXT : MODE_BINARY,
+                            value == "text" ? default_eol_convert : false);
+        continue;
+      }
 
       // Check for mode specification
       size_t space = value.find_last_of(' ');

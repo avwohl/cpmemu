@@ -63,15 +63,26 @@ CPM_NAME = unix/path [text|binary]
 ```
 
 The CP/M side may be an exact name (`PRINTSEP.BAS`) or an extension pattern
-(`*.BAS`). The Unix side is used **literally** - it is a path to one file, and
-it must exist or the mapping is skipped and the search falls through.
+(`*.BAS`). The Unix side is a path, which must exist or the mapping is
+skipped and the search falls through.
 
 Working forms, all verified by opening a file through BDOS 15:
 
 ```ini
 PRINTSEP.BAS = tests/printsep.bas text    # exact name -> one file
 *.BAS        = tests/printsep.bas text    # any .BAS -> that one file
+*.BAS        = basic/*.bas text           # any .BAS -> the same name in basic/
+*.BAS        = text                       # mode only, wherever it is found
 ```
+
+A `*` on the Unix side takes the text the CP/M pattern matched: with
+`*.BAS = basic/*.bas`, `PRINTSEP.BAS` opens `basic/printsep.bas`. For `*` and
+`*.*` the whole name stands in, extension included. A path with no `*` is
+used exactly as written.
+
+A value that is *only* `text` or `binary` sets the mode for every matching
+name without claiming to be a location — the file is still found the normal
+way, and the rule only decides how it is read.
 
 ### Forms that do not work
 
@@ -79,8 +90,6 @@ These appear in older versions of these examples and in documentation
 elsewhere in the repo. None of them do anything:
 
 ```ini
-*.BAS = text                  # no path: registers the path "text", never opens
-*.BAS = /some/dir/*.bas text  # no wildcard substitution on the Unix side
 verbose = 0                   # not a directive; becomes a mapping named VERBOSE
 args = TEST.BAS               # not a directive
 ```
@@ -94,7 +103,8 @@ default_mode = text
 cd = /path/to/my/basic/files
 ```
 
-`todo.txt` records wildcard Unix paths and mode-only mappings as missing.
+A key that is not a directive and not meant as a mapping is still silent;
+`todo.txt` records that.
 
 ## Drives
 

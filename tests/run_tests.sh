@@ -284,6 +284,36 @@ else
         check_drive "drive: rename leaks no cross-drive alias" "$tmp/drv_read.com" "$tmp/rd2.cfg" \
             "A:RENAMED.TXT" 'NF'
 
+        # --- file mapping forms -------------------------------------------
+        # A '*' on the host side takes the name the CP/M pattern matched.
+        mkdir -p "$sb/bas"
+        printf 'PPP' >"$sb/bas/one.bas"
+        printf 'QQQ' >"$sb/bas/two.bas"
+        { echo "*.BAS = $sb/bas/*.bas text"
+          printf 'program = %s/drv_read.com\n' "$tmp"; } >"$tmp/wild.cfg"
+        check_drive "mapping: host wildcard takes the name" "$tmp/drv_read.com" "$tmp/wild.cfg" \
+            "ONE.BAS" 'PPP'
+        check_drive "mapping: host wildcard, second name" "$tmp/drv_read.com" "$tmp/wild.cfg" \
+            "TWO.BAS" 'QQQ'
+        check_drive "mapping: host wildcard misses cleanly" "$tmp/drv_read.com" "$tmp/wild.cfg" \
+            "GONE.BAS" 'NF'
+
+        # A value that is only a mode sets the mode without claiming to be a
+        # path, and must not stop the file resolving from the cwd.
+        printf 'ZZZ' >"$sb/plain.bas"
+        { echo 'debug = true'; echo '*.BAS = binary'
+          printf 'program = %s/drv_read.com\n' "$tmp"; } >"$tmp/moderule.cfg"
+        ( cd "$sb" && "$emu" "$tmp/moderule.cfg" PLAIN.BAS ) >"$tmp/mgot" 2>"$tmp/merr"
+        if grep -q "mode: binary" "$tmp/merr" && [ "$(cat "$tmp/mgot")" = "ZZZ" ]; then
+            printf 'PASS  mapping: mode-only rule applies and still resolves\n'
+            passed=$((passed + 1))
+        else
+            printf 'FAIL  mapping: mode-only rule applies and still resolves\n'
+            printf '        stdout: %s\n' "$(cat "$tmp/mgot")"
+            grep 'BDOS Open' "$tmp/merr" | sed 's/^/        /'
+            failed=$((failed + 1))
+        fi
+
         # With no drive_X at all, resolution must be what it always was.
         printf 'program = %s/drv_read.com\n' "$tmp" >"$tmp/nodrv.cfg"
         check_drive "drive: none configured behaves as before" "$tmp/drv_read.com" "$tmp/nodrv.cfg" \
