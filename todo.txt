@@ -132,6 +132,24 @@ sources.  either wire them in or delete them and the stale binaries.  the ADM-3A
 to ANSI output translator has no test at all either: every expected string in
 the suite is plain ASCII, so nothing ever puts a byte into it that changes state.
 
+- src/qkz80*.{cc,h} is compiled directly by three other emulators and nothing
+here says so.  README lists them as related projects; what it does not record is
+that they do not depend on a cpmemu *release* - they build these source files
+out of a sibling working tree, so an edit to qkz80.cc lands in all three on
+their next build, with no version gate and no notification:
+  - ioscpm    - 11 symlinks in iOSCPM/Core/ pointing at ../cpmemu/src/qkz80*
+  - z80cpmw   - z80cpmw.vcxproj compiles $(SolutionDir)..\cpmemu\src\qkz80*
+  - romwbw_emu- src/makefile falls back to ../../cpmemu/src for headers and
+    libqkz80.a when pkg-config misses, and its release.yml clones
+    avwohl/cpmemu at default-branch HEAD with no tag or SHA
+  the last of those means a cpmemu commit can break a romwbw_emu release with
+  nobody touching that repo.  06262ff is the worked example of the mechanism
+  working quietly in the good direction: it added QKZ80_NO_TRACE and all three
+  picked it up without being told.  worth a line in README, and worth checking
+  the three before changing qkz80's public surface.  they compile with -Wall and
+  ioscpm builds as Objective-C++ for arm64, which is stricter than this repo's
+  own build in places.
+
 - there is no issue tracker or TODO convention in this repo (docs/archive holds
 stale narrative notes, and README.md has no Contributing section), which is why
 this file exists. github issues on avwohl/cpmemu is the only other mechanism
