@@ -171,22 +171,34 @@ static bool check_ctrl_c_exit(int ch) {
 static int consecutive_console_eof = 0;
 static const int CONSOLE_EOF_LIMIT = 1024;
 
+// Count one read that found end of input, and give up once the guest has asked
+// often enough that nothing is going to change.  Shared, because BDOS 6 hits the
+// same wall as the blocking reads: it called platform::console_getchar()
+// directly and turned the -1 into 0, which is also its value for "nothing
+// waiting yet", so the counter neither incremented nor reset and a polling
+// guest spun with no diagnostic and had to be killed.  Measured at 200000 reads
+// against a pty whose master had closed, while the same guest on the same stdin
+// exited cleanly in 0.05s through BDOS 1.
+static void note_console_eof() {
+  if (++consecutive_console_eof >= CONSOLE_EOF_LIMIT) {
+    // Nothing is going to change: stdin is finished and the guest is still
+    // asking.  Leaving is better than spinning, and it is what a warm boot
+    // amounts to here anyway.
+    fprintf(stderr, "\n[Exiting: %d console reads past end of input]\n",
+            consecutive_console_eof);
+    do_save_memory();
+    platform::disable_raw_mode();
+    exit(0);
+  }
+}
+
 static int console_getchar_blocking() {
   int ch = platform::console_getchar();
   while (ch == 0 && platform::console_last_char_synthesized()) {
     ch = platform::console_getchar();
   }
   if (ch == -1 || ch == EOF) {
-    if (++consecutive_console_eof >= CONSOLE_EOF_LIMIT) {
-      // Nothing is going to change: stdin is finished and the guest is still
-      // asking.  Leaving is better than spinning, and it is what a warm boot
-      // amounts to here anyway.
-      fprintf(stderr, "\n[Exiting: %d console reads past end of input]\n",
-              consecutive_console_eof);
-      do_save_memory();
-      platform::disable_raw_mode();
-      exit(0);
-    }
+    note_console_eof();
   } else {
     consecutive_console_eof = 0;
   }
@@ -675,6 +687,9 @@ void CPMEmulator::add_file_mapping_ex(const std::string& cpm_pattern, const std:
 }
 
 FileMode CPMEmulator::detect_file_mode(const std::string& filename, const std::string& unix_path) {
+  // unix_path is part of the signature for callers that want to key the mode off
+  // the host path; the current rules look only at the CP/M name.
+  (void)unix_path;
   // Check extension
   std::string upper = filename;
   for (char& c : upper) c = toupper(c);
@@ -2225,8 +2240,14 @@ void CPMEmulator::bdos_file_size() {
     return;
   }
 
-  // File size in 128-byte records (round up)
-  uint32_t records = (file_size + 127) / 128;
+  // File size in 128-byte records (round up).  Same 64-bit-then-clamp shape as
+  // write_dir_entry: r0/r1/r2 below is a 24-bit random-record field, so a file
+  // of more than 0xFFFFFF records - 2 GiB - cannot be described here at all.
+  // Saturate rather than wrap, so a huge file reports "as large as this field
+  // can say" instead of a small wrapped number that looks legitimate.
+  int64_t records64 = (file_size + 127) / 128;
+  if (records64 > 0xFFFFFF) records64 = 0xFFFFFF;
+  uint32_t records = static_cast<uint32_t>(records64);
 
   // Store in FCB bytes 33-35 (r0, r1, r2)
   mem[fcb_addr + 33] = records & 0xFF;
@@ -2326,7 +2347,15 @@ void CPMEmulator::bdos_direct_console_io() {
     // Input mode - return character if available, 0 if not
     if (platform::stdin_has_data()) {
       int ch = platform::console_getchar();
-      if (ch == -1 || ch == EOF) ch = 0;
+      if (ch == -1 || ch == EOF) {
+        // End of input, not "nothing yet".  BDOS 6 spells both 0, so the guest
+        // cannot tell them apart and a polling loop never terminates; count it
+        // so the shared limit eventually ends the run with a reason.
+        note_console_eof();
+        ch = 0;
+      } else {
+        consecutive_console_eof = 0;
+      }
       check_ctrl_c_exit(ch);  // Track ^C for exit, pass through to program
       if (ch == '\n') ch = '\r';  // Convert LF to CR for CP/M
       cpu->set_reg8(ch & 0x7F, qkz80::reg_A);
@@ -2559,8 +2588,15 @@ void CPMEmulator::write_dir_entry(const SearchResult& r) {
 
   int64_t file_size = platform::get_file_size(r.path.c_str());
   if (file_size < 0) file_size = 0;
-  int records = (file_size + 127) / 128;  // Number of 128-byte records
-  int rc = records > 128 ? 128 : records; // Record count in this extent
+  // Keep the division in 64 bits and clamp BEFORE narrowing.  Computing this
+  // as `int records` overflowed at 2^31 records - 274877906816 bytes, reachable
+  // on any LP64 host and cheap to reach with a sparse file - after which
+  // records went negative, the `> 128` clamp never fired, and the RC byte and
+  // the whole allocation map came back zero: the guest saw a 256 GiB file as
+  // empty.  Measured by bisection on APFS: 274877906816 gave RC 0x80, one byte
+  // more gave RC 0x00.
+  int64_t records = (file_size + 127) / 128;  // Number of 128-byte records
+  int rc = records > 128 ? 128 : static_cast<int>(records);  // RC in this extent
 
   memset(&mem[current_dma], 0, 32);
   mem[current_dma + 0] = search_user;  // User number

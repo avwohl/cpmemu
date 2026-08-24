@@ -52,20 +52,17 @@ restores before stopping and a SIGCONT handler that re-applies; the state
 bookkeeping it needs (original_termios kept across a disable, raw_active
 separate) is already in place.
 
-- a guest polling BDOS 6 at end of input spins with nothing to stop it.  the
-blocking reads have the "console reads past end of input" guard;
-bdos_direct_console_io does not use it - it calls platform::console_getchar()
-directly and turns the -1 into 0, which is the same value it uses for "nothing
-waiting yet", so the counter neither increments nor resets.  measured on windows
-with an empty pipe and an empty file, and on macOS with a pty whose master has
-closed: 200000 end-of-input reads, no diagnostic, the emulator has to be killed,
-while the same emulator on the same stdin exits cleanly in 0.05s through BDOS 1.
-on POSIX it is worse still, because stdin_has_data() is false for everything
-that is not a tty: a guest polling BDOS 6 with a redirected file spins whether
-the file is empty or full, delivering nothing.  the end of input is available to
-be noticed - a pty whose master has closed reports readable and reads 0 - so
-routing that -1 through the existing counter is a few lines in
-bdos_direct_console_io and does not touch the platform layer.
+- half of the BDOS 6 end-of-input spin is fixed; the other half is blocked on
+the item below it.  bdos_direct_console_io now routes its -1 through the same
+counter the blocking reads use (note_console_eof), so a guest polling at end of
+input ends the run with "[Exiting: 1024 console reads past end of input]"
+instead of spinning silently - verified against a pty whose master has closed,
+where the pre-fix binary had to be killed after 15s and this one exits in 0.00s.
+  what is NOT fixed: on POSIX, stdin_has_data() is false for everything that is
+not a tty, so a guest polling BDOS 6 with a redirected file never reaches the
+read at all and still spins, delivering nothing.  That is the platform
+disagreement in the next item, and changing it is that decision rather than this
+one.
 
 - the two platforms disagree about whether redirected input is visible to the
 polled path, and neither side of it was ever decided.  POSIX returns false from
@@ -82,15 +79,6 @@ tests rather than only described: "a polled read takes nothing from a file" and
 file, not only from a pipe" in tests/win_console.cc, the same guest printing T
 on POSIX and 41 T on windows.
 
-- a file of 256 GiB or more is reported to the guest as empty.  in the BDOS 26
-record count, `int records = (file_size + 127) / 128;` narrows an int64_t, so at
-274877906817 bytes records goes negative, the `records > 128` clamp never fires,
-and the RC byte and the whole allocation map come back zero.  measured by
-bisection on an APFS sparse file: 274877906816 gives RC 0x80, one byte more
-gives RC 0x00.  not macOS specific - any LP64 host - but sparse files made it
-cheap to reach here.  -Wshorten-64-to-32 flags it, and the makefiles do not use
-it.
-
 - the comment in os/linux/platform.cc about ISTRIP and the four console read
 sites contradict each other.  the comment says the 8th bit survives, and it does
 survive the line discipline - measured, 128 of 128 high bytes reach read()
@@ -100,11 +88,6 @@ gives the guest C3 29 4E 31 42 23 62 00 14 after masking, and on the polled path
 a byte that masks to 0x00 is dropped entirely, because BDOS 6 reads 0 as "no
 character".  whether CP/M should see 8 bits is a real question; what is not in
 question is that the two statements cannot both stand.
-
-- the makefiles build with -Wall only, which catches none of the above.  -Wextra
-adds one warning (an unused parameter), -Wshorten-64-to-32 adds two more, and
-one of those two is the 256 GiB bug.  -Wconversion adds 125 more that are the
-deliberate Z80 mod-256 wraps and are not worth chasing.
 
 - there is no macOS release path and the pieces that would make one do not work.
 `make STATIC=1` cannot link at all: the Apple linker has no crt0.o and there is

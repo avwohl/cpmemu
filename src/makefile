@@ -1,6 +1,11 @@
 all: cpmemu
 
-CXXFLAGS = -std=c++11 -Wall -O2 -I.
+# -Wextra and -Wshorten-64-to-32 are not decoration: between them they found the
+# unused detect_file_mode parameter and two 64-to-32 narrowings, one of which was
+# the bug that reported any file of 256 GiB or more to the guest as empty.
+# -Wconversion is deliberately NOT here - it adds 125 more, all of them the Z80
+# core's intended mod-256 wraps.
+CXXFLAGS = -std=c++11 -Wall -Wextra -Wshorten-64-to-32 -O2 -I.
 CXXFLAGS_PIC = $(CXXFLAGS) -fPIC
 
 # For static builds (better portability)
