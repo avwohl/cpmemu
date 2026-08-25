@@ -1,5 +1,6 @@
-Todo list.  Open items only - finished work is written up in the commit
-messages that made the changes, not kept here.
+Todo list.  Open items only - finished work is in CHANGELOG.md and in the commit
+messages that made the changes, not kept here.  There is no issue tracker; this
+file and github issues on avwohl/cpmemu are the only two mechanisms.
 
 - nobody has pressed the keys, on either platform.  tests/win_console.cc writes
 INPUT_RECORDs into the console input buffer with WriteConsoleInput and
@@ -16,107 +17,119 @@ person either: no real terminal emulator was ever in the loop, so whatever
 Terminal.app or iTerm sets in the termios we inherit is still unmeasured.
 
 - a character whose first byte is 0xE0 is still taken for a special key prefix
-when another byte follows it.  measured, console input code page 437: alpha
-(U+03B1) alone reaches _getch() as E0 with _kbhit() false, and the guest gets
-it - 60 after the usual 7-bit mask.  alpha immediately followed by A gives
-E0 41, the 41 is consumed as a scan code, no table entry matches, and the guest
-gets neither character.  code page 65001 turns the race into a certainty: U+0E01
-encodes as E0 B8 81 and _getch() hands those back one byte at a time.  the fix
-is to stop using _getch() and read INPUT_RECORDs directly, which removes the
-guess rather than narrowing it; that is a rewrite of the input path, not a patch
-to it.
+when another byte follows it.  read_one_key() (os/windows/platform.cc:159) is
+still on _getch(), and the guess is the !_kbhit() at :173.  measured, console
+input code page 437: alpha (U+03B1) alone reaches _getch() as E0 with _kbhit()
+false, and the guest gets it - 60 after the usual 7-bit mask.  alpha immediately
+followed by A gives E0 41, the 41 is consumed as a scan code, no table entry
+matches, and the guest gets neither character.  code page 65001 turns the race
+into a certainty: U+0E01 encodes as E0 B8 81 and _getch() hands those back one
+byte at a time.  the fix is to stop using _getch() and read INPUT_RECORDs
+directly, which removes the guess rather than narrowing it; that is a rewrite of
+the input path, not a patch to it, and it forces five secondary changes
+(key-down filter, repeat-count expansion, UTF-16-to-bytes conversion, re-keying
+extended_keys[] from CRT scan codes to VK plus a ctrl flag, and widening the
+two-slot queue).
 
-- ctrl+break on windows leaves the console in raw mode.  clearing
-ENABLE_PROCESSED_INPUT suppresses ^C but not ctrl+break, and the default handler
-ends the process without running atexit, so disable_raw_mode() never runs.
-measured: the child exits 0xC000013A and the console mode stays at 0x1A0 instead
-of returning to 0x1F7, which leaves the shell with no echo.  a
-SetConsoleCtrlHandler that restores the mode and exits would fix it.  the POSIX
-half of the same problem is done - os/linux/platform.cc catches SIGHUP, SIGINT,
-SIGQUIT, SIGTERM, SIGSEGV, SIGBUS and SIGABRT, restores and re-raises, and seven
-cases in tests/pty_console.cc hold it to that - so what is left is the windows
-half alone.
+- ctrl+break on windows leaves the console in raw mode.  there is no
+SetConsoleCtrlHandler anywhere in src/.  clearing ENABLE_PROCESSED_INPUT
+suppresses ^C but not ctrl+break, and the default handler ends the process
+without running atexit, so disable_raw_mode() never runs.  measured: the child
+exits 0xC000013A and the console mode stays at 0x1A0 instead of returning to
+0x1F7, which leaves the shell with no echo.  a SetConsoleCtrlHandler that
+restores the mode and exits would fix it; the install loop in
+os/linux/platform.cc:67-105 is the shape to copy, and its POSIX half is done -
+seven cases in tests/pty_console.cc hold it to that.
+
+- neither windows bug above has a regression test, because tests/win_console.cc
+cannot reach either.  inject_spec()'s single-character branch goes through
+VkKeyScanA and casts one byte to WCHAR, so no character above U+00FF can be
+named and no code page is set anywhere in tests/; and nothing in the harness
+calls GenerateConsoleCtrlEvent.  Both are small additions.
 
 - suspend and resume leaves the emulator cooked for the rest of its life.
-enable_raw_mode() is called once and nothing re-applies it, while both zsh and
-bash restore the pre-raw termios when a job is brought back to the foreground.
-measured on macOS with real job control: after kill -TSTP and fg, ICANON, ECHO,
-ISIG, IEXTEN, ICRNL, IXON and OPOST are all back on, the guest sees nothing
-until CR and then gets the whole line at once, and ISIG being on means the next
-^Z suspends it again rather than reaching the guest.  a second route needs no
-kill at all: `cpmemu prog.com &` then fg, where the tcsetattr in
-enable_raw_mode() runs in a background process group, is interrupted by SIGTTOU
-and returns EINTR - the return value is now checked, so raw mode is correctly
-not claimed, but it is also never applied.  the fix is a SIGTSTP handler that
-restores before stopping and a SIGCONT handler that re-applies; the state
-bookkeeping it needs (original_termios kept across a disable, raw_active
-separate) is already in place.
+there is no SIGTSTP or SIGCONT handler; enable_raw_mode() is called once and
+nothing re-applies it, while both zsh and bash restore the pre-raw termios when
+a job is brought back to the foreground.  measured on macOS with real job
+control: after kill -TSTP and fg, ICANON, ECHO, ISIG, IEXTEN, ICRNL, IXON and
+OPOST are all back on, the guest sees nothing until CR and then gets the whole
+line at once, and ISIG being on means the next ^Z suspends it again rather than
+reaching the guest.  a second route needs no kill at all: `cpmemu prog.com &`
+then fg, where the tcsetattr in enable_raw_mode() runs in a background process
+group, is interrupted by SIGTTOU and returns EINTR - the return value is now
+checked, so raw mode is correctly not claimed, but it is also never applied.
+the fix is a SIGTSTP handler that restores before stopping and a SIGCONT handler
+that re-applies; the state bookkeeping it needs (original_termios kept across a
+disable, raw_active separate, os/linux/platform.cc:27-29) is already in place.
 
-- half of the BDOS 6 end-of-input spin is fixed; the other half is blocked on
-the item below it.  bdos_direct_console_io now routes its -1 through the same
-counter the blocking reads use (note_console_eof), so a guest polling at end of
-input ends the run with "[Exiting: 1024 console reads past end of input]"
-instead of spinning silently - verified against a pty whose master has closed,
-where the pre-fix binary had to be killed after 15s and this one exits in 0.00s.
-  what is NOT fixed: on POSIX, stdin_has_data() is false for everything that is
-not a tty, so a guest polling BDOS 6 with a redirected file never reaches the
-read at all and still spins, delivering nothing.  That is the platform
-disagreement in the next item, and changing it is that decision rather than this
-one.
+- a guest polling BDOS 6 against redirected input still spins on POSIX.
+stdin_has_data() (os/linux/platform.cc:146) returns false for anything that is
+not a tty, so the read at cpmemu.cc:2349 is never reached, note_console_eof()
+never counts, and the 1024-read give-up that ends a windows run cannot fire.
+blocked on the item below; it is not fixable on its own.
 
 - the two platforms disagree about whether redirected input is visible to the
 polled path, and neither side of it was ever decided.  POSIX returns false from
 stdin_has_data() for anything that is not a tty, on purpose, so BDOS 6, BDOS 11
-and BIOS CONST never see a pipe or a file there.  windows answers for a pipe,
-and now for a file as well.  that means a guest which polls BDOS 11 or BIOS
-CONST as a break check while reading its real input through BDOS 1 can take a
-byte of its own script on windows and cannot on linux.  the windows half was
-already like that for pipes before any of this, so making files match was the
-smaller of the two changes available.  which behaviour is right was never
-decided and still is not.  what has changed is that both sides are now pinned by
-tests rather than only described: "a polled read takes nothing from a file" and
-"... from a pipe" in tests/pty_console.cc against "polled input arrives from a
-file, not only from a pipe" in tests/win_console.cc, the same guest printing T
-on POSIX and 41 T on windows.
+and BIOS CONST never see a pipe or a file there.  windows answers for both
+(os/windows/platform.cc:200-219): a pipe through PeekNamedPipe, a file from its
+own position.  that means a guest which polls BDOS 11 or BIOS CONST as a break
+check while reading its real input through BDOS 1 can take a byte of its own
+script on windows and cannot on linux.  the windows half was already like that
+for pipes before any of this, so making files match was the smaller of the two
+changes available.  whichever way it is settled, three tests move with it: "a
+polled read takes nothing from a file" and "... from a pipe" in
+tests/pty_console.cc:773,776 against "polled input arrives from a file, not only
+from a pipe" in tests/win_console.cc:422 - the same guest printing T on POSIX
+and 41 T on windows.
 
-- the comment in os/linux/platform.cc about ISTRIP and the four console read
-sites contradict each other.  the comment says the 8th bit survives, and it does
-survive the line discipline - measured, 128 of 128 high bytes reach read()
-unchanged - but every read site then does `& 0x7F`, so the guest never sees one.
-feeding the UTF-8 bytes for e-acute, alpha, pound and em-dash to the emulator
-gives the guest C3 29 4E 31 42 23 62 00 14 after masking, and on the polled path
-a byte that masks to 0x00 is dropped entirely, because BDOS 6 reads 0 as "no
+- the ISTRIP comment in os/linux/platform.cc and the four console read sites
+contradict each other.  the comment (:122 and :130) says the 8th bit survives,
+and it does survive the line discipline - measured, 128 of 128 high bytes reach
+read() unchanged - but all four sites then do `& 0x7F`: cpmemu.cc:1591 (BDOS 1),
+:1771 (BDOS 10 buffer store), :2361 (BDOS 6) and :2799 (BIOS CONIN).  feeding
+the UTF-8 bytes for e-acute, alpha, pound and em-dash to the emulator gives the
+guest C3 29 4E 31 42 23 62 00 14 after masking, and on the polled path a byte
+that masks to 0x00 is dropped entirely, because BDOS 6 reads 0 as "no
 character".  whether CP/M should see 8 bits is a real question; what is not in
 question is that the two statements cannot both stand.
 
 - there is no macOS release path and the pieces that would make one do not work.
-`make STATIC=1` cannot link at all: the Apple linker has no crt0.o and there is
-no static libc or libc++.  `make shared` writes libqkz80.so with a bare install
-name that dyld cannot resolve from anywhere, and Apple's linker prefers it over
-libqkz80.a in the same -L directory, so a consumer links clean and aborts at
-exec; `make install-lib` then points qkz80.pc at it.  cpack names the archive
-cpmemu-4.6.0-Darwin.tar.gz with no architecture, and the same is true of every
-non-Windows platform, so linux amd64 and arm64 collide identically.  none of
-this breaks CI today, because .github/workflows/release.yml builds on
-ubuntu-latest and ubuntu-24.04-arm only - they are traps for whoever adds a
-macOS job.  a downloaded binary would also need notarizing or the user needs
-`xattr -d com.apple.quarantine`: measured, a build tagged with the quarantine
-attribute is refused by spctl and killed on exec.
+`make STATIC=1` (src/makefile:13) cannot link at all: the Apple linker has no
+crt0.o and there is no static libc or libc++.  `make shared`
+(src/makefile:28,48-49,65) writes libqkz80.so with a bare install name that dyld
+cannot resolve from
+anywhere, and Apple's linker prefers it over libqkz80.a in the same -L
+directory, so a consumer links clean and aborts at exec; `make install-lib`
+(makefile:104) then points qkz80.pc at it.  src/CMakeLists.txt:58-70 never sets
+CPACK_PACKAGE_FILE_NAME, so cpack names the archive cpmemu-4.6.0-Darwin.tar.gz
+with no architecture, and the same is true of every non-Windows platform, so
+linux amd64 and arm64 collide identically.  none of this breaks CI today,
+because .github/workflows/release.yml:22-31 builds on ubuntu-latest and
+ubuntu-24.04-arm only - they are traps for whoever adds a macOS job.  a
+downloaded binary would also need notarizing or the user needs `xattr -d
+com.apple.quarantine`: measured, a build tagged with the quarantine attribute is
+refused by spctl and killed on exec.
 
-- tests/8080EXM.COM is in the tree, is referenced by nothing, and fails: 25 of
-25 groups mismatch in Z80 mode and 20 of 25 under --8080.  zexdoc and zexall
-pass 67 groups each with no mismatches, so the Z80 core is not in question; this
-is 8080 flag semantics.  either wire it into tests/run_tests.sh and fix what it
-finds, or say in tests/README.md why it is not run.
+- tests/8080EXM.COM is in the tree, is referenced by nothing in
+tests/run_tests.sh, and fails: 25 of 25 groups mismatch in Z80 mode and 20 of 25
+under --8080.  zexdoc and zexall pass 67 groups each with no mismatches, so the
+Z80 core is not in question; this is 8080 flag semantics.  either wire it into
+tests/run_tests.sh and fix what it finds, or say in tests/README.md why it is
+not run - that file still does not mention 8080 at all.  note tests/8080/ holds
+a second copy (8080exm.com, 8080exer.com, 8080pre.com) with sources and a README
+of its own, equally unrun.
 
 - the 14 tests/*.cc unit tests are built by nothing - not run_tests.sh, not any
-make target - and compiled binaries for some of them are committed beside the
-sources.  either wire them in or delete them and the stale binaries.  the ADM-3A
-to ANSI output translator has no test at all either: every expected string in
-the suite is plain ASCII, so nothing ever puts a byte into it that changes state.
+make target - and 15 compiled binaries are committed beside the sources, two of
+which (test_8080_baseline, test_commit_4c7bd4d) have no source in the tree at
+all.  either wire them in or delete them and the stale binaries.  the ADM-3A to
+ANSI output translator (console_output(), cpmemu.cc:2805) has no test either:
+every expected string in the suite is plain ASCII, so nothing ever puts a byte
+into it that changes term_state.
 
 - src/qkz80*.{cc,h} is compiled directly by three other emulators and nothing
-here says so.  README lists them as related projects; what it does not record is
+here says so.  README's Related Projects lists them; what it does not record is
 that they do not depend on a cpmemu *release* - they build these source files
 out of a sibling working tree, so an edit to qkz80.cc lands in all three on
 their next build, with no version gate and no notification:
@@ -132,8 +145,3 @@ their next build, with no version gate and no notification:
   the three before changing qkz80's public surface.  they compile with -Wall and
   ioscpm builds as Objective-C++ for arm64, which is stricter than this repo's
   own build in places.
-
-- there is no issue tracker or TODO convention in this repo (docs/archive holds
-stale narrative notes, and README.md has no Contributing section), which is why
-this file exists. github issues on avwohl/cpmemu is the only other mechanism
-available.
