@@ -16,6 +16,13 @@ src/cpmemu
 src/cpmemu.exe
 *.exe
 
+# Test binaries.  Fifteen of these were committed beside their sources once,
+# two of them with no source left in the tree at all, and nothing built or ran
+# any of them.
+src/unit_8080
+tests/pty_console
+tests/win_console
+
 # Windows packaging artifacts
 dist/
 packaging/windows/Assets/

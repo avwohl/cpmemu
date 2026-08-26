@@ -16,11 +16,12 @@
 # with explicit \r\n.
 #
 # Usage: tests/run_tests.sh [--zex] [--help]
-#   --zex   also run zexdoc and zexall.  Each takes about 7 minutes on the
-#           machine this was measured on - 13m46s for the pair, 67 groups
-#           each - so they are opt-in rather than part of the default run.
-#           The cap defaults to an hour apiece, which is generous headroom
-#           for slower hardware; override it with CPMEMU_ZEX_TIMEOUT
+#   --zex   also run zexdoc, zexall and 8080EXM.  zexdoc and zexall take about
+#           7 minutes each on the machine this was measured on - 13m46s for the
+#           pair, 67 groups each - and 8080EXM adds 25 more groups under --8080
+#           in 3m41s, so all three are opt-in rather than part of the default
+#           run.  The cap defaults to an hour apiece, which is generous
+#           headroom for slower hardware; override it with CPMEMU_ZEX_TIMEOUT
 #           (seconds).
 
 set -u
@@ -35,7 +36,7 @@ for arg in "$@"; do
     case $arg in
         --zex)  run_zex=1 ;;
         --help|-h)
-            sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *)
             echo "unknown option: $arg (try --help)" >&2
@@ -126,13 +127,17 @@ check() {
     fi
 }
 
-# check_zex <name> <program.com>
+# check_zex <name> <program.com> [emulator options...]
 # zexdoc and zexall print one line per instruction group ending in "OK", a
 # line containing "ERROR" on a CRC mismatch, and "Tests complete" at the end.
+# 8080EXM.COM is the same exerciser converted to the 8080 and prints
+# "PASS! crc is:xxxxxxxx" where the other two print "OK", so both spellings
+# count as a finished group here.
 # The run goes straight to a file rather than through a pipe, so `timeout`'s
 # own exit status is visible instead of being replaced by the last stage's.
 check_zex() {
     local name=$1 prog=$2
+    shift 2
     local out=$tmp/zex rc groups errors
 
     if [ ! -f "$root/$prog" ]; then
@@ -141,10 +146,10 @@ check_zex() {
         return
     fi
 
-    printf '      %s: running, about 7 minutes, cap %ss\n' "$name" "$zex_timeout"
-    run_bounded "$zex_timeout" "$emu" "$root/$prog" >"$out" 2>/dev/null </dev/null
+    printf '      %s: running, minutes rather than seconds, cap %ss\n' "$name" "$zex_timeout"
+    run_bounded "$zex_timeout" "$emu" "$@" "$root/$prog" >"$out" 2>/dev/null </dev/null
     rc=$?
-    groups=$(grep -c 'OK$' "$out")
+    groups=$(grep -cE 'OK$|PASS!' "$out")
     errors=$(grep -c 'ERROR' "$out")
 
     if [ $rc -eq 124 ]; then
@@ -266,12 +271,12 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: install pasmo or z80asm)"
-    # 25 checks live behind this gate, not the 6 an earlier version counted
-    skipped=$((skipped + 25))
+    # 26 checks live behind this gate, not the 6 an earlier version counted
+    skipped=$((skipped + 26))
 else
     echo
     asm_ok=1
-    for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren cli_tail con_eof con_spin; do
+    for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren cli_tail con_eof con_spin adm3a; do
         if ! assemble "$root/tests/$src.asm" "$tmp/$src.com" >"$tmp/asm.log" 2>&1; then
             echo "FAIL  assembling tests/$src.asm"
             sed 's/^/        /' <"$tmp/asm.log"
@@ -454,10 +459,50 @@ else
             failed=$((failed + 1))
         fi
 
+        # --- the ADM-3A to ANSI output translator ---------------------------
+        # Every other expected string in this suite is plain ASCII, so nothing
+        # else ever puts a byte into console_output() that changes term_state:
+        # the four-state escape parser, ESC = cursor addressing and the Kaypro
+        # ESC G attribute byte were reachable by no test at all.  tests/adm3a.asm
+        # sends one of everything and this is the exact translation.
+        printf 'program = %s/adm3a.com\n' "$tmp" >"$tmp/adm3a.cfg"
+        check_drive "console: ADM-3A sequences become ANSI" "$tmp/adm3a.com" "$tmp/adm3a.cfg" "" \
+            'A\033[2J\033[H\033[K\033[J\033[7m\033[0m\033[7m\033[2m\033[0m\033[3;6H\033[2J\033[H\033[H\033[A\033[C\010\007\033q\r\nZ'
+
         # With no drive_X at all, resolution must be what it always was.
         printf 'program = %s/drv_read.com\n' "$tmp" >"$tmp/nodrv.cfg"
         check_drive "drive: none configured behaves as before" "$tmp/drv_read.com" "$tmp/nodrv.cfg" \
             "ZONLY.TXT" 'ZZZ'
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 8080 mode.
+#
+# --8080 is a real feature and nothing tested it. zexdoc and zexall cover the
+# Z80 core, but they run the CPU as a Z80, so every rule that makes 8080 mode
+# different was reachable by no test at all. tests/unit_8080.cc links the CPU
+# core directly and walks the input space where it is small enough to walk:
+# 3.1 million ALU cases, 65536 per 16-bit increment, checked against the
+# documented 8080 rules rather than against a recording of this emulator.
+# ---------------------------------------------------------------------------
+
+echo
+unitlog=$tmp/unit.log
+if ! make -C "$root/src" unit_8080 >"$tmp/unitbuild.log" 2>&1; then
+    printf 'FAIL  8080 unit tests (unit_8080 did not build)\n'
+    sed 's/^/        /' <"$tmp/unitbuild.log" | head -15
+    failed=$((failed + 1))
+else
+    "$root/src/unit_8080" >"$unitlog" 2>&1
+    grep -v -e '^[0-9][0-9]* groups' -e '^cpmemu 8080' -e '^====' -e '^$' "$unitlog"
+    if grep -q '^\(PASS\|FAIL\)  ' "$unitlog"; then
+        passed=$((passed + $(grep -c '^PASS  ' "$unitlog")))
+        failed=$((failed + $(grep -c '^FAIL  ' "$unitlog")))
+    else
+        printf 'FAIL  8080 unit tests (unit_8080 reported nothing)\n'
+        tail -5 "$unitlog" | sed 's/^/        /'
+        failed=$((failed + 1))
     fi
 fi
 
@@ -592,14 +637,21 @@ case $(uname -s) in
         ;;
 esac
 
+# 8080EXM.COM is the 8080 counterpart of zexdoc: same machinery, 25 instruction
+# groups, converted to the 8080 by Ian Bartholomew and CRCs taken from real
+# hardware.  It is run under --8080 because in Z80 mode it is measuring the
+# wrong processor and every group mismatches.  It sat in the tree referenced by
+# nothing until it was wired in here, and the two 8080-mode bugs it then found
+# are in the changelog.
 if [ $run_zex -eq 1 ]; then
     echo
     check_zex "zexdoc (documented instructions)" tests/zexdoc.com
     check_zex "zexall (all instructions)"        tests/zexall.com
+    check_zex "8080EXM (8080 mode)"              tests/8080EXM.COM --8080
 else
     echo
-    echo "SKIP  zexdoc and zexall (pass --zex to run them)"
-    skipped=$((skipped + 2))
+    echo "SKIP  zexdoc, zexall and 8080EXM (pass --zex to run them)"
+    skipped=$((skipped + 3))
 fi
 
 echo

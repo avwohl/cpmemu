@@ -5,7 +5,13 @@ all: cpmemu
 # the bug that reported any file of 256 GiB or more to the guest as empty.
 # -Wconversion is deliberately NOT here - it adds 125 more, all of them the Z80
 # core's intended mod-256 wraps.
-CXXFLAGS = -std=c++11 -Wall -Wextra -Wshorten-64-to-32 -O2 -I.
+#
+# -Wshorten-64-to-32 is Clang-only, and GCC does not ignore an unknown -W flag,
+# it fails the compile.  Probing for it is not tidiness: hardcoded, it stopped
+# every GCC build on the first object file, release.yml's ubuntu-latest and
+# ubuntu-24.04-arm jobs included.
+SHORTEN_64_TO_32 := $(shell $(CXX) -Wshorten-64-to-32 -x c++ -fsyntax-only /dev/null 2>/dev/null && echo -Wshorten-64-to-32)
+CXXFLAGS = -std=c++11 -Wall -Wextra $(SHORTEN_64_TO_32) -O2 -I.
 CXXFLAGS_PIC = $(CXXFLAGS) -fPIC
 
 # For static builds (better portability)
@@ -65,6 +71,20 @@ lib: $(LIB_STATIC)
 shared: $(LIB_SHARED)
 libs: $(LIB_STATIC) $(LIB_SHARED)
 
+# Unit tests that link the CPU core directly rather than running a CP/M guest,
+# so a failure names the instruction, the operands and the flag bit instead of a
+# CRC over sixty thousand cases.  There used to be fifteen ad-hoc programs in
+# tests/ for this and no build file mentioned any of them; they had rotted past
+# compiling against qkz80's own constructor and every one of them returned 0
+# whatever the CPU did.  tests/run_tests.sh builds and runs this too.
+UNIT_TESTS = unit_8080
+
+unit_8080: ../tests/unit_8080.cc $(LIB_STATIC)
+	$(CXX) $(CXXFLAGS) $< $(LIB_STATIC) -o $@
+
+unit: $(UNIT_TESTS)
+	@for t in $(UNIT_TESTS); do ./$$t || exit 1; done
+
 test: cpmemu
 	@echo "Running quick tests..."
 	@echo "Simple console (should print ABC):"
@@ -79,7 +99,7 @@ test: cpmemu
 	@echo "All tests completed!"
 
 clean:
-	@rm -f cpmemu *.o *.pic.o *.a *.so *.pc *~
+	@rm -f cpmemu $(UNIT_TESTS) *.o *.pic.o *.a *.so *.pc *~
 
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin

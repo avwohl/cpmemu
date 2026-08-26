@@ -15,6 +15,35 @@ Everything below has landed since the `v4.6.0` tag and is not yet in a release.
 
 ### Added
 
+- **8080 mode is tested, and `tests/8080EXM.COM` is wired in.** `--8080` is a
+  real feature and nothing tested it: zexdoc and zexall are thorough but they
+  run the CPU as a Z80, so every rule that makes 8080 mode different — parity
+  instead of overflow, the auxiliary carry, the fixed flag bits, no N flag —
+  was reachable by no test at all. Two things close that. `tests/unit_8080.cc`
+  links the CPU core directly and walks the input space where it is small
+  enough to walk: 3.1 million ALU cases across the register, immediate and
+  memory forms, 65536 per 16-bit increment, every value of the flag byte,
+  checked against the documented 8080 rules written out in the test rather than
+  against a recording of this emulator. It runs in under a second and is part
+  of the default `run_tests.sh`; `make -C src unit` runs it alone. And
+  `tests/8080EXM.COM` — Ian Bartholomew's 8080 conversion of the same exerciser,
+  in the tree and referenced by nothing since the first commit — now runs under
+  `--zex` with `--8080`. It was right and the emulator was wrong: 19 of its 25
+  groups mismatched, and both causes are fixed below. All 25 pass now.
+- **The ADM-3A to ANSI output translator is tested.** Every other expected
+  string in the suite is plain ASCII, so nothing anywhere put a byte into
+  `console_output()` that changed `term_state`: the four-state escape parser,
+  `ESC =` cursor addressing and the Kaypro `ESC G` attribute byte were covered
+  by nothing. `tests/adm3a.asm` sends one of each, plus the control codes and
+  an unknown escape, and the expectation is the exact ANSI byte string.
+- **A suspend and a resume are tested, and so is a background start.** The two
+  new cases at the end of `tests/pty_console.cc` build a session and a stand-in
+  shell of their own, because a shell is what makes the bug below visible and
+  the rest of that harness is deliberately not one. Worth knowing if you extend
+  them: a child in an orphaned process group has `SIGTSTP` discarded rather than
+  delivered, so the simpler setup cannot stage a stop at all — an earlier draft
+  reported "SIGTSTP did not stop the emulator" and was measuring its own
+  scaffolding.
 - **The Windows console is tested on a real console.** `tests/win_console.cc`
   starts the emulator with stdin bound to the console it is attached to, writes
   the `INPUT_RECORD`s a keyboard produces with `WriteConsoleInput`, and compares
@@ -59,10 +88,65 @@ Everything below has landed since the `v4.6.0` tag and is not yet in a release.
   virtual call at every traced event. The three downstream ports picked it up on
   their next build without being told.
 - `--ctrl-c-exit` / `--no-ctrl-c-exit` and a `ctrl_c_exit` config directive.
-- `-Wextra` and `-Wshorten-64-to-32` are on in `src/makefile`.
+- `-Wextra` is on in `src/makefile`, and `-Wshorten-64-to-32` where the
+  compiler has it (see Fixed, below).
 
 ### Fixed
 
+- **`-Wshorten-64-to-32` stopped every GCC build**, `release.yml`'s
+  `ubuntu-latest` and `ubuntu-24.04-arm` jobs included. It is a Clang-only
+  option and GCC does not ignore an unknown `-W` flag, it fails the compile, so
+  the build died on the first object file. `src/makefile` probes for it now and
+  adds it only where it exists. Release-blocking: the flag and the breakage
+  arrived in the same unreleased change, so nothing released carries it and
+  nothing released would have built either.
+- **`DAA` in 8080 mode always subtracted.** It read bit 1 of the flag register
+  as the Z80's N flag, and 8080 mode forces that bit to 1 because that is what
+  an 8080's flag register reads back — so every `DAA` under `--8080` took the
+  subtract path. `DAA` on `1Ah` gave `14h` where an 8080 gives `20h`; on `9Ch`
+  it gave `36h` where an 8080 gives `02h` with carry. That is every BCD program
+  under `--8080`, not an edge case, and it is in `v4.6.0` and every tag before
+  it. Z80
+  mode is untouched by this and by the fix below — both are gated on the mode,
+  no public signature changed, and zexdoc and zexall still report 67 groups each
+  with no mismatches, which matters because three other emulators compile
+  `src/qkz80*` directly out of this tree.
+- **`CMA`, `STC` and `CMC` wrote the Z80's half carry in 8080 mode.** On the
+  8080 `CMA` affects no condition bit and `STC` and `CMC` affect only the carry;
+  the bit the Z80 rules were writing there is the 8080's auxiliary carry, which
+  a following `DAA` reads. This is why 19 of `8080EXM`'s 25 groups mismatched
+  rather than the two that name `DAA` and the rotates: the exerciser's own
+  harness runs an `STC` after every test instruction, to put back the carry it
+  clobbered reading the stack pointer, and that `STC` was clearing the auxiliary
+  carry the instruction under test had just produced. A wrong `STC` corrupted
+  the recorded state of almost every group, `MOV` and `MVI` included, which set
+  no flags at all.
+- **Suspend and resume left the emulator on a cooked terminal for the rest of
+  its life.** `enable_raw_mode()` ran once, at startup, and nothing re-applied
+  it, while bash and zsh write their own termios back when they take a job into
+  the foreground. Measured against a real interactive bash: `kill -TSTP`, then
+  `fg`, and the guest received none of what was typed at it — the line
+  discipline echoed `B.` back to the shell instead, and the emulator had to be
+  killed. There is a `SIGTSTP` handler now that puts the terminal back before
+  the process stops, and a `SIGCONT` handler that takes it again; after the fix
+  the same script gets `42 2E` and a clean exit. Of the two, the resume is the
+  one a bash user sees — bash and zsh write their own termios over the stopped
+  job's terminal anyway, so they mask the first half — but a terminal handed
+  back raw is still the emulator's own bug wherever the parent is not a
+  job-control shell, and `tests/pty_console.cc` asserts it directly rather than
+  through what a shell happens to paper over. The unblock in the `SIGTSTP`
+  handler is not decoration: `signal()` gives BSD semantics, which block the
+  signal for the duration of its own handler, so a bare `raise()` there only
+  marks it pending and the emulator keeps running. `SIGCONT` is handled
+  separately rather than folded in, because `SIGSTOP` cannot be caught at all
+  and `SIGTTIN`/`SIGTTOU` stop the process without going near `SIGTSTP` — that
+  last one is `cpmemu prog.com &` followed by `fg`, where the `tcsetattr` in
+  `enable_raw_mode()` runs in a background process group. On Linux that
+  interrupted `ioctl` is restarted after the `fg` and completes with no handler
+  involved, so the handler is what a platform returning `EINTR` needs. One thing
+  it cannot fix, said plainly: a shell that writes the terminal *after* sending
+  `SIGCONT` is racing the handler, and nothing here can win that race. bash and
+  zsh hand the terminal over first.
 - **The status calls lied about buffered input.** `stdin_has_data()` selected on
   the raw fd while `console_getchar()` went through `getchar()`; a single
   `read(2)` pulls a whole burst into stdio's buffer, `select()` cannot see past
@@ -129,6 +213,22 @@ Everything below has landed since the `v4.6.0` tag and is not yet in a release.
   being a `2>&1` that forced a `grep -v` filter which deleted test 1's output
   outright. `make_test.sh`, `test_emulator.sh` and `test_ixh_debug.sh` had the
   same faults and are fixed the same way.
+
+### Removed
+
+- **Fifteen compiled test binaries, and fifteen dead sources — not quite the
+  same set.** The binaries were build output committed into `tests/`, two of
+  them (`test_8080_baseline`, `test_commit_4c7bd4d`) with no source in the tree
+  at all, and two of the sources had no binary. Nothing built or ran any of it:
+  no make target, no `run_tests.sh` line. The sources had rotted past compiling
+  — `qkz80` has taken a memory object in its constructor for a long time and
+  `get_mem()` returns `qkz80_uint8*`, so all fifteen fail on their first two
+  lines — and every one of them printed its result and returned 0 whatever the
+  CPU did, so wiring them in as they stood would have added fifteen tests that
+  could not fail. `tests/unit_8080.cc` covers what they were reaching for, with
+  assertions and an exit status.
+  `.gitignore` now names the binaries the current tests build — `unit_8080`,
+  `pty_console`, `win_console` — so those cannot be committed by accident.
 
 ### Documentation
 

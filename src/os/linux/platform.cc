@@ -28,6 +28,13 @@ static struct termios original_termios;
 static bool termios_saved = false;   // original_termios holds the real thing
 static bool raw_active = false;      // and we have replaced it
 
+// The raw settings themselves, computed once by enable_raw_mode().  A resume
+// has to put these back from inside a signal handler, where recomputing them
+// is not on: tcgetattr would read whatever the shell just left on the terminal
+// rather than the terminal we started with.
+static struct termios raw_termios;
+static bool raw_wanted = false;      // raw mode is what this run should be in
+
 // TCSANOW rather than TCSAFLUSH here and below, for two measured reasons.
 //
 // TCSAFLUSH discards the input queue.  On the way out that means anything the
@@ -47,11 +54,36 @@ static bool raw_active = false;      // and we have replaced it
 // still queued sets PENDIN in its lflag, because the line discipline has raw
 // bytes to reprocess now that canonical mode is back.  That bit is the
 // driver's bookkeeping, not ours, and it clears itself on the next read.
-void disable_raw_mode() {
+//
+// Split in two because a suspend needs the first half without the second: the
+// shell has to get a usable terminal while we are stopped, but this run is
+// still meant to be raw when it comes back.  disable_raw_mode() is the way out
+// for good and says so by clearing raw_wanted, so a SIGCONT arriving after the
+// atexit handler cannot re-raw a terminal we have already handed over.
+static void unapply_raw_mode() {
     if (raw_active) {
         tcsetattr(STDIN_FILENO, TCSANOW, &original_termios);
         raw_active = false;
     }
+}
+
+// The other half: put back the settings enable_raw_mode() computed, rather
+// than recomputing them.  A resume runs this from a signal handler, where a
+// fresh tcgetattr would read whatever the shell just wrote to the terminal
+// instead of the terminal we were started on.  tcsetattr is on the list of
+// functions a handler may call, which is what makes doing it from here legal.
+static void apply_raw_mode() {
+    if (!raw_wanted || raw_active) {
+        return;
+    }
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &raw_termios) == 0) {
+        raw_active = true;
+    }
+}
+
+void disable_raw_mode() {
+    unapply_raw_mode();
+    raw_wanted = false;
 }
 
 // Signals that end the process without running atexit(), which leaves the
@@ -80,6 +112,59 @@ static void restore_terminal_and_die(int sig) {
     raise(sig);
 }
 
+// Suspend and resume.
+//
+// enable_raw_mode() ran once, at startup, and nothing re-applied it.  Both bash
+// and zsh write their own termios back to the terminal when they take a job
+// into the foreground, so a stop and an fg left the emulator running against a
+// canonical terminal for the rest of its life: the guest saw nothing until CR
+// and then got the whole line at once, and ISIG being on again meant the next
+// ^Z stopped it rather than reaching the guest as 1A.
+//
+// The terminal has to go back before the process stops, not after it resumes,
+// or the shell gets its prompt on a terminal with no echo and no line editing.
+// Restoring, then re-raising with the default disposition, is what makes the
+// process actually stop rather than carry on from a handler that returned - and
+// the unblock is not optional: signal() gives BSD semantics, which block the
+// signal for the duration of its own handler, so a bare raise() here would only
+// mark it pending and the emulator would keep running.
+static void suspend_for_shell(int sig) {
+    int saved_errno = errno;
+    sigset_t just_this, previous;
+
+    unapply_raw_mode();
+    signal(sig, SIG_DFL);
+    sigemptyset(&just_this);
+    sigaddset(&just_this, sig);
+    sigprocmask(SIG_UNBLOCK, &just_this, &previous);
+    raise(sig);                                 // stops here until SIGCONT
+    sigprocmask(SIG_SETMASK, &previous, NULL);
+    signal(sig, suspend_for_shell);
+
+    errno = saved_errno;
+}
+
+// The half that does the work, and deliberately not folded into the handler
+// above: SIGSTOP cannot be caught at all, and SIGTTIN and SIGTTOU stop the
+// process without going anywhere near SIGTSTP, so a resume from any of those
+// reaches only here.  SIGTTOU is not hypothetical: `cpmemu prog.com &` puts the
+// tcsetattr in enable_raw_mode() in a background process group, where the
+// terminal driver stops the process rather than letting the call through, and
+// the fg that follows resumes it here.  Linux restarts the interrupted ioctl at
+// that point and completes it with no handler involved, so on Linux this is
+// belt and braces; a platform that returns EINTR instead needs it.
+//
+// One thing this cannot fix, and it is worth being plain about: a shell that
+// writes the terminal *after* sending SIGCONT is racing this handler, and
+// nothing here can win that race.  bash and zsh both hand the terminal over
+// first, which is the order tests/pty_console.cc reproduces.
+static void resume_from_shell(int sig) {
+    int saved_errno = errno;
+    (void)sig;
+    apply_raw_mode();
+    errno = saved_errno;
+}
+
 void enable_raw_mode() {
     if (!is_terminal()) {
         return;
@@ -102,6 +187,15 @@ void enable_raw_mode() {
             if (signal(restore_signals[i], restore_terminal_and_die) == SIG_IGN) {
                 signal(restore_signals[i], SIG_IGN);
             }
+        }
+        // Same rule for the job control pair: a shell with job control switched
+        // off ignores SIGTSTP on its children's behalf, and re-arming it here
+        // would stop a process that was meant to be unstoppable.
+        if (signal(SIGTSTP, suspend_for_shell) == SIG_IGN) {
+            signal(SIGTSTP, SIG_IGN);
+        }
+        if (signal(SIGCONT, resume_from_shell) == SIG_IGN) {
+            signal(SIGCONT, SIG_IGN);
         }
     }
 
@@ -134,9 +228,14 @@ void enable_raw_mode() {
     // TCSAFLUSH here used to throw away whatever the user had already typed:
     // measured on macOS, bytes typed at the shell before the emulator reached
     // this line were echoed, then discarded, and the guest never saw them.
-    if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) == 0) {
-        raw_active = true;
-    }
+    //
+    // raw_wanted is set before the tcsetattr rather than after it, because the
+    // tcsetattr is exactly where a background start is stopped by SIGTTOU: the
+    // resume handler runs while this call is still outstanding, and it has to
+    // find a run that already knows it is supposed to be raw.
+    raw_termios = raw;
+    raw_wanted = true;
+    apply_raw_mode();
 }
 
 bool is_terminal() {

@@ -38,8 +38,9 @@ without running atexit, so disable_raw_mode() never runs.  measured: the child
 exits 0xC000013A and the console mode stays at 0x1A0 instead of returning to
 0x1F7, which leaves the shell with no echo.  a SetConsoleCtrlHandler that
 restores the mode and exits would fix it; the install loop in
-os/linux/platform.cc:67-105 is the shape to copy, and its POSIX half is done -
-seven cases in tests/pty_console.cc hold it to that.
+os/linux/platform.cc:173-200 is the shape to copy, and its POSIX half is done -
+seven kill cases in tests/pty_console.cc hold it to that, and two more hold the
+job control pair beside it.
 
 - neither windows bug above has a regression test, because tests/win_console.cc
 cannot reach either.  inject_spec()'s single-character branch goes through
@@ -47,23 +48,8 @@ VkKeyScanA and casts one byte to WCHAR, so no character above U+00FF can be
 named and no code page is set anywhere in tests/; and nothing in the harness
 calls GenerateConsoleCtrlEvent.  Both are small additions.
 
-- suspend and resume leaves the emulator cooked for the rest of its life.
-there is no SIGTSTP or SIGCONT handler; enable_raw_mode() is called once and
-nothing re-applies it, while both zsh and bash restore the pre-raw termios when
-a job is brought back to the foreground.  measured on macOS with real job
-control: after kill -TSTP and fg, ICANON, ECHO, ISIG, IEXTEN, ICRNL, IXON and
-OPOST are all back on, the guest sees nothing until CR and then gets the whole
-line at once, and ISIG being on means the next ^Z suspends it again rather than
-reaching the guest.  a second route needs no kill at all: `cpmemu prog.com &`
-then fg, where the tcsetattr in enable_raw_mode() runs in a background process
-group, is interrupted by SIGTTOU and returns EINTR - the return value is now
-checked, so raw mode is correctly not claimed, but it is also never applied.
-the fix is a SIGTSTP handler that restores before stopping and a SIGCONT handler
-that re-applies; the state bookkeeping it needs (original_termios kept across a
-disable, raw_active separate, os/linux/platform.cc:27-29) is already in place.
-
 - a guest polling BDOS 6 against redirected input still spins on POSIX.
-stdin_has_data() (os/linux/platform.cc:146) returns false for anything that is
+stdin_has_data() (os/linux/platform.cc:245) returns false for anything that is
 not a tty, so the read at cpmemu.cc:2349 is never reached, note_console_eof()
 never counts, and the 1024-read give-up that ends a windows run cannot fire.
 blocked on the item below; it is not fixable on its own.
@@ -79,12 +65,12 @@ script on windows and cannot on linux.  the windows half was already like that
 for pipes before any of this, so making files match was the smaller of the two
 changes available.  whichever way it is settled, three tests move with it: "a
 polled read takes nothing from a file" and "... from a pipe" in
-tests/pty_console.cc:773,776 against "polled input arrives from a file, not only
+tests/pty_console.cc:778,781 against "polled input arrives from a file, not only
 from a pipe" in tests/win_console.cc:422 - the same guest printing T on POSIX
 and 41 T on windows.
 
 - the ISTRIP comment in os/linux/platform.cc and the four console read sites
-contradict each other.  the comment (:122 and :130) says the 8th bit survives,
+contradict each other.  the comment (:216 and :224) says the 8th bit survives,
 and it does survive the line discipline - measured, 128 of 128 high bytes reach
 read() unchanged - but all four sites then do `& 0x7F`: cpmemu.cc:1591 (BDOS 1),
 :1771 (BDOS 10 buffer store), :2361 (BDOS 6) and :2799 (BIOS CONIN).  feeding
@@ -95,13 +81,13 @@ character".  whether CP/M should see 8 bits is a real question; what is not in
 question is that the two statements cannot both stand.
 
 - there is no macOS release path and the pieces that would make one do not work.
-`make STATIC=1` (src/makefile:13) cannot link at all: the Apple linker has no
+`make STATIC=1` (src/makefile:19) cannot link at all: the Apple linker has no
 crt0.o and there is no static libc or libc++.  `make shared`
-(src/makefile:28,48-49,65) writes libqkz80.so with a bare install name that dyld
+(src/makefile:34,54-55,71) writes libqkz80.so with a bare install name that dyld
 cannot resolve from
 anywhere, and Apple's linker prefers it over libqkz80.a in the same -L
 directory, so a consumer links clean and aborts at exec; `make install-lib`
-(makefile:104) then points qkz80.pc at it.  src/CMakeLists.txt:58-70 never sets
+(makefile:124) then points qkz80.pc at it.  src/CMakeLists.txt:58-70 never sets
 CPACK_PACKAGE_FILE_NAME, so cpack names the archive cpmemu-4.6.0-Darwin.tar.gz
 with no architecture, and the same is true of every non-Windows platform, so
 linux amd64 and arm64 collide identically.  none of this breaks CI today,
@@ -111,22 +97,33 @@ downloaded binary would also need notarizing or the user needs `xattr -d
 com.apple.quarantine`: measured, a build tagged with the quarantine attribute is
 refused by spctl and killed on exec.
 
-- tests/8080EXM.COM is in the tree, is referenced by nothing in
-tests/run_tests.sh, and fails: 25 of 25 groups mismatch in Z80 mode and 20 of 25
-under --8080.  zexdoc and zexall pass 67 groups each with no mismatches, so the
-Z80 core is not in question; this is 8080 flag semantics.  either wire it into
-tests/run_tests.sh and fix what it finds, or say in tests/README.md why it is
-not run - that file still does not mention 8080 at all.  note tests/8080/ holds
-a second copy (8080exm.com, 8080exer.com, 8080pre.com) with sources and a README
-of its own, equally unrun.
+- the kill cases in tests/pty_console.cc fail intermittently under load and
+nobody has diagnosed it.  measured on a 2-core linux box: "the terminal is put
+back on a quit" failed once in 40 runs of the harness with 32 spinning
+processes for company, reporting "the emulator had to be killed: it never
+finished", and none in 8 unloaded runs; a --zex run on the same host hit "the
+terminal is put back on a hangup" the same way.  not a regression - the seven
+kill cases are byte for byte what fa2a6b4 has and the console work did not
+touch them.  the suspect is a shared budget: run_case() spends the same
+timeout_ms (10000 for these) first spinning until tcgetattr shows ICANON clear
+(tests/pty_console.cc:430-438) and then waiting for the child to exit (:474), so
+a slow start eats the wait and the case reports a hang that never happened.
+that is a guess, not a measurement.  until it is understood, a green
+run_tests.sh is evidence and not a guarantee, and "0 failed" should not be
+quoted as a property of the suite.
 
-- the 14 tests/*.cc unit tests are built by nothing - not run_tests.sh, not any
-make target - and 15 compiled binaries are committed beside the sources, two of
-which (test_8080_baseline, test_commit_4c7bd4d) have no source in the tree at
-all.  either wire them in or delete them and the stale binaries.  the ADM-3A to
-ANSI output translator (console_output(), cpmemu.cc:2805) has no test either:
-every expected string in the suite is plain ASCII, so nothing ever puts a byte
-into it that changes term_state.
+- the 8080 exerciser is in the tree three times over and only one copy is run.
+tests/8080EXM.COM is wired into run_tests.sh --zex now and passes 25 of 25
+groups; tests/8080exer.com is run by nothing, and tests/8080/ holds a third set
+(8080exm.com and 8080exer.com, byte for byte the same two files, plus
+8080pre.com) with the .mac sources and a README of its own.  8080exer.com is the
+same 25 tests with "OK" where 8080exm prints the CRC, so it is duplication
+rather than coverage.  8080pre.com is not: it is the preliminary test, it runs
+in well under a second, and it passes today - `cpmemu --8080
+tests/8080/8080pre.com` prints "8080 Preliminary tests complete".  worth running
+the preliminary one in the default suite, since it is cheap enough not to need
+--zex, and worth deciding which copy of the rest is canonical and deleting the
+others.
 
 - src/qkz80*.{cc,h} is compiled directly by three other emulators and nothing
 here says so.  README's Related Projects lists them; what it does not record is

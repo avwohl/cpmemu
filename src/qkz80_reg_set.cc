@@ -301,8 +301,18 @@ void qkz80_reg_set::set_flags_from_rotate_acc(qkz80_uint8 result_a, qkz80_uint8 
 
 // CPL - Complement accumulator
 // Sets N=1, H=1, X and Y from result, preserves S, Z, P/V, C
+//
+// The 8080's CMA is the same opcode and affects no condition bit at all.  The
+// H it was setting here is the 8080's auxiliary carry, which a following DAA
+// reads, so a CMA in 8080 mode was handing DAA a half carry the program had
+// never produced.
 void qkz80_reg_set::set_flags_from_cpl(qkz80_uint8 result_a) {
   qkz80_uint8 flags = get_flags();
+
+  if (cpu_mode == MODE_8080) {
+    (void)result_a;
+    return;
+  }
 
   // Set N and H flags
   flags |= (qkz80_cpu_flags::N | qkz80_cpu_flags::H);
@@ -325,8 +335,17 @@ void qkz80_reg_set::set_flags_from_cpl(qkz80_uint8 result_a) {
 
 // SCF - Set carry flag
 // Sets C=1, N=0, H=0, X and Y from A, preserves S, Z, P/V
+//
+// The 8080's STC affects the carry and nothing else, so the H clear below is
+// wrong there: it was throwing away an auxiliary carry that the 8080 keeps.
 void qkz80_reg_set::set_flags_from_scf(qkz80_uint8 a_val) {
   qkz80_uint8 flags = get_flags();
+
+  if (cpu_mode == MODE_8080) {
+    (void)a_val;
+    set_flags(flags | qkz80_cpu_flags::CY);
+    return;
+  }
 
   // Set carry
   flags |= qkz80_cpu_flags::CY;
@@ -352,9 +371,19 @@ void qkz80_reg_set::set_flags_from_scf(qkz80_uint8 a_val) {
 
 // CCF - Complement carry flag
 // Sets C=NOT(C), N=0, H=old C, X and Y from A, preserves S, Z, P/V
+//
+// The 8080's CMC complements the carry and leaves every other condition bit
+// alone.  H taking the old carry is a Z80 rule, and in 8080 mode that bit is
+// the auxiliary carry.
 void qkz80_reg_set::set_flags_from_ccf(qkz80_uint8 a_val) {
   qkz80_uint8 flags = get_flags();
   qkz80_uint8 old_carry = (flags & qkz80_cpu_flags::CY) ? 1 : 0;
+
+  if (cpu_mode == MODE_8080) {
+    (void)a_val;
+    set_flags((qkz80_uint8)(flags ^ qkz80_cpu_flags::CY));
+    return;
+  }
 
   // Complement carry
   if (old_carry)

@@ -28,9 +28,13 @@
  * Two deliberate departures from a real login session, both so the harness can
  * see what it is testing:
  *
- *   - the pty is not made the child's controlling terminal.  Nothing under
- *     test needs one (ISIG is cleared, so no key raises a signal), and leaving
- *     it out keeps a hangup from killing the guest before it can report.
+ *   - the pty is not made the child's controlling terminal.  Nothing in the
+ *     case table needs one (ISIG is cleared, so no key raises a signal), and
+ *     leaving it out keeps a hangup from killing the guest before it can
+ *     report.  The two job control cases at the end are the exception and say
+ *     so: a stop and an fg cannot be staged without one, and a child in an
+ *     orphaned process group has SIGTSTP discarded rather than delivered, so
+ *     they build a session and a stand-in shell of their own.
  *
  *   - end of input is delivered through a file, a pipe or /dev/null rather
  *     than by closing the master.  Closing it does work - measured on macOS,
@@ -65,6 +69,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/wait.h>
+#include <sys/ioctl.h>
 #include <string>
 #include <vector>
 
@@ -828,6 +833,458 @@ static const Case cases[] = {
 };
 
 // ============================================================================
+// Job control
+//
+// Two things the case table above cannot reach, because both are about what a
+// shell does to the terminal while the emulator is stopped, and the harness
+// above is deliberately not a shell: it calls setsid() and never claims a
+// controlling terminal, so its children sit in an orphaned process group where
+// SIGTSTP, SIGTTIN and SIGTTOU are discarded rather than delivered.
+//
+//   kill -TSTP, fg   bash and zsh put their own termios back when they take a
+//                    job into the foreground.  enable_raw_mode() ran once, at
+//                    startup, and nothing re-applied it, so the emulator came
+//                    back to a canonical terminal and stayed there for the rest
+//                    of the run: the guest saw nothing until CR and then the
+//                    whole line at once.
+//
+//   cpmemu prog &    the tcsetattr in enable_raw_mode() then runs in a
+//   ... then fg      background process group, where the terminal driver stops
+//                    the process with SIGTTOU rather than letting it through.
+//
+// Both therefore run under a stand-in shell: a session leader that owns the
+// pty, runs the emulator in a process group of its own, and reports through a
+// pipe every time the job stops or is continued.  The harness cannot wait on
+// the job itself - it is the shell's child, not the harness's - so those notes
+// are the only way it can tell a stop from a hang.
+//
+// The shell half is simulated in the order bash uses: hand the terminal over
+// first, then send SIGCONT.  That order is what gives the emulator a chance at
+// all - a shell writing the terminal after the SIGCONT would be racing the
+// handler under test, and nothing here can decide that race for it - so a pass
+// here means the handler works against the shells people have, not against
+// every shell that could exist.
+// ============================================================================
+
+static bool tty_is_raw(int fd) {
+    struct termios t;
+    return tcgetattr(fd, &t) == 0 && (t.c_lflag & ICANON) == 0;
+}
+
+// Where the job is to sit when it starts
+enum JobStart {
+    JobForeground,      // the shell gives it the terminal before it runs
+    JobBackground       // `cpmemu prog.com &`: its tcsetattr meets SIGTTOU
+};
+
+struct Job {
+    pid_t shell;        // the stand-in shell, and the job's parent
+    pid_t pid;          // the emulator
+    int out_fd;
+    int err_fd;
+    int note_fd;
+    Pty pty;
+    struct termios before;
+    std::string notes;  // everything the shell has said so far
+    std::string out;
+    std::string err;
+    std::string tty;
+};
+
+static void job_drain(Job& j) {
+    drain(j.out_fd, j.out);
+    drain(j.err_fd, j.err);
+    drain(j.note_fd, j.notes);
+    drain(j.pty.master, j.tty);
+}
+
+// How many times the shell has reported the given event.  Counting rather than
+// searching, because a case cares about the second STOP as well as the first.
+static int job_note_count(const Job& j, const char* what) {
+    int n = 0;
+    for (size_t at = 0; (at = j.notes.find(what, at)) != std::string::npos; at++) n++;
+    return n;
+}
+
+static bool job_wait_note(Job& j, const char* what, int least, int timeout_ms) {
+    long long start = now_ms();
+    for (;;) {
+        job_drain(j);
+        if (job_note_count(j, what) >= least) return true;
+        if (now_ms() - start >= timeout_ms) return false;
+        usleep(3000);
+    }
+}
+
+static bool job_wait_raw(Job& j, bool want, int timeout_ms) {
+    long long start = now_ms();
+    for (;;) {
+        job_drain(j);
+        if (tty_is_raw(j.pty.slave) == want) return true;
+        if (now_ms() - start >= timeout_ms) return false;
+        usleep(2000);
+    }
+}
+
+static bool job_wait_out(Job& j, const char* want, int timeout_ms) {
+    long long start = now_ms();
+    for (;;) {
+        job_drain(j);
+        if (j.out.find(want) != std::string::npos) return true;
+        if (now_ms() - start >= timeout_ms) return false;
+        usleep(3000);
+    }
+}
+
+static void note(int fd, const char* text) {
+    // In the shell child, with nothing sensible left to do if it fails
+    if (write(fd, text, strlen(text)) < 0) { /* the parent will time out */ }
+}
+
+// Start the emulator under a stand-in shell.  Returns false only if the
+// scaffolding could not be built, which is a fault in the harness or a machine
+// without ptys, not a failure of the emulator.
+static bool job_start(Job& j, const std::string& emu, const std::string& com,
+                      JobStart where, std::string& why) {
+    j.shell = j.pid = -1;
+    j.out_fd = j.err_fd = j.note_fd = -1;
+    j.pty.master = j.pty.slave = -1;
+
+    if (!pty_open(j.pty)) { why = "cannot allocate a pty"; return false; }
+    if (tcgetattr(j.pty.slave, &j.before) != 0) {
+        why = "cannot read the terminal";
+        pty_close(j.pty);
+        return false;
+    }
+
+    int out_pipe[2], err_pipe[2], note_pipe[2];
+    if (pipe(out_pipe) != 0) { why = "cannot make a pipe"; pty_close(j.pty); return false; }
+    if (pipe(err_pipe) != 0 || pipe(note_pipe) != 0) {
+        why = "cannot make a pipe";
+        close(out_pipe[0]); close(out_pipe[1]);
+        pty_close(j.pty);
+        return false;
+    }
+
+    pid_t shell = fork();
+    if (shell < 0) {
+        why = "cannot fork";
+        close(out_pipe[0]); close(out_pipe[1]);
+        close(err_pipe[0]); close(err_pipe[1]);
+        close(note_pipe[0]); close(note_pipe[1]);
+        pty_close(j.pty);
+        return false;
+    }
+
+    if (shell == 0) {
+        close(j.pty.master);
+        close(out_pipe[0]);
+        close(err_pipe[0]);
+        close(note_pipe[0]);
+        setsid();
+#ifdef TIOCSCTTY
+        if (ioctl(j.pty.slave, TIOCSCTTY, 0) != 0) { note(note_pipe[1], "NOCTTY\n"); _exit(2); }
+#else
+        note(note_pipe[1], "NOCTTY\n");
+        _exit(2);
+#endif
+        pid_t job = fork();
+        if (job < 0) { note(note_pipe[1], "NOFORK\n"); _exit(2); }
+        if (job == 0) {
+            // A process group of its own.  Set on both sides of the fork so
+            // that neither the exec nor the tcsetpgrp below can win the race.
+            setpgid(0, 0);
+            close(note_pipe[1]);
+            dup2(j.pty.slave, 0);
+            dup2(out_pipe[1], 1);
+            dup2(err_pipe[1], 2);
+            if (j.pty.slave > 2) close(j.pty.slave);
+            if (out_pipe[1] > 2) close(out_pipe[1]);
+            if (err_pipe[1] > 2) close(err_pipe[1]);
+            execl(emu.c_str(), emu.c_str(), com.c_str(), (char*)NULL);
+            _exit(127);
+        }
+        setpgid(job, job);
+        close(out_pipe[1]);
+        close(err_pipe[1]);
+
+        bool has_terminal = false;
+        if (where == JobForeground) {
+            tcsetpgrp(j.pty.slave, job);
+            has_terminal = true;
+        }
+        char line[64];
+        snprintf(line, sizeof line, "PID %ld\n", (long)job);
+        note(note_pipe[1], line);
+
+        for (;;) {
+            int st = 0;
+            pid_t w = waitpid(job, &st, WUNTRACED | WCONTINUED);
+            if (w != job) {
+                if (errno == EINTR) continue;
+                break;
+            }
+            if (WIFSTOPPED(st)) {
+                note(note_pipe[1], "STOP\n");
+                if (!has_terminal) {
+                    // fg, the way a shell does it: the terminal first, then
+                    // the signal that starts the job running again
+                    tcsetpgrp(j.pty.slave, job);
+                    has_terminal = true;
+                    kill(-job, SIGCONT);
+                }
+            } else if (WIFCONTINUED(st)) {
+                note(note_pipe[1], "CONT\n");
+            } else {
+                note(note_pipe[1], "GONE\n");
+                _exit(WIFEXITED(st) ? WEXITSTATUS(st) : 1);
+            }
+        }
+        _exit(3);
+    }
+
+    close(out_pipe[1]);
+    close(err_pipe[1]);
+    close(note_pipe[1]);
+    j.shell = shell;
+    j.out_fd = out_pipe[0];
+    j.err_fd = err_pipe[0];
+    j.note_fd = note_pipe[0];
+    set_nonblock(j.out_fd);
+    set_nonblock(j.err_fd);
+    set_nonblock(j.note_fd);
+
+    if (!job_wait_note(j, "PID ", 1, 5000)) {
+        why = "the stand-in shell could not set up job control: " + show(j.notes);
+        return false;
+    }
+    size_t at = j.notes.find("PID ");
+    j.pid = (pid_t)atol(j.notes.c_str() + at + 4);
+    return true;
+}
+
+// Take everything down, whatever state it is in.  Returns true if the emulator
+// exited on its own within the grace period.
+static bool job_finish(Job& j, int grace_ms) {
+    bool gone = job_wait_note(j, "GONE\n", 1, grace_ms);
+    if (!gone && j.pid > 0) {
+        kill(j.pid, SIGCONT);
+        kill(j.pid, SIGKILL);
+    }
+    if (j.shell > 0) {
+        long long start = now_ms();
+        while (now_ms() - start < 3000) {
+            if (waitpid(j.shell, NULL, WNOHANG) == j.shell) { j.shell = -1; break; }
+            job_drain(j);
+            usleep(3000);
+        }
+        if (j.shell > 0) {
+            kill(j.shell, SIGKILL);
+            waitpid(j.shell, NULL, 0);
+            j.shell = -1;
+        }
+    }
+    job_drain(j);
+    if (j.out_fd >= 0) close(j.out_fd);
+    if (j.err_fd >= 0) close(j.err_fd);
+    if (j.note_fd >= 0) close(j.note_fd);
+    j.out_fd = j.err_fd = j.note_fd = -1;
+    return gone;
+}
+
+static void report(const char* name, bool ok, const std::string& detail,
+                   int& passed, int& failed) {
+    if (ok) {
+        printf("PASS  %s\n", name);
+        passed++;
+    } else {
+        printf("FAIL  %s\n", name);
+        fputs(detail.c_str(), stdout);
+        failed++;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// kill -TSTP, then fg
+//
+// Against an emulator with no handlers this fails in two separate places, and
+// the messages keep them apart: the terminal is still raw while the process is
+// stopped, so the shell that gets it back has no echo and no line editing; and
+// after the resume it is canonical, so the guest is handed a whole line at a
+// time or, as here, nothing at all.
+// ---------------------------------------------------------------------------
+
+static void run_suspend_case(const std::string& emu, const std::string& dir,
+                             int& passed, int& failed) {
+    const char* name = "a suspend puts the terminal back, and a resume takes it again";
+    std::string detail;
+    std::string com = dir + "/tstp.com";
+    if (!write_file(com, con6hex_com, sizeof con6hex_com)) {
+        report(name, false, "        cannot write the guest program\n", passed, failed);
+        return;
+    }
+
+    Job j;
+    std::string why;
+    if (!job_start(j, emu, com, JobForeground, why)) {
+        report(name, false, "        " + why + "\n", passed, failed);
+        unlink(com.c_str());
+        return;
+    }
+
+    bool ok = true;
+    if (!job_wait_raw(j, true, 8000)) {
+        detail += "        the emulator never put the terminal into raw mode\n";
+        ok = false;
+    }
+
+    if (ok) {
+        send_spec(j.pty.master, "A");
+        job_wait_out(j, "41 ", 5000);
+        if (j.out != "41 ") {
+            detail += "        before the suspend the guest should have had 41 , it had " +
+                      show(j.out) + "\n";
+            ok = false;
+        }
+    }
+
+    // ISIG is cleared, so a typed ^Z is the guest's byte 1A and never becomes a
+    // signal.  kill(2) is the route that is left, and is the one the item in
+    // todo.txt was measured with.
+    if (ok) {
+        kill(j.pid, SIGTSTP);
+        if (!job_wait_note(j, "STOP\n", 1, 5000)) {
+            detail += "        SIGTSTP did not stop the emulator\n";
+            ok = false;
+        }
+    }
+
+    if (ok && tty_is_raw(j.pty.slave)) {
+        // The half no shell can paper over: whatever it does next, the terminal
+        // it was handed back was raw.
+        detail += "        the terminal was still raw while the emulator was stopped:\n"
+                  "        a shell taking it back has no echo and no line editing\n";
+        ok = false;
+    }
+
+    if (ok) {
+        // fg, as bash and zsh do it: the shell's own termios back first, then
+        // the job continued
+        tcsetattr(j.pty.slave, TCSANOW, &j.before);
+        kill(j.pid, SIGCONT);
+        if (!job_wait_raw(j, true, 8000)) {
+            detail += "        raw mode was not re-applied after the resume:\n"
+                      "        the guest is back to whole lines at a time\n";
+            ok = false;
+        }
+    }
+
+    if (ok) {
+        send_spec(j.pty.master, "B");
+        send_spec(j.pty.master, ".");
+        job_wait_out(j, "2E ", 8000);
+        if (j.out != "41 42 2E ") {
+            detail += "        expected: 41 42 2E \n";
+            detail += "        got:      " + show(j.out) + "\n";
+            ok = false;
+        }
+    }
+
+    bool exited = job_finish(j, 5000);
+    if (ok && !exited) {
+        detail += "        the emulator had to be killed: it never finished\n";
+        ok = false;
+    }
+    if (ok) {
+        struct termios after;
+        if (tcgetattr(j.pty.slave, &after) != 0 || !termios_equal(j.before, after)) {
+            detail += "        the terminal was not put back on exit\n";
+            ok = false;
+        }
+    }
+    pty_close(j.pty);
+    unlink(com.c_str());
+    report(name, ok, detail, passed, failed);
+}
+
+// ---------------------------------------------------------------------------
+// cpmemu prog.com &, then fg
+//
+// No signal is sent to the emulator here.  It starts in a process group that is
+// not the terminal's foreground group, so the terminal driver stops it inside
+// enable_raw_mode()'s tcsetattr with SIGTTOU, and the fg that follows is the
+// shell's tcsetpgrp plus a SIGCONT.
+//
+// What this proves depends on the platform, and the case says which it got.  On
+// Linux the interrupted ioctl is restarted rather than failed - the emulator's
+// own tcsetattr completes after the fg with no handler involved - so this is a
+// guard against that changing, not evidence that the SIGCONT handler works.  It
+// is on a platform that returns EINTR instead that the handler is the only
+// thing standing between the fg and a canonical terminal.
+// ---------------------------------------------------------------------------
+
+static void run_background_case(const std::string& emu, const std::string& dir,
+                                int& passed, int& failed) {
+    const char* name = "a background start takes the terminal when it is brought forward";
+    std::string detail;
+    std::string com = dir + "/bgfg.com";
+    if (!write_file(com, con6hex_com, sizeof con6hex_com)) {
+        report(name, false, "        cannot write the guest program\n", passed, failed);
+        return;
+    }
+
+    Job j;
+    std::string why;
+    if (!job_start(j, emu, com, JobBackground, why)) {
+        report(name, false, "        " + why + "\n", passed, failed);
+        unlink(com.c_str());
+        return;
+    }
+
+    // A platform that lets a background tcsetattr through would run the rest of
+    // this case green having tested nothing, so say so instead.
+    bool stopped = job_wait_note(j, "STOP\n", 1, 4000);
+
+    bool ok = true;
+    if (stopped) {
+        if (!job_wait_raw(j, true, 8000)) {
+            detail += "        the terminal was still canonical after the fg:\n"
+                      "        the tcsetattr SIGTTOU interrupted was never completed\n";
+            ok = false;
+        }
+        if (ok) {
+            send_spec(j.pty.master, "A");
+            send_spec(j.pty.master, ".");
+            job_wait_out(j, "2E ", 8000);
+            if (j.out != "41 2E ") {
+                detail += "        expected: 41 2E \n";
+                detail += "        got:      " + show(j.out) + "\n";
+                ok = false;
+            }
+        }
+        if (ok && !job_finish(j, 5000)) {
+            detail += "        the emulator had to be killed: it never finished\n";
+            ok = false;
+        } else if (!ok) {
+            job_finish(j, 1000);
+        }
+    } else {
+        job_finish(j, 1000);
+    }
+
+    pty_close(j.pty);
+    unlink(com.c_str());
+
+    if (!stopped) {
+        printf("SKIP  %s\n", name);
+        printf("        a background tcsetattr was not stopped by SIGTTOU here, so\n");
+        printf("        there was nothing in this case for the emulator to survive\n");
+        return;
+    }
+    report(name, ok, detail, passed, failed);
+}
+
+// ============================================================================
 // Manual mode
 //
 // Everything above writes bytes into a pty, which steps past the terminal
@@ -990,6 +1447,13 @@ int main(int argc, char** argv) {
             failed++;
         }
     }
+
+    // Last, because both build a session of their own and one of them stops a
+    // process: a case that goes wrong here should not be able to disturb the
+    // table above by running before it.
+    run_suspend_case(emu, dir, passed, failed);
+    run_background_case(emu, dir, passed, failed);
+
     rmdir(dir.c_str());
 
     printf("\n%d passed, %d failed\n", passed, failed);

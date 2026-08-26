@@ -1431,7 +1431,14 @@ void qkz80::execute(void) {
     qkz80_uint8 high = (rega >> 4) & 0x0f;
     qkz80_uint8 flag_c = fetch_carry_as_int();
     qkz80_uint8 flag_h = (flags & qkz80_cpu_flags::AC) != 0;
-    qkz80_uint8 flag_n = (flags & qkz80_cpu_flags::N) != 0;
+    // The 8080 has no subtract flag.  Bit 1 of its flag register reads back as
+    // 1 whatever the last operation was, so taking it for N here put every DAA
+    // in 8080 mode on the subtract path: DAA on 1Ah gave 14h where an 8080
+    // gives 20h, and DAA on 9Ch gave 36h where an 8080 gives 02h with carry.
+    // An 8080 DAA always applies the addition correction.
+    qkz80_uint8 flag_n = (cpu_mode == MODE_8080)
+                             ? 0
+                             : ((flags & qkz80_cpu_flags::N) != 0);
     qkz80_uint8 diff;
     qkz80_uint8 new_c, new_h;
 

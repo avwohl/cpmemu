@@ -10,15 +10,16 @@ tests/run_tests.sh
 Each test compares the guest's stdout against an exact expected string and
 reports PASS or FAIL; the script exits non-zero if anything failed.
 
-zexdoc and zexall are opt-in, because they are slow - about 7 minutes each,
-measured:
+The instruction exercisers are opt-in, because they are slow - about 7 minutes
+each for zexdoc and zexall and 3m41s for 8080EXM, measured:
 ```bash
 tests/run_tests.sh --zex                      # cap defaults to 1 hour each
 CPMEMU_ZEX_TIMEOUT=7200 tests/run_tests.sh --zex
 ```
 
 `make -C src test` runs three of the quick tests as an eyeball check with no
-assertions; `tests/run_tests.sh` is the one that can fail.
+assertions; `tests/run_tests.sh` is the one that can fail. `make -C src unit`
+builds and runs the 8080 mode unit tests on their own, and does assert.
 
 ## POSIX console tests
 
@@ -58,14 +59,33 @@ PASS  control: the raw mode lets every control byte through
 On Linux that note says the opposite, and the `^V` and `^O` cases below it are
 then known to be passing for free rather than passing on merit.
 
-Two things it deliberately does not do. It does not make the pty the child's
-controlling terminal, because nothing under test needs one and a hangup would
-otherwise kill the guest before it could report. And it delivers end of input
-through a file, a pipe or `/dev/null` rather than by closing the master - not
-because closing the master fails (measured on macOS, with no master fd left
-anywhere, `select()` reports the slave readable and `read()` returns 0) but
-because a file, a pipe and `/dev/null` are what a redirected run actually uses,
-and they are the cases nothing else on POSIX covers without an assembler.
+Two things it deliberately does not do. Most of it does not make the pty the
+child's controlling terminal, because nothing in the case table needs one and a
+hangup would otherwise kill the guest before it could report. And it delivers
+end of input through a file, a pipe or `/dev/null` rather than by closing the
+master - not because closing the master fails (measured on macOS, with no master
+fd left anywhere, `select()` reports the slave readable and `read()` returns 0)
+but because a file, a pipe and `/dev/null` are what a redirected run actually
+uses, and they are the cases nothing else on POSIX covers without an assembler.
+
+The two job control cases at the end are the exception to the first of those,
+and they have to be. A shell puts its own termios back when it takes a job into
+the foreground, so `kill -TSTP` followed by `fg` used to leave the emulator
+running against a canonical terminal for the rest of the session. Staging that
+needs a controlling terminal, a process group that is not the terminal's
+foreground group, and a `tcsetpgrp` from inside the session, so those two cases
+build a session and a stand-in shell of their own. A child in an orphaned
+process group has `SIGTSTP` discarded rather than delivered, which is why the
+simpler setup cannot reach this at all - an earlier draft of the test reported
+"SIGTSTP did not stop the emulator" and was measuring its own scaffolding.
+
+The second of the pair starts the emulator in a background process group, where
+the `tcsetattr` in `enable_raw_mode()` is stopped by `SIGTTOU`, and then
+foregrounds it. What that proves depends on the platform, and the case says
+which it got: on Linux the interrupted `ioctl` is restarted after the `fg` and
+completes with no handler involved, so it is a guard against that changing. On a
+platform that returns `EINTR` instead, the `SIGCONT` handler is the only thing
+between the `fg` and a canonical terminal.
 
 One trap worth knowing if you write a probe of your own here: a master fd that
 survives into the child keeps the terminal alive, so the reader blocks forever
@@ -119,6 +139,11 @@ which runs a hex echo so each key prints what the guest received.
 - **test_call.asm** - Tests CALL/RET instructions
 - **test_djnz.asm** - Tests DJNZ (prints "321" counting down)
 
+### Console Translation Tests
+- **adm3a.asm** - one of every ADM-3A escape sequence and control code the
+  translator in `console_output()` understands, checked against the exact ANSI
+  bytes it emits. Assembled at test time; no `.com` is committed.
+
 ### Flag Verification Tests
 - **test_n_flag.asm** - Verifies N flag is set/cleared correctly
   - Expected output: `20 02 00`
@@ -158,6 +183,71 @@ truncated one: the old script capped the suites at 180 seconds, which is
 about five groups in, and printed the partial output as though it were
 the result.
 
+#### 8080EXM.COM
+The same exerciser converted to the 8080 by Ian Bartholomew, with CRCs taken
+from real hardware, plus Mike Douglas's change to print the CRC on a pass.
+- Size: 4608 bytes
+- Tests: 25 instruction groups
+- Runtime: 3m41s, measured on the machine the zex timings above came from
+- Status: completes, all 25 groups, no CRC mismatches
+- Run it with `tests/run_tests.sh --zex`, which passes `--8080`
+
+It must be run under `--8080`. In Z80 mode it is measuring the wrong
+processor - the CRCs it holds are an 8080's - and all 25 groups mismatch,
+which says nothing about anything.
+
+It sat in the tree, referenced by nothing, from the initial commit until it was
+wired in here - and it was right and the emulator was wrong. Wiring it in found
+two bugs in 8080 mode, both of them Z80 rules applied where the 8080 has
+different ones:
+
+- `DAA` read bit 1 of the flag register as the Z80's N flag. The 8080 has no
+  subtract flag and bit 1 of its flag register reads back as 1 whatever
+  happened, so every `DAA` in 8080 mode took the subtract path: `DAA` on `1Ah`
+  gave `14h` where an 8080 gives `20h`. That is every BCD program under
+  `--8080`, not an edge case.
+- `CMA`, `STC` and `CMC` applied the Z80's `CPL`/`SCF`/`CCF` half-carry rules.
+  On the 8080 `CMA` affects no condition bit and `STC` and `CMC` affect only
+  the carry, and the bit being written is the 8080's auxiliary carry.
+
+The second of those is why 19 of the 25 groups mismatched rather than the two
+that name `DAA` and the rotates: the exerciser's own harness runs an `STC` after
+every test instruction to restore the carry it clobbered reading the stack
+pointer, and that `STC` was clearing the auxiliary carry the instruction under
+test had just produced. A wrong `STC` therefore corrupted the recorded state of
+almost every other group, `MOV` and `MVI` included, which set no flags at all.
+
+Both are covered by `tests/unit_8080.cc` as well, so the four-minute opt-in run
+is not the only thing standing between them and a regression.
+
+## 8080 mode unit tests
+
+`--8080` is a real feature of the emulator and, until `tests/unit_8080.cc`,
+nothing tested it. zexdoc and zexall cover the Z80 core thoroughly, but they run
+the CPU as a Z80, so every rule that makes 8080 mode different - parity instead
+of overflow, the auxiliary carry, the fixed flag bits, no N flag - was reachable
+by no test at all.
+
+It links the CPU core directly rather than running a CP/M guest, so a failure
+names the instruction, the operands and the flag bit instead of a CRC over sixty
+thousand cases. Where the input space is small enough it is walked exhaustively:
+3.1 million ALU cases across the register, immediate and memory forms, 65536 per
+16-bit increment, every value of the flag byte. It runs in under a second and is
+part of the default `tests/run_tests.sh`.
+
+```bash
+make -C src unit          # builds and runs it on its own
+```
+
+The expected values are the documented 8080 rules written out in the test, not a
+recording of what this emulator does. One place the Intel manual will not do as
+written is `DAA`: it says the second correction applies when, "after the
+incrementing", the top four bits exceed nine, which is wrong for `A` in
+`FAh..FFh` where adding six carries out of the accumulator and leaves a top
+nibble of zero. The condition the hardware applies is on the accumulator before
+either correction, `A` greater than `99h`. Twelve of that group's 1024 cases are
+the ones that tell the two readings apart, and the test uses the second reading.
+
 ## Running Individual Tests
 
 ### Console Output Tests
@@ -179,12 +269,21 @@ src/cpmemu tests/tflags.com
 ```
 
 ### Comprehensive Tests
+
+Each of these runs for minutes, so give it room; the 180-second cap an earlier
+version of this file suggested stops about five groups in and prints the partial
+output as though it were the result.
+
 ```bash
 # Run zexdoc (documented instructions)
-timeout 180 src/cpmemu tests/zexdoc.com
+src/cpmemu tests/zexdoc.com
 
 # Run zexall (all instructions)
-timeout 180 src/cpmemu tests/zexall.com
+src/cpmemu tests/zexall.com
+
+# Run the 8080 exerciser.  The --8080 is not optional: without it this is
+# measuring a Z80 against an 8080's CRCs and every group mismatches.
+src/cpmemu --8080 tests/8080EXM.COM
 ```
 
 ## Test Results Comparison with tnylpo
@@ -212,9 +311,10 @@ z88dk.z88dk-z80asm -b test.asm
 cp test.bin test.com
 ```
 
-The drive mapping sources are assembled at test time instead, so no binary for
-them is committed. `tests/run_tests.sh` uses `pasmo` if it is on `PATH` and
-`z80asm` otherwise, and skips the group when neither is:
+The drive mapping sources, the two console end-of-input programs and
+`adm3a.asm` are assembled at test time instead, so no binary for them is
+committed. `tests/run_tests.sh` uses `pasmo` if it is on `PATH` and `z80asm`
+otherwise, and skips the whole group - 26 checks - when neither is:
 ```bash
 brew install z80asm        # macOS; pasmo is not in Homebrew
 apt install z80asm         # or pasmo
@@ -260,10 +360,13 @@ console layer or the file system, which have their own tests or none.
 - zexdoc: 67 groups, no CRC mismatches ✅
 - zexall: 67 groups, no CRC mismatches ✅
 - Pair runs end to end in 13m46s
+- 8080EXM under `--8080`: 25 groups, no CRC mismatches ✅, in 3m41s, after the
+  `DAA` and `CMA`/`STC`/`CMC` fixes described above. Before them, 19 of the 25
+  mismatched.
 
 ## Next Steps
 
-The CRC hunt that used to sit here is finished; both exercisers pass clean.
+The CRC hunt that used to sit here is finished; all three exercisers pass clean.
 What is left is coverage of everything they do not reach:
 
 1. The console layer now has `tests/pty_console.cc` on POSIX and
@@ -273,9 +376,8 @@ What is left is coverage of everything they do not reach:
    yet on a terminal program other than the one it was written on.
 2. The drive mapping group needs an assembler. It takes `pasmo` or `z80asm`,
    which covers Homebrew and Debian, but on a machine with neither it still
-   skips 25 checks - more than half the suite. Committing those nine `.com`
+   skips 26 checks - more than half the suite. Committing those ten `.com`
    files as byte arrays the way `tests/con_guests.h` does would de-gate it
    entirely.
-3. The 14 `tests/*.cc` unit tests are not built or run by any make target.
-4. There is no CI job running any of this; `.github/workflows/release.yml`
+3. There is no CI job running any of this; `.github/workflows/release.yml`
    builds and packages only, and only for Linux and Windows.
