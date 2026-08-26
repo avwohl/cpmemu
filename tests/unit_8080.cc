@@ -4,9 +4,9 @@
  * --8080 is a real feature of the emulator and nothing tested it.  zexdoc and
  * zexall cover the Z80 core - 67 instruction groups each, no CRC mismatches -
  * but they run the CPU as a Z80, and every rule that makes 8080 mode different
- * from Z80 mode was reachable by no test at all.  tests/8080EXM.COM covers the
- * same ground from the other end and is wired into run_tests.sh --zex, but it
- * takes minutes and reports a CRC; this takes under a second and names the
+ * from Z80 mode was reachable by no test at all.  tests/8080/8080exm.com covers
+ * the same ground from the other end and is wired into run_tests.sh --zex, but
+ * it takes minutes and reports a CRC; this takes under a second and names the
  * instruction.  Two of the groups below - DAA, and CMA/STC/CMC - are here
  * because that exerciser found real bugs in both.
  *
@@ -442,8 +442,9 @@ static void test_cma_stc_cmc() {
 //
 // DAD is the only one of these that touches a flag at all, and only the carry.
 // INX and DCX touch none, which on a Z80 is also true - they are here because
-// tests/8080EXM.COM reports three of its four INX/DCX groups as mismatching and
-// this says, exhaustively, that the instructions themselves are not the reason.
+// tests/8080/8080exm.com reports three of its four INX/DCX groups as
+// mismatching and this says, exhaustively, that the instructions themselves are
+// not the reason.
 // ============================================================================
 
 static void test_dad() {

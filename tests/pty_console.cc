@@ -299,6 +299,7 @@ struct Result {
     std::string left;           // still queued on the terminal after the exit
     bool timed_out;
     bool termios_restored;
+    bool raw_seen;              // the emulator was observed in raw mode
 };
 
 struct Spawn {
@@ -318,6 +319,7 @@ struct Spawn {
 static bool run_guest(const Spawn& s, const std::string& dir, Result& r) {
     r.timed_out = false;
     r.termios_restored = true;
+    r.raw_seen = false;
 
     Pty pty;
     pty.master = pty.slave = -1;
@@ -429,7 +431,10 @@ static bool run_guest(const Spawn& s, const std::string& dir, Result& r) {
     if (s.stdin_kind == StdinPty) {
         while (now_ms() - start < s.timeout_ms) {
             struct termios t;
-            if (tcgetattr(pty.slave, &t) == 0 && (t.c_lflag & ICANON) == 0) break;
+            if (tcgetattr(pty.slave, &t) == 0 && (t.c_lflag & ICANON) == 0) {
+                r.raw_seen = true;
+                break;
+            }
             if (waitpid(pid, NULL, WNOHANG) == pid) { reaped = true; break; }
             usleep(2000);
             drain(out_pipe[0], r.out);
@@ -464,6 +469,28 @@ static bool run_guest(const Spawn& s, const std::string& dir, Result& r) {
         p = comma + 1;
     }
 
+    // The wait for the emulator to finish gets a budget of its own rather than
+    // whatever is left of the one the startup wait and the key script above
+    // have already spent.  Sharing them was what made these cases fail under
+    // load: a slow start took the time the exit was going to need and the case
+    // reported a hang that never happened.
+    //
+    // Confirmed by making the start slow on purpose rather than waiting for a
+    // loaded machine to do it.  With a wrapper that sleeps before it execs the
+    // emulator, and the emulator itself untouched and healthy - it starts, goes
+    // raw, takes the signal, puts the terminal back and dies - the six kill
+    // cases went 6 pass at 0s and at 5s, 3 pass 3 fail at 9s, and 2 pass 4 fail
+    // at 9.9s and 9.95s, against a 10s budget.  Every one of those failures
+    // read "the emulator had to be killed: it never finished".
+    //
+    // How much the exit itself needs is not uniform, which is the other half of
+    // why one budget was tight: four of the seven signals dump core, and the
+    // reap then waits on whatever the host does with a core.  Measured here,
+    // unloaded, with core_pattern piping to apport: SIGQUIT 445ms, SIGSEGV
+    // 1385ms, SIGBUS 1327ms, SIGABRT 1392ms, against SIGTERM 11ms, SIGHUP 3ms
+    // and SIGINT 3ms.  That cost is outside the emulator entirely and it is
+    // paid on top of the start.
+    long long wait_start = now_ms();
     for (;;) {
         drain(out_pipe[0], r.out);
         drain(err_pipe[0], r.err);
@@ -471,7 +498,7 @@ static bool run_guest(const Spawn& s, const std::string& dir, Result& r) {
         if (reaped) break;
         int status = 0;
         if (waitpid(pid, &status, WNOHANG) == pid) { reaped = true; break; }
-        if (now_ms() - start > s.timeout_ms) {
+        if (now_ms() - wait_start > s.timeout_ms) {
             r.timed_out = true;
             kill(pid, SIGKILL);
             waitpid(pid, NULL, 0);
@@ -1422,7 +1449,15 @@ int main(int argc, char** argv) {
         // The OPOST case is the only one whose output goes to the terminal
         const std::string& got = c.stdout_to_pty ? r.tty : r.out;
 
+        // A signal case is only worth something if the emulator was in raw mode
+        // when the signal arrived.  Without this it is possible to pass by
+        // never getting there: the terminal the case compares is then the one
+        // it started with, so "put back" is trivially true and the case proves
+        // nothing.  That was masked while the two waits shared a budget,
+        // because a startup slow enough to miss raw mode also ran the case out
+        // of time; separating them takes the mask away.
         bool ok = !r.timed_out && r.termios_restored;
+        if (ok && c.kill_with) ok = r.raw_seen;
         if (ok && c.want_out) ok = (got == c.want_out);
         if (ok && *c.want_err) ok = r.err.find(c.want_err) != std::string::npos;
         if (ok && c.want_left) ok = (r.left == c.want_left);
@@ -1434,6 +1469,8 @@ int main(int argc, char** argv) {
             printf("FAIL  %s\n", c.name);
             if (r.timed_out) printf("        the emulator had to be killed: it never finished\n");
             if (!r.termios_restored) printf("        the terminal was not put back on exit\n");
+            if (c.kill_with && !r.raw_seen)
+                printf("        the emulator never reached raw mode, so the signal proved nothing\n");
             if (c.want_out) {
                 printf("        expected: %s\n", show(c.want_out).c_str());
                 printf("        got:      %s\n", show(got).c_str());

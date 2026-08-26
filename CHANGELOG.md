@@ -15,7 +15,29 @@ Everything below has landed since the `v4.6.0` tag and is not yet in a release.
 
 ### Added
 
-- **8080 mode is tested, and `tests/8080EXM.COM` is wired in.** `--8080` is a
+- **Five Windows console cases, and the two things the harness needed to reach
+  them — none of which has ever been executed.** `tests/win_console.cc` could
+  not name a character above `U+00FF`: `inject_spec()`'s single-character branch
+  went through `VkKeyScanA`, which takes a byte, and cast one byte to `WCHAR`.
+  It can now, as `U+XXXX`, and `U+XXXX+YYYY` sends several back to back with
+  nothing between them — which is the shape the `0xE0` bug below needs, since
+  the harness otherwise sleeps between keys the way a person types. A case can
+  also set the console input code page, which nothing in `tests/` had ever done
+  even though the code page is what decides the bytes a character becomes, and
+  can send a console control event, which is the only way to reach ctrl+break at
+  all; the emulator is started in a process group of its own for that, or the
+  event would come back and kill the harness. **Said plainly: there is no
+  Windows machine and no wine here. All of this cross-compiles under
+  `x86_64-w64-mingw32-g++` with no warnings, under `-Wextra` as well as the
+  `-Wall` `run_tests.sh` requires, and not one line of it has run.** The five
+  cases have never reported anything. That is in `todo.txt`.
+- **`tests/8080/8080pre.com` runs in the default suite.** The preliminary test
+  that ships with the exerciser: a fixed sequence rather than an exhaustive
+  walk, printing `8080 Preliminary tests complete` and nothing else when it
+  passes. It takes 0.09s against the exerciser's 3m21s beside it, so there was
+  nothing to weigh up about `--zex`. `run_tests.sh`'s `check` takes emulator
+  options now, which is what `--8080` needed.
+- **8080 mode is tested, and `tests/8080/8080exm.com` is wired in.** `--8080` is a
   real feature and nothing tested it: zexdoc and zexall are thorough but they
   run the CPU as a Z80, so every rule that makes 8080 mode different — parity
   instead of overflow, the auxiliary carry, the fixed flag bits, no N flag —
@@ -26,9 +48,9 @@ Everything below has landed since the `v4.6.0` tag and is not yet in a release.
   checked against the documented 8080 rules written out in the test rather than
   against a recording of this emulator. It runs in under a second and is part
   of the default `run_tests.sh`; `make -C src unit` runs it alone. And
-  `tests/8080EXM.COM` — Ian Bartholomew's 8080 conversion of the same exerciser,
-  in the tree and referenced by nothing since the first commit — now runs under
-  `--zex` with `--8080`. It was right and the emulator was wrong: 19 of its 25
+  `tests/8080/8080exm.com` — Ian Bartholomew's 8080 conversion of the same
+  exerciser, in the tree and referenced by nothing since the first commit — now
+  runs under `--zex` with `--8080`. It was right and the emulator was wrong: 19 of its 25
   groups mismatched, and both causes are fixed below. All 25 pass now.
 - **The ADM-3A to ANSI output translator is tested.** Every other expected
   string in the suite is plain ASCII, so nothing anywhere put a byte into
@@ -48,8 +70,10 @@ Everything below has landed since the `v4.6.0` tag and is not yet in a release.
   starts the emulator with stdin bound to the console it is attached to, writes
   the `INPUT_RECORD`s a keyboard produces with `WriteConsoleInput`, and compares
   the bytes the CP/M guest received — twenty cases over seven hand-assembled
-  guest programs, each printing what it was handed as hex, so a failure names
-  the wrong byte instead of describing a missing behaviour. Sixteen of the
+  guest programs when it was written, each printing what it was handed as hex,
+  so a failure names the wrong byte instead of describing a missing behaviour.
+  Twenty-five now: the five in the bullet above were added later in this same
+  cycle and have never run anywhere. Sixteen of the original
   twenty passed against the pre-change binary, which settled the open question
   about the WordStar diamond table: the scan codes for Ctrl+Up and Ctrl+Down had
   never been observed by anyone here, and they are correct. Four failed and are
@@ -100,6 +124,96 @@ Everything below has landed since the `v4.6.0` tag and is not yet in a release.
   adds it only where it exists. Release-blocking: the flag and the breakage
   arrived in the same unreleased change, so nothing released carries it and
   nothing released would have built either.
+- **A signal could leave a POSIX terminal raw for good, and nothing would put it
+  back.** This is what a loaded run actually turned up while chasing the
+  intermittent `tests/pty_console.cc` kill-case failures in `todo.txt` — an
+  emulator bug, not a harness one, and not the mechanism that entry suspected.
+  `apply_raw_mode()` sets `raw_active` *after* its `tcsetattr` returns, while
+  the settings are live in the kernel from the moment the call completes there —
+  and the restore was gated on that flag. A signal delivered in the gap
+  found `raw_active` false, skipped the restore, and left the user's shell with
+  no echo. The gap is a few instructions wide, which makes it rare rather than
+  impossible: reproduced once in 120 runs of the seven kill cases in
+  `tests/pty_console.cc` with 64 spinning processes on a 2-core box, on the
+  `SIGQUIT` case, reported as "the terminal was not put back on exit". Widening
+  the gap to 50ms on purpose makes it all seven, every time; with the restore no
+  longer consulting `raw_active` it is all seven passing with the 50ms still
+  there. `termios_saved` is the guard instead — it means "there is a terminal to
+  put back", which is the question actually being asked, and restoring one that
+  was never made raw writes back the settings already on it.
+- **The Windows console took a character for a special key prefix.**
+  `read_one_key()` read one byte at a time through `_getch()` and treated `0x00`
+  and `0xE0` as the prefix of a two-byte special key, with `!_kbhit()` as the
+  tie-breaker. `0xE0` is also an ordinary character: in code page 437 it is
+  alpha, and in 65001 it leads every character from `U+0800` to `U+FFFF`.
+  Measured on a real console before the change and recorded in `todo.txt`, code
+  page 437: alpha alone reached the guest as `60` after the usual 7-bit mask,
+  but alpha immediately followed by `A` gave
+  `E0 41`, the `41` was eaten as a scan code, no table entry matched it, and the
+  guest got **neither** character. The input path reads `INPUT_RECORD`s with
+  `ReadConsoleInputW` now, which removes the guess rather than narrowing it, and
+  with it come the five changes it forces: only key presses are looked at, a
+  `wRepeatCount` above 1 is replayed a press at a time rather than expanded, the
+  `WCHAR` is encoded in the console input code page (so a surrogate pair, which
+  arrives as two records, becomes one character), `extended_keys[]` is keyed on
+  the virtual key code plus a ctrl flag instead of CRT scan codes, and the
+  two-slot queue is eight. Every key the table already handled is unchanged,
+  Ctrl+Left/Right and the Ctrl+Up/Ctrl+Down added at 0b8dc2b included. One thing
+  the key-press filter would otherwise have lost is kept deliberately: alt plus
+  a numeric keypad code point is delivered by the console on the *alt release*,
+  and that release is let through when it carries a character. **Cross-compiles
+  clean; never executed.**
+- **ctrl+break left the Windows console in raw mode**, and there was no
+  `SetConsoleCtrlHandler` anywhere in `src/`. Clearing `ENABLE_PROCESSED_INPUT`
+  keeps `^C` away from the handler — it becomes an ordinary `03` for the guest,
+  which is what WordStar wants — but ctrl+break is not gated on that bit, and
+  neither is the console window closing, a logoff or a shutdown. The default
+  handler ends the process without running `atexit`, so `disable_raw_mode()`
+  never ran: measured, the child exited `0xC000013A` and the console mode stayed
+  at `0x1A0` instead of returning to `0x1F7`, leaving the shell with no echo.
+  There is a handler now, on the same five events, and it returns `FALSE` so the
+  process still dies of what it was sent and the exit code a caller sees is
+  unchanged — the same reason the POSIX handler re-raises with the default
+  disposition rather than exiting tidily. **Cross-compiles clean; never
+  executed.**
+- **The pty console harness gave one timeout budget to two different waits.**
+  `todo.txt` recorded this as the suspect behind the intermittent kill-case
+  failures and flagged it as a guess rather than a measurement. It is real, and
+  it is one of the two mechanisms — the other being the `raw_active` race above,
+  which is the one a loaded run here reproduced. `run_case()` spun until
+  `tcgetattr` showed `ICANON` clear and then waited for the child to exit, both
+  against the same 10s measured from one `start`, so a slow start ate the wait
+  and the case reported a hang that never happened. Confirmed by making
+  the start slow on purpose rather than waiting for a loaded machine to do it:
+  with a wrapper that sleeps before it execs the emulator, and the emulator
+  itself untouched and healthy, six of the seven kill cases went 6 pass at 0s and
+  at 5s, 3 pass 3 fail at 9s, and 2 pass 4 fail at 9.9s and 9.95s, every failure
+  reading "the emulator had to be killed: it never finished". The exit wait has a
+  budget of its own now, and all six pass at every one of those delays. Which six
+  is not recorded: the file holds seven - one plain kill and six signals - and the
+  run above reported six. How much the
+  exit needs is not uniform either, which is the other half of why one budget was
+  tight: four of the seven signals dump core, so the reap waits on whatever the
+  host does with one — measured here, unloaded, with `core_pattern` piping to
+  apport, `SIGQUIT` 445ms, `SIGSEGV` 1385ms, `SIGBUS` 1327ms and `SIGABRT`
+  1392ms, against `SIGTERM` 11ms, `SIGHUP` 3ms and `SIGINT` 3ms. Separating the
+  budgets uncovers a way for a signal case to pass having proved nothing — never
+  reach raw mode, and the terminal it compares is the one it started with — so a
+  signal case is now held to having been observed in raw mode, and says so when
+  it was not.
+- **`cpack` named every non-Windows archive with no architecture.**
+  `src/CMakeLists.txt` never set `CPACK_PACKAGE_FILE_NAME`, so the default
+  `name-version-system` applied and a linux amd64 build and a linux arm64 build
+  were both `cpmemu-4.6.0-Linux.tar.gz`: two different binaries under one
+  filename, so whichever is attached to a release second replaces the first and
+  someone downloads a binary that cannot run. Verified with `cpack` here — the
+  same tree produced `cpmemu-4.6.0-Linux.tar.gz` before and
+  `cpmemu-4.6.0-Linux-x86_64.tar.gz` after, and a toolchain file naming
+  `aarch64` gives `cpmemu-4.6.0-Linux-aarch64`, which was read out of
+  `CPackConfig.cmake` rather than built. Nothing in CI publishes a cpack archive
+  today, so this breaks nothing and stops being a trap for whoever adds a job
+  that does. The rest of the macOS release path in `todo.txt` is untouched and
+  still needs a Mac.
 - **`DAA` in 8080 mode always subtracted.** It read bit 1 of the flag register
   as the Z80's N flag, and 8080 mode forces that bit to 1 because that is what
   an 8080's flag register reads back — so every `DAA` under `--8080` took the
@@ -216,6 +330,22 @@ Everything below has landed since the `v4.6.0` tag and is not yet in a release.
 
 ### Removed
 
+- **Two byte-identical copies of the 8080 exerciser.** It was in the tree three
+  times over and only one copy was run. `tests/8080/` is the canonical one: a
+  verbatim copy of superzazu's `cpu_tests`, each `.com` beside the `.mac` it was
+  assembled from and a `.prn` listing, with a README naming where they came
+  from. `tests/8080EXM.COM`, which `--zex` used to run, was byte for byte
+  `tests/8080/8080exm.com`; `tests/8080exer.com` was byte for byte
+  `tests/8080/8080exer.com` and was run by nothing. Both are gone and `--zex`
+  runs the copy in `tests/8080/` — 25 groups, no CRC mismatches, run at the new
+  path to check the move, in 3m21s on a machine slower than the one the 3m41s in
+  `tests/README.md` came from. `tests/8080/8080exer.com` stays and is still run by nothing,
+  which is a decision rather than an oversight: it is the same 25 groups as
+  `8080exm` and takes the same minutes, and where `8080exm` prints the CRC it
+  computed, `8080exer` prints `OK`, so a failing group tells you less and a
+  passing run tells you nothing `8080exm` did not. Deleting it would leave its
+  `.mac` and `.prn` describing a program that is not there. `tests/README.md`
+  says all of this.
 - **Fifteen compiled test binaries, and fifteen dead sources — not quite the
   same set.** The binaries were build output committed into `tests/`, two of
   them (`test_8080_baseline`, `test_commit_4c7bd4d`) with no source in the tree
@@ -232,6 +362,35 @@ Everything below has landed since the `v4.6.0` tag and is not yet in a release.
 
 ### Documentation
 
+- **The `ISTRIP` comment and the four `& 0x7F` read sites contradicted each
+  other, and now they do not.** The comment in `src/os/linux/platform.cc` said
+  the 8th bit survives and that clearing `ISTRIP` "is all we need". The first
+  half is true and measured — 128 of 128 high bytes reach `read()` unchanged —
+  but the second half is not: `cpmemu.cc:1591` (BDOS 1), `:1771` (BDOS 10 buffer
+  store), `:2361` (BDOS 6) and `:2799` (BIOS CONIN) all mask with `& 0x7F`, so a
+  high byte arrives at the guest with its top bit gone. The comment now says
+  what the clear does — keeps the bit through the line discipline — names the
+  four sites that then take it off, and records what the guest actually gets:
+  the UTF-8 bytes for e-acute, alpha, pound and em-dash come out as
+  `C3 29 4E 31 42 23 62 00 14`, and on the polled path a byte that masks to
+  `0x00` is dropped entirely because BDOS 6 reads 0 as "no character". **Only
+  the prose changed. Whether CP/M should see eight bits is a real decision and
+  nothing here makes it**; it is stated in `todo.txt` for whoever does.
+- **README records that three other emulators compile `src/qkz80*` out of this
+  working tree.** Related Projects listed them; what it did not say is that they
+  do not depend on a cpmemu *release*, so an edit to `qkz80.cc` lands in all
+  three on their next build with no notification. The mechanisms differ and the
+  new section says which is which: ioscpm has 11 symlinks in `iOSCPM/Core/`
+  pointing at `../cpmemu/src/qkz80*` and builds them as Objective-C++ for iOS at
+  `c++17`/`gnu++20`; z80cpmw's `.vcxproj` compiles
+  `$(SolutionDir)..\cpmemu\src\qkz80*` in place under MSVC at `/W3`;
+  romwbw_emu's `src/makefile` falls back to `../../cpmemu/src` when pkg-config
+  has no `qkz80` entry. Only romwbw_emu has a version gate and only in CI, where
+  `release.yml` and `test.yml` check out a pinned `CPMEMU_REF` — `9a94e8d` as
+  this is written. `todo.txt` had recorded that clone as unpinned; it is not any
+  more, and the entry it came from is closed. 06262ff is the worked example of
+  the mechanism running quietly in the good direction: it added
+  `QKZ80_NO_TRACE` and all three picked it up without being told.
 - **A full `zexdoc`/`zexall` run is recorded: 67 instruction groups each, zero
   CRC mismatches, 13m46s for the pair.** `tests/README.md` had said both suites
   "show CRC mismatches on all tests" and listed the instruction groups it blamed.

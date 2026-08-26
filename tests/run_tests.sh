@@ -16,13 +16,14 @@
 # with explicit \r\n.
 #
 # Usage: tests/run_tests.sh [--zex] [--help]
-#   --zex   also run zexdoc, zexall and 8080EXM.  zexdoc and zexall take about
+#   --zex   also run zexdoc, zexall and 8080exm.  zexdoc and zexall take about
 #           7 minutes each on the machine this was measured on - 13m46s for the
-#           pair, 67 groups each - and 8080EXM adds 25 more groups under --8080
+#           pair, 67 groups each - and 8080exm adds 25 more groups under --8080
 #           in 3m41s, so all three are opt-in rather than part of the default
 #           run.  The cap defaults to an hour apiece, which is generous
 #           headroom for slower hardware; override it with CPMEMU_ZEX_TIMEOUT
-#           (seconds).
+#           (seconds).  The preliminary 8080 test is not among them: it runs in
+#           under a tenth of a second and is in the default suite.
 
 set -u
 
@@ -36,7 +37,7 @@ for arg in "$@"; do
     case $arg in
         --zex)  run_zex=1 ;;
         --help|-h)
-            sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *)
             echo "unknown option: $arg (try --help)" >&2
@@ -93,10 +94,11 @@ show() {
     sed -n l "$1" | sed 's/^/      /'
 }
 
-# check <name> <program.com> <expected>
+# check <name> <program.com> <expected> [emulator options...]
 # <expected> is passed through printf %b, so it may contain \r and \n.
 check() {
     local name=$1 prog=$2 expected=$3
+    shift 3
     local got=$tmp/got want=$tmp/want rc
 
     if [ ! -f "$root/$prog" ]; then
@@ -105,7 +107,7 @@ check() {
         return
     fi
 
-    "$emu" "$root/$prog" >"$got" 2>"$tmp/err" </dev/null
+    "$emu" "$@" "$root/$prog" >"$got" 2>"$tmp/err" </dev/null
     rc=$?
     printf '%b' "$expected" >"$want"
 
@@ -130,7 +132,7 @@ check() {
 # check_zex <name> <program.com> [emulator options...]
 # zexdoc and zexall print one line per instruction group ending in "OK", a
 # line containing "ERROR" on a CRC mismatch, and "Tests complete" at the end.
-# 8080EXM.COM is the same exerciser converted to the 8080 and prints
+# 8080exm.com is the same exerciser converted to the 8080 and prints
 # "PASS! crc is:xxxxxxxx" where the other two print "OK", so both spellings
 # count as a finished group here.
 # The run goes straight to a file rather than through a pipe, so `timeout`'s
@@ -485,6 +487,11 @@ fi
 # core directly and walks the input space where it is small enough to walk:
 # 3.1 million ALU cases, 65536 per 16-bit increment, checked against the
 # documented 8080 rules rather than against a recording of this emulator.
+#
+# 8080pre.com is the preliminary test that comes with the exerciser: a short
+# fixed sequence rather than an exhaustive walk, and it prints one line or
+# stops. It is here rather than behind --zex because it finishes in under a
+# tenth of a second, where the exerciser beside it takes minutes.
 # ---------------------------------------------------------------------------
 
 echo
@@ -505,6 +512,9 @@ else
         failed=$((failed + 1))
     fi
 fi
+
+check "8080 preliminary tests" tests/8080/8080pre.com \
+      '8080 Preliminary tests complete' --8080
 
 # ---------------------------------------------------------------------------
 # POSIX console.
@@ -599,7 +609,7 @@ fi
 # Windows console.
 #
 # The extended key path in os/windows/platform.cc sits behind is_terminal(),
-# and _getch()/_kbhit() read the console input buffer rather than stdin, so no
+# and ReadConsoleInputW() reads the console input buffer rather than stdin, so no
 # pipe reaches any of it and the cross-compile above only proves it builds.
 # tests/win_console.cc drives a real console instead, by writing the
 # INPUT_RECORDs a keyboard produces into it. That needs Windows, so everywhere
@@ -637,20 +647,22 @@ case $(uname -s) in
         ;;
 esac
 
-# 8080EXM.COM is the 8080 counterpart of zexdoc: same machinery, 25 instruction
+# 8080exm.com is the 8080 counterpart of zexdoc: same machinery, 25 instruction
 # groups, converted to the 8080 by Ian Bartholomew and CRCs taken from real
 # hardware.  It is run under --8080 because in Z80 mode it is measuring the
 # wrong processor and every group mismatches.  It sat in the tree referenced by
 # nothing until it was wired in here, and the two 8080-mode bugs it then found
-# are in the changelog.
+# are in the changelog.  The path is tests/8080/, beside the .mac it was
+# assembled from; there used to be a second, byte-identical copy at
+# tests/8080EXM.COM and it is the one that has gone.
 if [ $run_zex -eq 1 ]; then
     echo
     check_zex "zexdoc (documented instructions)" tests/zexdoc.com
     check_zex "zexall (all instructions)"        tests/zexall.com
-    check_zex "8080EXM (8080 mode)"              tests/8080EXM.COM --8080
+    check_zex "8080exm (8080 mode)"              tests/8080/8080exm.com --8080
 else
     echo
-    echo "SKIP  zexdoc, zexall and 8080EXM (pass --zex to run them)"
+    echo "SKIP  zexdoc, zexall and 8080exm (pass --zex to run them)"
     skipped=$((skipped + 3))
 fi
 

@@ -19,3 +19,19 @@ converted to 8080 by Ian Bartholomew in February 2009.
 The tests work by executing all variations of an instruction with different operands
 and computing a CRC over the resulting machine state. The CRC is then compared against
 the expected value from a real 8080.
+
+## What the test suite runs
+
+This directory is the canonical copy. `tests/run_tests.sh` runs two of the three:
+
+- **8080pre.com** under `--8080`, in the default run. Under a tenth of a second.
+- **8080exm.com** under `--8080`, behind `--zex`. 25 groups, no CRC mismatches.
+  Minutes rather than seconds; `../README.md` records the timings and the
+  machines they came from.
+- **8080exer.com** is run by nothing. It is the same 25 groups as 8080exm and
+  takes the same minutes, printing `OK` where 8080exm prints the CRC it computed,
+  so running it would add no coverage. It stays because this directory is a
+  verbatim copy and its `.mac` and `.prn` are here.
+
+There used to be a second, byte-identical copy of 8080exm.com at
+`tests/8080EXM.COM` and of 8080exer.com at `tests/8080exer.com`. Both are gone.

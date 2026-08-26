@@ -67,4 +67,26 @@ else()
     set(CPACK_GENERATOR "TGZ")
 endif()
 
+# The archive name has to carry the architecture.  Left unset,
+# CPACK_PACKAGE_FILE_NAME defaults to name-version-system, which is
+# cpmemu-4.6.0-Linux.tar.gz on amd64 and cpmemu-4.6.0-Linux.tar.gz on arm64
+# as well: two different binaries under one filename, so whichever is attached
+# to a release second replaces the first and a user downloads a binary that
+# cannot run.  Verified with cpack before and after on linux x86_64.
+#
+# CMAKE_SYSTEM_PROCESSOR is x86_64 or aarch64 on linux and arm64 or x86_64 on
+# macOS.  A macOS build asked for more than one architecture is one universal
+# binary, so it is named for all of them rather than for the host - written
+# from the documentation, not measured, because there is no Mac here.
+if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+    string(REPLACE ";" "-" CPACK_TARGET_ARCH "${CMAKE_OSX_ARCHITECTURES}")
+else()
+    set(CPACK_TARGET_ARCH "${CMAKE_SYSTEM_PROCESSOR}")
+endif()
+if(NOT CPACK_TARGET_ARCH)
+    set(CPACK_TARGET_ARCH "unknown")
+endif()
+set(CPACK_PACKAGE_FILE_NAME
+    "${CPACK_PACKAGE_NAME}-${CPACK_PACKAGE_VERSION}-${CMAKE_SYSTEM_NAME}-${CPACK_TARGET_ARCH}")
+
 include(CPack)

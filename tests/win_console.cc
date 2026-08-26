@@ -3,18 +3,27 @@
  *
  * The Windows half of os/windows/platform.cc cannot be tested the way the
  * POSIX half is.  A pipe does not reach it at all: the extended key path sits
- * behind is_terminal(), and _getch()/_kbhit() read the console input buffer
- * rather than stdin, so redirected input never touches the diamond table.  A
- * cross-compile only proves the code builds.  wine is not a substitute either,
- * because its console layer does not reproduce _getch/_kbhit faithfully enough
- * for a pass to mean anything.
+ * behind is_terminal(), and the reads there go to the console input buffer
+ * rather than to stdin, so redirected input never touches the diamond table.
+ * A cross-compile only proves the code builds.  wine is not a substitute
+ * either, because its console layer does not reproduce console input
+ * faithfully enough for a pass to mean anything.
  *
  * So this drives a real console.  It spawns cpmemu with stdin bound to the
  * console this process is attached to, writes the INPUT_RECORDs a keyboard
  * would produce into that console with WriteConsoleInput, and captures the
  * guest's stdout and stderr through pipes.  The scan codes below were measured
- * on a real console, not taken from documentation: Ctrl+Left really does reach
- * _getch() as E0 73, and F1 as 00 3B.
+ * on a real console, not taken from documentation: Ctrl+Left really did reach
+ * the old _getch() path as E0 73, and F1 as 00 3B.  The platform layer keys on
+ * the virtual key code now, so what the scan codes are for here is keeping the
+ * injected records the shape a keyboard produces.
+ *
+ * Two things a case can set beyond the keys.  code_page sets the console input
+ * code page, which is what decides the bytes a character becomes: the cases
+ * that name 437 and 65001 are the ones the old byte-at-a-time reader could not
+ * survive.  ctrl_event sends a console control event, which is the only way to
+ * reach ctrl+break at all - the emulator is started in a process group of its
+ * own for those, or the event would come back and kill this harness too.
  *
  * What this does NOT prove: WriteConsoleInput puts records in the console
  * input buffer directly, so it steps past whatever the terminal program itself
@@ -149,7 +158,8 @@ static bool inject_key(WORD vk, WORD scan, WCHAR ch, DWORD ctrl, bool with_ctrl_
 }
 
 // One entry of a key script: a named key, ^X for a control character, a single
-// literal character, or wait:MS to leave a gap between keystrokes.
+// literal character, U+XXXX for a character by code point, or wait:MS to leave
+// a gap between keystrokes.
 static bool inject_spec(const std::string& spec) {
     for (size_t i = 0; i < sizeof(named_keys) / sizeof(named_keys[0]); i++) {
         if (_stricmp(spec.c_str(), named_keys[i].name) == 0) {
@@ -172,6 +182,37 @@ static bool inject_spec(const std::string& spec) {
         return inject_key(vk, (WORD)MapVirtualKeyA(vk, MAPVK_VK_TO_VSC),
                           (WCHAR)(unsigned char)spec[0],
                           (HIBYTE(vks) & 1) ? SHIFT_PRESSED : 0, false);
+    }
+    // U+XXXX names a character by code point, and U+XXXX+YYYY names several
+    // sent back to back with nothing between them.  The single-character branch
+    // above cannot reach any of these: VkKeyScanA takes a byte, so it stops at
+    // U+00FF, and the cast is one byte wide as well.  A character no key on the
+    // layout produces arrives with vk 0, scan 0 and only uChar.UnicodeChar set,
+    // which is what a paste and an IME produce too.  Above the BMP that is two
+    // records, one per UTF-16 code unit.
+    //
+    // The no-gap form matters on its own: the bug this was written for needed
+    // two characters in the console buffer at once, and the harness sleeps
+    // between key specs the way a person types.
+    if (spec.size() > 2 && (spec[0] == 'U' || spec[0] == 'u') && spec[1] == '+') {
+        const char* p = spec.c_str() + 2;
+        while (*p) {
+            char* end = NULL;
+            unsigned long cp = strtoul(p, &end, 16);
+            if (end == p || cp > 0x10FFFF) {
+                fprintf(stderr, "win_console: bad code point in %s\n", spec.c_str());
+                return false;
+            }
+            if (cp >= 0x10000) {
+                unsigned long v = cp - 0x10000;
+                if (!inject_key(0, 0, (WCHAR)(0xD800 + (v >> 10)), 0, false)) return false;
+                if (!inject_key(0, 0, (WCHAR)(0xDC00 + (v & 0x3FF)), 0, false)) return false;
+            } else {
+                if (!inject_key(0, 0, (WCHAR)cp, 0, false)) return false;
+            }
+            p = (*end == '+') ? end + 1 : end;
+        }
+        return true;
     }
     fprintf(stderr, "win_console: unknown key spec %s\n", spec.c_str());
     return false;
@@ -214,13 +255,16 @@ struct Result {
     std::string err;
     bool timed_out;
     bool mode_restored;
+    DWORD exit_code;
 };
 
 static bool run_guest(const std::string& emu, const std::string& com, const char* emu_args,
                       const char* keys, bool vt_input, int timeout_ms,
-                      HANDLE stdin_override, Result& result) {
+                      HANDLE stdin_override, UINT code_page, DWORD ctrl_event,
+                      Result& result) {
     result.timed_out = false;
     result.mode_restored = true;
+    result.exit_code = 0;
 
     DWORD original_mode = 0;
     GetConsoleMode(g_con_in, &original_mode);
@@ -228,6 +272,16 @@ static bool run_guest(const std::string& emu, const std::string& com, const char
     if (vt_input) {
         entry_mode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
         SetConsoleMode(g_con_in, entry_mode);
+    }
+    // The console input code page decides what bytes a character becomes, and
+    // it is a property of the console rather than of a process, so the child
+    // reads back whatever is set here.  Nothing in this file used to set it at
+    // all, which left every case running on whatever the machine was
+    // configured for and the two code pages that break the input path
+    // untested.  Put back below, next to the mode.
+    UINT original_cp = GetConsoleCP();
+    if (code_page != 0) {
+        SetConsoleCP(code_page);
     }
     FlushConsoleInputBuffer(g_con_in);
 
@@ -254,7 +308,11 @@ static bool run_guest(const std::string& emu, const std::string& com, const char
     ZeroMemory(&pi, sizeof(pi));
     std::vector<char> mutable_cmd(cmdline.begin(), cmdline.end());
     mutable_cmd.push_back(0);
-    if (!CreateProcessA(NULL, &mutable_cmd[0], NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
+    // A control event goes to a process group, and this harness shares the
+    // console with the child, so without a group of its own the break would
+    // reach this process too and kill the run that is measuring it.
+    DWORD flags = ctrl_event != 0 ? CREATE_NEW_PROCESS_GROUP : 0;
+    if (!CreateProcessA(NULL, &mutable_cmd[0], NULL, NULL, TRUE, flags, NULL, NULL, &si, &pi)) {
         fprintf(stderr, "win_console: cannot start %s (%lu)\n", emu.c_str(), GetLastError());
         return false;
     }
@@ -289,6 +347,17 @@ static bool run_guest(const std::string& emu, const std::string& com, const char
         p = comma + 1;
     }
 
+    // Sent once the emulator is in raw mode and has had whatever keys the case
+    // wanted, because the point of it is what the console is left in.
+    // CTRL_BREAK_EVENT is the one that reaches a process whose console has
+    // ENABLE_PROCESSED_INPUT cleared; CREATE_NEW_PROCESS_GROUP above also
+    // disables ctrl+c for the child, so a CTRL_C_EVENT here would be ignored.
+    if (ctrl_event != 0) {
+        if (!GenerateConsoleCtrlEvent(ctrl_event, pi.dwProcessId)) {
+            fprintf(stderr, "win_console: cannot send control event (%lu)\n", GetLastError());
+        }
+    }
+
     for (;;) {
         drain(out);
         drain(err);
@@ -308,8 +377,10 @@ static bool run_guest(const std::string& emu, const std::string& com, const char
     // A run that was killed never got to restore anything, so only a run that
     // finished on its own can be held to this
     result.mode_restored = result.timed_out || exit_mode == entry_mode;
+    GetExitCodeProcess(pi.hProcess, &result.exit_code);
 
     SetConsoleMode(g_con_in, original_mode);   // never leave the console changed
+    SetConsoleCP(original_cp);
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
     CloseHandle(out.read_end);
@@ -341,6 +412,13 @@ struct Case {
     // When set, the guest's stdin is NUL: a character device, which is what
     // separates "is this a console" from "is this a character device".
     bool stdin_nul;
+    // Console input code page for this case, or 0 to leave the machine's own
+    // alone.  The bytes a character becomes are decided here and nowhere else.
+    UINT code_page;
+    // When set, this control event is sent to the emulator once it is in raw
+    // mode and has had its keys.  CTRL_BREAK_EVENT is the one that gets past a
+    // cleared ENABLE_PROCESSED_INPUT.
+    DWORD ctrl_event;
 };
 
 #define PROG(p) p, sizeof(p)
@@ -433,7 +511,52 @@ static const Case cases[] = {
     // end of input never came.  `cpmemu prog.com < NUL` hung, and so did the
     // </dev/null cases tests/run_tests.sh already had.
     { "NUL is end of input too, not the keyboard", PROG(coneof_com),
-      "", "", "0D 1A ", "", false, 15000, NULL, true }
+      "", "", "0D 1A ", "", false, 15000, NULL, true },
+
+    // The code page cases.
+    //
+    // These are what the old _getch() path could not survive.  It read one byte
+    // at a time and took 0x00 or 0xE0 for a special key prefix, with !_kbhit()
+    // as the tie-breaker, so a character whose first byte is 0xE0 was a guess
+    // that code page 437 lost intermittently and 65001 lost every time.
+    //
+    // The bytes expected below are what the guest receives *today*, which is
+    // after the `& 0x7F` at cpmemu.cc:2361 - alpha is E0 in code page 437 and
+    // the guest sees 60.  Whether CP/M should see eight bits is open in
+    // todo.txt; when that is settled these expectations move with it, and that
+    // is the point of writing them out as bytes.
+    { "an E0 character is a character, not a key prefix", PROG(con6hex_com),
+      "U+03B1,.", "", "60 2E ", "", false, 15000, NULL, false, 437 },
+
+    // The one that used to lose both characters: E0 41 reached _getch() as a
+    // prefix and a scan code, no table entry matched 0x41, and the guest got
+    // neither.  U+03B1+0041 is one injection, so both are in the console buffer
+    // together the way they have to be to reproduce it.
+    { "an E0 character followed by another loses neither", PROG(con6hex_com),
+      "U+03B1+0041,.", "", "60 41 2E ", "", false, 15000, NULL, false, 437 },
+
+    // Code page 65001 turned the race into a certainty: U+0E01 encodes as
+    // E0 B8 81 and the old path handed those back one byte at a time.
+    { "a three byte UTF-8 character arrives whole", PROG(con6hex_com),
+      "U+0E01,.", "", "60 38 01 2E ", "", false, 15000, NULL, false, 65001 },
+
+    // Outside the BMP a character is two records, one per UTF-16 code unit, and
+    // only reading them as a pair produces the four UTF-8 bytes.  U+10441 is
+    // picked so no byte of it masks to 0x00, which BDOS 6 reads as "no
+    // character" and would drop.
+    { "a surrogate pair is one character, not two", PROG(con6hex_com),
+      "U+10441,.", "", "70 10 11 01 2E ", "", false, 15000, NULL, false, 65001 },
+
+    // ctrl+break.
+    //
+    // It ends the process without running atexit(), so the console mode is put
+    // back by a SetConsoleCtrlHandler or not at all.  With no handler the child
+    // exits 0xC000013A with the mode still raw and the shell left with no echo;
+    // this case fails on the console mode, not on the output.  The guest loops
+    // for ever waiting for '.', so a break that does nothing shows up as the
+    // timeout instead.
+    { "the console is put back on a ctrl+break", PROG(con6hex_com),
+      "A,wait:200", "", "41 ", "", false, 15000, NULL, false, 0, CTRL_BREAK_EVENT }
 };
 
 // ============================================================================
@@ -614,7 +737,7 @@ int main(int argc, char** argv) {
 
         Result r;
         bool ran = run_guest(emu, com, c.emu_args, c.keys, c.vt_input, c.timeout_ms,
-                             stdin_file, r);
+                             stdin_file, c.code_page, c.ctrl_event, r);
         if (stdin_file != INVALID_HANDLE_VALUE) {
             CloseHandle(stdin_file);
             if (in_path[0]) DeleteFileA(in_path);
@@ -636,6 +759,7 @@ int main(int argc, char** argv) {
             printf("FAIL  %s\n", c.name);
             if (r.timed_out) printf("        the emulator had to be killed: it never finished\n");
             if (!r.mode_restored) printf("        the console mode was not put back on exit\n");
+            if (c.ctrl_event) printf("        exit code: 0x%08lX\n", (unsigned long)r.exit_code);
             printf("        expected: %s\n", show(c.want_out).c_str());
             printf("        got:      %s\n", show(r.out).c_str());
             if (*c.want_err && r.err.find(c.want_err) == std::string::npos)

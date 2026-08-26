@@ -11,7 +11,7 @@ Each test compares the guest's stdout against an exact expected string and
 reports PASS or FAIL; the script exits non-zero if anything failed.
 
 The instruction exercisers are opt-in, because they are slow - about 7 minutes
-each for zexdoc and zexall and 3m41s for 8080EXM, measured:
+each for zexdoc and zexall and 3m41s for `8080exm`, measured:
 ```bash
 tests/run_tests.sh --zex                      # cap defaults to 1 hour each
 CPMEMU_ZEX_TIMEOUT=7200 tests/run_tests.sh --zex
@@ -107,7 +107,7 @@ which runs a hex echo so each key prints what the guest received.
 
 `tests/win_console.cc` is the only part of the suite that cannot run on Linux.
 The extended key path in `src/os/windows/platform.cc` sits behind
-`is_terminal()`, and `_getch()`/`_kbhit()` read the console input buffer rather
+`is_terminal()`, and `ReadConsoleInputW()` reads the console input buffer rather
 than stdin, so nothing arriving through a pipe touches it. The test therefore
 drives a real console: it starts cpmemu with stdin bound to the console it is
 attached to, writes the `INPUT_RECORD`s a keyboard would produce with
@@ -183,7 +183,7 @@ truncated one: the old script capped the suites at 180 seconds, which is
 about five groups in, and printed the partial output as though it were
 the result.
 
-#### 8080EXM.COM
+#### 8080/8080exm.com
 The same exerciser converted to the 8080 by Ian Bartholomew, with CRCs taken
 from real hardware, plus Mike Douglas's change to print the CRC on a pass.
 - Size: 4608 bytes
@@ -191,6 +191,11 @@ from real hardware, plus Mike Douglas's change to print the CRC on a pass.
 - Runtime: 3m41s, measured on the machine the zex timings above came from
 - Status: completes, all 25 groups, no CRC mismatches
 - Run it with `tests/run_tests.sh --zex`, which passes `--8080`
+
+It used to be in the tree three times over: this copy, a byte-identical
+`tests/8080EXM.COM`, and `tests/8080exer.com` duplicating
+`tests/8080/8080exer.com`. See "The 8080 directory" below for what went and
+what stayed.
 
 It must be run under `--8080`. In Z80 mode it is measuring the wrong
 processor - the CRCs it holds are an 8080's - and all 25 groups mismatch,
@@ -219,6 +224,42 @@ almost every other group, `MOV` and `MVI` included, which set no flags at all.
 
 Both are covered by `tests/unit_8080.cc` as well, so the four-minute opt-in run
 is not the only thing standing between them and a regression.
+
+#### 8080/8080pre.com
+The preliminary test that comes with the exerciser: a fixed sequence rather than
+an exhaustive walk, printing `8080 Preliminary tests complete` and nothing else
+if every check passes, and stopping at the first one that does not.
+- Size: 1024 bytes
+- Runtime: 0.09s, measured on the machine the timings above came from
+- Status: passes
+- Part of the default `tests/run_tests.sh`, not behind `--zex`
+
+It is in the default suite precisely because of that runtime: it is three orders
+of magnitude cheaper than the exerciser beside it, so there is nothing to weigh
+up. It is a much weaker check than `8080exm` - a fixed sequence against no CRCs -
+and it is not a substitute for either that or `tests/unit_8080.cc`.
+
+### The 8080 directory
+
+`tests/8080/` is a copy of the `cpu_tests` directory from superzazu's 8080
+emulator, and it holds each program with the `.mac` it was assembled from and a
+`.prn` listing, plus a README naming where they came from. That is what makes it
+the canonical copy, and two loose duplicates elsewhere in `tests/` have been
+deleted:
+
+- `tests/8080EXM.COM` - was run by `--zex` and was byte for byte
+  `tests/8080/8080exm.com`. Deleted; `--zex` runs the copy in `tests/8080/`.
+- `tests/8080exer.com` - was run by nothing and was byte for byte
+  `tests/8080/8080exer.com`. Deleted.
+- `tests/8080/8080exer.com` - run by nothing before and run by nothing now. Kept,
+  for the reason below.
+
+`8080exer.com` is kept and not run, deliberately. It is the same 25 instruction
+groups as `8080exm.com` and takes the same minutes, and where `8080exm` prints
+the CRC it computed, `8080exer` prints `OK` - so a failing group tells you less,
+and a passing run tells you nothing `8080exm` did not already tell you. It stays
+because the directory is a verbatim copy of an upstream set: deleting one `.com`
+would leave its `.mac` and `.prn` describing a program that is not there.
 
 ## 8080 mode unit tests
 
@@ -283,7 +324,11 @@ src/cpmemu tests/zexall.com
 
 # Run the 8080 exerciser.  The --8080 is not optional: without it this is
 # measuring a Z80 against an 8080's CRCs and every group mismatches.
-src/cpmemu --8080 tests/8080EXM.COM
+src/cpmemu --8080 tests/8080/8080exm.com
+
+# The preliminary test, which the default suite already runs.  Under a tenth
+# of a second, and prints one line.
+src/cpmemu --8080 tests/8080/8080pre.com
 ```
 
 ## Test Results Comparison with tnylpo
@@ -302,6 +347,8 @@ All simple flag tests match tnylpo exactly:
 - `.bin` - Raw binary output from assembler
 - `.com` - CP/M executable (same as .bin for these tests)
 - `.o` - Object file from z88dk assembler
+- `.mac` - Macro-80 source, in `tests/8080/` only
+- `.prn` - Macro-80 listing, in `tests/8080/` only
 
 ## Assembler
 
@@ -360,9 +407,10 @@ console layer or the file system, which have their own tests or none.
 - zexdoc: 67 groups, no CRC mismatches ✅
 - zexall: 67 groups, no CRC mismatches ✅
 - Pair runs end to end in 13m46s
-- 8080EXM under `--8080`: 25 groups, no CRC mismatches ✅, in 3m41s, after the
+- `8080exm` under `--8080`: 25 groups, no CRC mismatches ✅, in 3m41s, after the
   `DAA` and `CMA`/`STC`/`CMC` fixes described above. Before them, 19 of the 25
   mismatched.
+- `8080pre` under `--8080`: passes, in 0.09s. In the default suite.
 
 ## Next Steps
 

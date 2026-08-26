@@ -60,8 +60,26 @@ static bool raw_wanted = false;      // raw mode is what this run should be in
 // still meant to be raw when it comes back.  disable_raw_mode() is the way out
 // for good and says so by clearing raw_wanted, so a SIGCONT arriving after the
 // atexit handler cannot re-raw a terminal we have already handed over.
+//
+// The restore is not gated on raw_active, and that is the fix to a real bug
+// rather than tidiness.  apply_raw_mode() can only set that flag after its
+// tcsetattr returns, while the settings are live in the kernel from the moment
+// the call completes there - so a signal delivered in the gap between the two
+// finds raw_active false, skips the restore, and leaves the terminal raw with
+// nothing left to put it back.  The gap is a few instructions wide, which makes
+// it rare rather than impossible: measured, one failure in 120 runs of the
+// seven kill cases in tests/pty_console.cc with 64 spinning processes on a
+// 2-core box, reported as "the terminal was not put back on exit" on the SIGQUIT
+// case.  Widening the gap to 50ms on purpose turns that into all seven failing
+// every time, and this line is what turns it back into all seven passing with
+// the 50ms still there.
+//
+// termios_saved is the right guard instead: it is set immediately after the
+// tcgetattr that filled original_termios and never cleared, so it means "there
+// is a terminal to put back", which is exactly the question.  Restoring one
+// that was never made raw writes back the settings already on it.
 static void unapply_raw_mode() {
-    if (raw_active) {
+    if (termios_saved) {
         tcsetattr(STDIN_FILENO, TCSANOW, &original_termios);
         raw_active = false;
     }
@@ -213,7 +231,10 @@ void enable_raw_mode() {
     // loses ^V and ^O before the guest ever sees them.
     raw.c_lflag &= ~(ICANON | ECHO | ECHONL | IEXTEN | ISIG);
     // Disable input processing (break handling, parity marking, CR-to-NL,
-    // XON/XOFF).  ISTRIP disabled so the 8th bit of each byte survives.
+    // XON/XOFF).  ISTRIP disabled so the 8th bit of each byte survives the line
+    // discipline: measured, 128 of 128 high bytes reach read() unchanged.  That
+    // is as far as this layer goes, and it is not the same as the guest seeing
+    // the bit - see the note below.
     raw.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
     // Disable output processing so escape sequences pass through unmodified
     raw.c_oflag &= ~(OPOST);
@@ -221,7 +242,21 @@ void enable_raw_mode() {
     // c_cflag CSIZE/PARENB/CS8.  c_cflag is inert on a pty or a pipe, and on a
     // real serial console it reprograms the line itself - forcing 8N1 on a
     // terminal the user brought up 7E1 garbles the whole session.  Clearing
-    // ISTRIP above is what actually keeps the 8th bit, which is all we need.
+    // ISTRIP above is what actually keeps the 8th bit through the driver, and
+    // it is all this layer needs.
+    //
+    // It is not all the emulator needs, and this comment used to imply it was.
+    // All four console read sites in cpmemu.cc then mask with & 0x7F -
+    // cpmemu.cc:1591 (BDOS 1), :1771 (BDOS 10 buffer store), :2361 (BDOS 6) and
+    // :2799 (BIOS CONIN) - so a high byte that arrives here intact reaches the
+    // CP/M program with its top bit gone.  Measured: the UTF-8 bytes for
+    // e-acute, alpha, pound and em-dash give the guest C3 29 4E 31 42 23 62 00
+    // 14 after masking, and on the polled path a byte that masks to 0x00 is
+    // dropped outright, because BDOS 6 reads 0 as "no character".
+    //
+    // Whether CP/M should see eight bits is a real question and it is not
+    // settled here; it is open in todo.txt.  What this clear buys is that
+    // settling it either way needs no change to this layer.
     // Set minimum characters to 1 and timeout to 0
     raw.c_cc[VMIN] = 1;
     raw.c_cc[VTIME] = 0;

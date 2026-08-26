@@ -388,6 +388,35 @@ cpmemu/
 ├── examples/              # Configuration file examples
 └── docs/                  # Documentation and references
 ```
+## Who else compiles qkz80
+
+`src/qkz80*.{cc,h}` is the CPU core, and three of the projects listed below
+compile those source files directly out of a sibling working tree rather than
+depending on a cpmemu *release*. An edit to `qkz80.cc` therefore lands in all
+three on their next build, with no notification:
+
+- **ioscpm** - 11 symlinks in `iOSCPM/Core/` pointing at `../cpmemu/src/qkz80*`.
+  Built as Objective-C++ for iOS (`SDKROOT = iphoneos`, deployment target 15.0)
+  at `c++17`/`gnu++20`; its `Tests/run_tests.sh` compiles the same files with
+  `-std=c++11 -Wall`.
+- **z80cpmw** - `z80cpmw.vcxproj` compiles
+  `$(SolutionDir)..\cpmemu\src\qkz80*` in place, with MSVC at `/W3`.
+- **romwbw_emu** - `src/makefile` falls back to `../../cpmemu/src` for the
+  headers and `libqkz80.a` when pkg-config has no `qkz80` entry, and builds with
+  `-std=c++11 -Wall`.
+
+Only romwbw_emu has a version gate, and only in CI: `release.yml` and `test.yml`
+clone `avwohl/cpmemu` and check out a pinned `CPMEMU_REF`, `9a94e8d` as this is
+written. ioscpm and z80cpmw have none at all, and neither does romwbw_emu's own
+sibling-directory fallback, so a local build of any of the three takes whatever
+is in this working tree.
+
+06262ff is the mechanism working quietly in the good direction: it added
+`QKZ80_NO_TRACE` and all three picked it up on their next build without being
+told. It can work the other way just as quietly, so check the three before
+changing qkz80's public surface. None of them uses the compiler, the language
+standard or the warning set this repo builds with.
+
 ## Related Projects
 
 - [80un](https://github.com/avwohl/80un) - Unpacker for the CP/M archive and compression formats LBR, ARC, squeeze, crunch, and CrLZH.
