@@ -76,8 +76,12 @@ endif()
 #
 # CMAKE_SYSTEM_PROCESSOR is x86_64 or aarch64 on linux and arm64 or x86_64 on
 # macOS.  A macOS build asked for more than one architecture is one universal
-# binary, so it is named for all of them rather than for the host - written
-# from the documentation, not measured, because there is no Mac here.
+# binary, so it is named for all of them rather than for the host.
+#
+# Measured on macOS 27 arm64: a plain build leaves CMAKE_OSX_ARCHITECTURES
+# empty and cpack names the archive cpmemu-4.6.0-Darwin-arm64.tar.gz, and
+# -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" names it
+# cpmemu-4.6.0-Darwin-arm64-x86_64.tar.gz.
 if(APPLE AND CMAKE_OSX_ARCHITECTURES)
     string(REPLACE ";" "-" CPACK_TARGET_ARCH "${CMAKE_OSX_ARCHITECTURES}")
 else()

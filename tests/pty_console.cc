@@ -3,10 +3,11 @@
  *
  * The POSIX half of os/linux/platform.cc cannot be tested through a pipe.
  * enable_raw_mode() returns immediately when is_terminal() is false, so a
- * redirected run never touches termios at all, and stdin_has_data() answers
- * false for anything that is not a tty by design, so BDOS 6 never sees a byte
- * that way either.  Everything the terminal layer does is therefore invisible
- * to a pipe, and a build that compiles proves only that it compiles.
+ * redirected run never touches termios at all: every mask, every restore and
+ * every signal path below is invisible to a pipe, and a build that compiles
+ * proves only that it compiles.  The one exception is stdin_has_data(), which
+ * answers for a file and a pipe as well as for a tty; the three polled
+ * redirected cases below are the ones that reach it.
  *
  * So this drives a real terminal.  It allocates a pty, gives the slave to
  * cpmemu as stdin, writes the bytes a keyboard would send into the master, and
@@ -796,17 +797,30 @@ static const Case cases[] = {
     { "a reader that ignores end of input is stopped", PROG(con1hex_com),
       NULL, "", "", NULL, "reads past end of input", 20000, StdinFile, "", false, 0, NULL },
 
-    // The deliberate POSIX behaviour, and the place the two platforms
-    // disagree: stdin_has_data() answers false for anything that is not a tty,
-    // so a guest polling BDOS 6 or BIOS CONST never takes a byte of its own
-    // redirected input.  Windows answers for a pipe and for a file, and the
-    // same case there prints "41 T".  Neither side of that was ever decided;
-    // this pins what POSIX does today so a change to it has to be deliberate.
-    { "a polled read takes nothing from a file", PROG(conststall_com),
-      NULL, "", "", "T", "", 20000, StdinFile, "SA", false, 0, NULL },
+    // The polled path against redirected input, which is where the two
+    // platforms used to disagree.  stdin_has_data() answered false for
+    // anything that was not a tty, so a guest polling BDOS 6 or BIOS CONST
+    // never took a byte of its own redirected input - and, worse, never
+    // reached the read, so it never reached end of input either and spun until
+    // it was killed.  Both of these hang against the old platform layer.
+    //
+    // POSIX matches Windows now: same guest, same input, same expected bytes
+    // as "polled input arrives from a file, not only from a pipe" in
+    // tests/win_console.cc, so the two suites can be compared byte for byte.
+    // These are the polled twins of the two blocking cases above.
+    { "a polled read takes its bytes from a file", PROG(con6hex_com),
+      NULL, "", "", "41 42 2E ", "", 20000, StdinFile, "AB.", false, 0, NULL },
 
-    { "a polled read takes nothing from a pipe", PROG(conststall_com),
-      NULL, "", "", "T", "", 20000, StdinPipe, "SA", false, 0, NULL },
+    { "a polled read takes its bytes from a pipe", PROG(con6hex_com),
+      NULL, "", "", "41 42 2E ", "", 20000, StdinPipe, "AB.", false, 0, NULL },
+
+    // The other half of reaching the read: end of input now reaches the polled
+    // path too, so the shared give-up can end a run the guest would otherwise
+    // never end.  BDOS 6 spells "no character" and "end of input" both as 0,
+    // which is why this guest cannot stop itself, and why the count in
+    // cpmemu.cc has to.  Nothing on POSIX could reach that code before.
+    { "a polled reader that runs out of input is stopped", PROG(con6hex_com),
+      NULL, "", "", NULL, "reads past end of input", 20000, StdinFile, "", false, 0, NULL },
 
     // ---- being killed ----------------------------------------------------
     // atexit() covers exit() and a return from main and nothing else, so a
@@ -1063,6 +1077,25 @@ static bool job_start(Job& j, const std::string& emu, const std::string& com,
             } else if (WIFCONTINUED(st)) {
                 note(note_pipe[1], "CONT\n");
             } else {
+                // Whether the exit put the terminal back has to be read here,
+                // in the session leader, and before it exits.  Darwin revokes
+                // the slave for every other descriptor the moment the session
+                // leader goes: measured on macOS 27, a tcgetattr in the
+                // harness after job_finish() returns -1 with ENOTTY (25) and
+                // isatty() on the same fd is 0, so a check made out there
+                // could only ever say "not put back" whatever the emulator
+                // did.  This is also the tighter place to look - nothing has
+                // touched the terminal between the emulator's exit and this
+                // line, where out there the stand-in shell's own exit sits in
+                // between.  j.before was read before the fork, so this copy of
+                // the process already has what to compare against.
+                struct termios after;
+                if (tcgetattr(j.pty.slave, &after) != 0) {
+                    note(note_pipe[1], "NOTTY\n");
+                } else {
+                    note(note_pipe[1],
+                         termios_equal(j.before, after) ? "PUTBACK\n" : "STRANDED\n");
+                }
                 note(note_pipe[1], "GONE\n");
                 _exit(WIFEXITED(st) ? WEXITSTATUS(st) : 1);
             }
@@ -1222,10 +1255,15 @@ static void run_suspend_case(const std::string& emu, const std::string& dir,
         detail += "        the emulator had to be killed: it never finished\n";
         ok = false;
     }
+    // The stand-in shell read the terminal for us the moment the emulator
+    // exited, and said what it found - see the GONE branch in job_start().
     if (ok) {
-        struct termios after;
-        if (tcgetattr(j.pty.slave, &after) != 0 || !termios_equal(j.before, after)) {
+        if (job_note_count(j, "STRANDED\n") > 0) {
             detail += "        the terminal was not put back on exit\n";
+            ok = false;
+        } else if (job_note_count(j, "PUTBACK\n") == 0) {
+            detail += "        the stand-in shell never reported the terminal it was\n"
+                      "        left with, so the exit was not checked: " + show(j.notes) + "\n";
             ok = false;
         }
     }
@@ -1322,9 +1360,9 @@ static void run_background_case(const std::string& emu, const std::string& dir,
 // ============================================================================
 
 static int manual_mode(const std::string& emu, const std::string& com) {
-    // The guest polls BDOS 6, which never answers on anything that is not a
-    // terminal, so a redirected --manual would sit there forever rather than
-    // saying it could not run
+    // Manual mode is a person pressing keys, so a redirected stdin has nothing
+    // to offer it: the guest would read the file or the pipe and exit before
+    // anyone typed anything.  Say so rather than run.
     if (!isatty(0)) {
         printf("SKIP  posix console --manual (stdin is not a terminal)\n");
         return 0;

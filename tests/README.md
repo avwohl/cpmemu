@@ -25,10 +25,11 @@ builds and runs the 8080 mode unit tests on their own, and does assert.
 
 `tests/pty_console.cc` is the counterpart for everything that is not Windows.
 The terminal layer in `src/os/linux/platform.cc` cannot be reached through a
-pipe: `enable_raw_mode()` returns immediately when `is_terminal()` is false, and
-`stdin_has_data()` answers false for anything that is not a tty by design, so a
-redirected run never touches termios and BDOS 6 never sees a byte. Every other
-test in this file therefore runs with that whole layer switched off.
+pipe: `enable_raw_mode()` returns immediately when `is_terminal()` is false, so
+a redirected run never touches termios at all. Every other test in this file
+therefore runs with that whole layer switched off. The exception is
+`stdin_has_data()`, which answers for a file and a pipe as well as for a tty, so
+the polled redirected cases in `pty_console.cc` do reach it.
 
 So this one allocates a pty, hands the slave to cpmemu as stdin, writes the
 bytes a keyboard would send into the master, and compares what the CP/M guest
@@ -101,7 +102,8 @@ c++ -std=c++11 -Wall -Wextra -o pty_console tests/pty_console.cc
 ./pty_console --manual src/cpmemu
 ```
 
-which runs a hex echo so each key prints what the guest received.
+which runs a hex echo so each key prints what the guest received. What to press
+and what should come back is `MANUAL_CHECKS.md` in the repo root.
 
 ## Windows console tests
 
@@ -130,7 +132,8 @@ tests still pass and the user still loses the key. For that, press the keys:
 tests\win_console.exe --manual path\to\cpmemu.exe
 ```
 
-which runs a hex echo so each key prints what the guest received.
+which runs a hex echo so each key prints what the guest received. What to press
+and what should come back is `MANUAL_CHECKS.md` in the repo root.
 
 ## Test Programs
 
@@ -420,12 +423,15 @@ What is left is coverage of everything they do not reach:
 1. The console layer now has `tests/pty_console.cc` on POSIX and
    `tests/win_console.cc` on Windows, including two BDOS function 10
    line-editor cases. What neither covers is a person actually pressing the
-   keys; both have a `--manual` mode for that and nobody has run the POSIX one
-   yet on a terminal program other than the one it was written on.
+   keys; both have a `--manual` mode for that and nobody has run either. The
+   four terminal programs to try, and the bytes each key should print, are in
+   `MANUAL_CHECKS.md` in the repo root.
 2. The drive mapping group needs an assembler. It takes `pasmo` or `z80asm`,
    which covers Homebrew and Debian, but on a machine with neither it still
    skips 26 checks - more than half the suite. Committing those ten `.com`
    files as byte arrays the way `tests/con_guests.h` does would de-gate it
    entirely.
 3. There is no CI job running any of this; `.github/workflows/release.yml`
-   builds and packages only, and only for Linux and Windows.
+   builds and packages only, on Linux and macOS. Nothing in CI has ever
+   compiled the Windows half except the cross-compile above, and nothing has
+   ever run it.

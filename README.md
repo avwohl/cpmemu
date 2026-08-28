@@ -72,6 +72,33 @@ sudo rpm -i cpmemu.x86_64.rpm
 
 For ARM64 systems, use `cpmemu.aarch64.rpm` instead.
 
+### macOS
+
+The release workflow builds one universal binary covering both Apple silicon
+and Intel, published as `cpmemu-macos-universal.tar.gz`:
+
+```bash
+curl -LO https://github.com/avwohl/cpmemu/releases/latest/download/cpmemu-macos-universal.tar.gz
+tar xzf cpmemu-macos-universal.tar.gz
+xattr -dr com.apple.quarantine cpmemu-*-Darwin-arm64-x86_64
+sudo cp cpmemu-*-Darwin-arm64-x86_64/bin/cpmemu /usr/local/bin/
+```
+
+**The `xattr` line is not optional, and skipping it does not get you an error
+message.** Anything a browser or `curl -L` fetches is tagged
+`com.apple.quarantine`, and macOS `tar` copies that tag onto every file it
+extracts, so it ends up on `bin/cpmemu` as well as on the archive. The binary
+is signed ad hoc and is not notarized, so Gatekeeper refuses it - `spctl -a -t
+exec` on it says `rejected` - and from a terminal that refusal has no visible
+form at all. Measured on macOS 27: the process starts, prints nothing, and sits
+in state `SN` until it is killed. The same binary with the attribute removed
+runs immediately.
+
+`xattr -l cpmemu` shows whether the attribute is still there; an empty answer
+means it is gone. Notarizing properly needs a Developer ID certificate and
+`notarytool`, and that is an open release item - until it is done, the `xattr`
+line is the whole of the workaround.
+
 ### From Source
 
 See [docs/BUILDING.md](docs/BUILDING.md) for detailed build instructions.
@@ -83,6 +110,20 @@ cd cpmemu/src
 make
 sudo cp cpmemu /usr/local/bin/
 ```
+
+**Quick start (macOS):**
+```bash
+git clone https://github.com/avwohl/cpmemu.git
+cd cpmemu/src
+make
+sudo cp cpmemu /usr/local/bin/
+```
+
+Do not add `STATIC=1` there. macOS ships no `crt0.o` and no static libc or
+libc++, so a static link cannot be made at all, and `-static-libstdc++` is
+accepted and silently ignored - so the makefile refuses the flag rather than
+hand you a dynamic binary you believe is static. For portability across macOS
+versions, set `MACOSX_DEPLOYMENT_TARGET` instead.
 
 **Quick start (Windows with Visual Studio):**
 ```cmd

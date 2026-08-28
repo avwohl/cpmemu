@@ -520,10 +520,10 @@ check "8080 preliminary tests" tests/8080/8080pre.com \
 # POSIX console.
 #
 # The terminal layer in src/os/linux/platform.cc is unreachable through a pipe:
-# enable_raw_mode() returns at once when is_terminal() is false, and
-# stdin_has_data() answers false for anything that is not a tty by design, so a
-# redirected run never touches termios and BDOS 6 never sees a byte. Everything
-# above therefore runs with that whole layer switched off.
+# enable_raw_mode() returns at once when is_terminal() is false, so a redirected
+# run never touches termios. Everything above therefore runs with that whole
+# layer switched off, bar stdin_has_data(), which answers for a file and a pipe
+# as well as for a tty.
 #
 # tests/pty_console.cc gives cpmemu a real terminal instead - a pty whose master
 # this script's child writes the bytes a keyboard would send into - and compares

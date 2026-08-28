@@ -15,6 +15,30 @@ Everything below has landed since the `v4.6.0` tag and is not yet in a release.
 
 ### Added
 
+- **A macOS job in `.github/workflows/release.yml`, which has never run on a
+  GitHub runner.** `release.yml` built on `ubuntu-latest` and
+  `ubuntu-24.04-arm` only, so there was no macOS download and nothing in CI
+  ever compiled the platform layer's other half. `build-macos` is a job of its
+  own rather than a third row in the matrix: every step in that matrix is
+  Debian and RPM packaging — `apt-get`, `gem install fpm`, `fpm -t deb`, `fpm
+  -t rpm` — and none of it has a macOS counterpart, so a matrix row would mean
+  an `if:` on six steps plus a parallel set beside them. It builds the
+  makefile targets first, because those are what someone building from source
+  runs and their shared-library rules exist only on this platform, then one
+  universal binary through cpack — `cpmemu-<version>-Darwin-arm64-x86_64.tar.gz`
+  plus a versionless `cpmemu-macos-universal.tar.gz` so
+  `/releases/latest/download/` URLs work, matching what the Linux job does for
+  the `.deb` and the `.rpm`. The archive carries the binary, `libqkz80.a` and
+  the headers and deliberately no dylib: a dylib's install name is an absolute
+  path, so one shipped in a tarball the user unpacks wherever they like is a
+  library dyld cannot find, and an `@rpath` layout is a bigger change than a
+  release job. **Said plainly: every shell command in the job was extracted
+  from the YAML and executed by hand on macOS 27 arm64, and each produced what
+  the job expects — `lipo -info` reporting `x86_64 arm64`, both slices running,
+  the archive holding `bin/cpmemu`, seven headers and `libqkz80.a`. The job
+  itself has never run. `macos-latest` is a different machine with a different
+  Xcode.** That is in `todo.txt`.
+
 - **Five Windows console cases, and the two things the harness needed to reach
   them — none of which has ever been executed.** `tests/win_console.cc` could
   not name a character above `U+00FF`: `inject_spec()`'s single-character branch
@@ -117,6 +141,110 @@ Everything below has landed since the `v4.6.0` tag and is not yet in a release.
 
 ### Fixed
 
+- **A guest polling BDOS 6 against redirected input hung forever on POSIX.**
+  `stdin_has_data()` in `src/os/linux/platform.cc` returned false outright for
+  anything that was not a tty, on purpose, so BDOS 6, BDOS 11 and BIOS CONST
+  never saw a pipe or a file. The consequence was not "batch runs are quieter":
+  the read in `cpmemu.cc` was unreachable, `note_console_eof()` never counted,
+  and the 1024-read give-up that ends such a run on Windows could not fire.
+  Measured with the repo's own `con6hex` guest from `tests/con_guests.h`:
+  `cpmemu con6hex.com < in.txt` and `printf 'AB.' | cpmemu con6hex.com` both ran
+  until they were killed and printed not one byte of their own input; the same
+  input through blocking BDOS 1 printed `41 42 2E` and exited at once. POSIX
+  matches Windows now — `os/windows/platform.cc` has always answered for a pipe
+  through `PeekNamedPipe` and for a file from its own position — and the two
+  platforms no longer disagree about whether a guest that polls as a break
+  check can take a byte of its own script. Both cases now print `41 42 2E` and
+  exit 0 in 0.07s, and `< /dev/null` reaches
+  `[Exiting: 1024 console reads past end of input]`, which nothing on POSIX
+  could reach before. `select()` rather than `poll()`, and that was measured
+  rather than chosen: on macOS 27 `poll()` sets `POLLNVAL` on `/dev/null` and
+  `/dev/zero`, descriptors `fstat()` is perfectly happy with, so a `poll()`
+  implementation would have reported "nothing waiting, ever" and hung exactly
+  where this change is meant to stop hanging. `EINTR` is retried rather than
+  read as "no character", since `SIGCONT` and `SIGWINCH` arrive here in
+  ordinary use. Three `tests/pty_console.cc` cases cover it: the two that
+  pinned the old behaviour used a *bounded* poller and so never hung, and were
+  replaced with the same guest, input and expected bytes as the Windows case
+  "polled input arrives from a file, not only from a pipe" so the two suites
+  can be read side by side; a third, "a polled reader that runs out of input is
+  stopped", covers the give-up path.
+- **`make shared` on macOS wrote a Mach-O called `libqkz80.so`, with a bare
+  install name, and a consumer that linked cleanly aborted at exec.** Not a
+  cosmetic mismatch: Apple's linker does search for a `.so` and prefers it over
+  the `libqkz80.a` sitting beside it in the same `-L` directory — traced with
+  `-Wl,-t` — and the install name inside it was the bare string `libqkz80.so`,
+  which dyld resolves only from the build directory it happened to be run in.
+  So it looked fine where it was built and died everywhere else:
+  `dyld: Library not loaded: libqkz80.so`, exit 134. It is
+  `libqkz80.4.dylib` now with an unversioned `libqkz80.dylib` symlink beside
+  it, laid out as every other dylib on the system is; `-install_name` is an
+  absolute path, `-compatibility_version` is the major and
+  `-current_version` the full version, and `-headerpad_max_install_names`
+  leaves `install_name_tool` room. `make install-lib` re-stamps the install
+  name for wherever `PREFIX` actually puts it, because the link happens before
+  a `PREFIX` given only on the install command line is known. Measured: a
+  consumer built from a different working directory against an installed
+  prefix records that prefix and runs; installing the same build tree into two
+  prefixes in a row gives each its own install name and its own `libdir`;
+  `codesign -v` stays happy across the re-stamp; `make uninstall-lib` removes
+  the symlink too. `make clean` removes `*.dylib`, which it did not. Linux is
+  untouched — `make -n UNAME_S=Linux libs` still emits `c++ -shared -o
+  libqkz80.so` verbatim, which is the only check the Linux half of any of this
+  has had.
+- **`make STATIC=1` on macOS produced a link error rather than a static
+  binary, and is now refused rather than attempted.** The SDK ships no
+  `crt0.o`, no `libc.a`, no `libSystem.a` and no `libc++.a`, so `-static`
+  stopped at `ld: library 'crt0.o' not found` — measured on macOS 27 arm64 with
+  Apple clang 21. Quietly dropping the flag would have been worse than
+  failing, because `-static-libstdc++` *is* accepted and silently ignored by
+  the same compiler, so whoever asked for `STATIC=1` would have got a
+  dynamically linked binary they believed was static and found out from a
+  user's machine. `src/makefile` stops with a `$(error)` naming
+  `MACOSX_DEPLOYMENT_TARGET` as the thing that actually controls how old a
+  macOS the binary will run on — measured rather than guessed:
+  `make MACOSX_DEPLOYMENT_TARGET=12.0` gives `LC_BUILD_VERSION` `minos 12.0`
+  against `minos 27.0` without it. It fires at parse time, so `make clean
+  STATIC=1` stops as well; `release.yml`'s Linux job is the only caller and
+  does not pass it on Darwin. `-static` on Linux is unchanged.
+- **`qkz80.pc` named directories the install does not use, and produced a
+  static link that could not work.** `libdir` and `includedir` were hardcoded
+  as `${prefix}/lib` and `${prefix}/include/qkz80`, so they were wrong the
+  moment `LIBDIR` or `INCLUDEDIR` moved; they come from the same variables the
+  install uses now. There was no `Libs.private` at all, so `pkg-config --static
+  --libs qkz80` handed a C driver a link with no C++ runtime under it —
+  measured, `cc main.o shim.o libqkz80.a` failed on `vtable for
+  __cxxabiv1::__class_type_info`, `operator new`/`delete` and
+  `___gxx_personality_v0`. It is `-lc++` on Darwin and `-lstdc++` on Linux
+  (`make -n UNAME_S=Linux`), only `--static` reads it, and the same C driver
+  links and prints its answer now. The rule was also depending on
+  `qkz80.pc.in` alone, so `make install-lib PREFIX=A` followed by `PREFIX=B`
+  installed a stale `.pc` still pointing at A; it is `.PHONY` and regenerates.
+  The version is no longer a third hand-maintained copy either — `qkz80.pc.in`
+  takes `@VERSION@` from `LIB_VERSION` in the makefile. `src/CMakeLists.txt`
+  still carries its own in `project(... VERSION ...)`; the makefile comment
+  says so.
+- **The pty suspend/resume case failed on Darwin, and it was the harness that
+  was wrong.** "a suspend puts the terminal back, and a resume takes it again"
+  reported "the terminal was not put back on exit" on every run — four out of
+  four, three against the committed binary and one against a fresh build, so
+  neither flaky nor stale. The emulator was fine: the suspend, the resume, the
+  raw re-apply and the `41 42 2E` all passed and only the exit-time check
+  failed. Darwin revokes a pty slave for every other descriptor the moment the
+  session leader exits, and the stand-in shell these two cases build *is* the
+  session leader, so by the time `run_suspend_case()` looked at the fd there
+  was nothing there — instrumented, `tcgetattr` returned `-1`/`ENOTTY` and
+  `isatty()` `0`, meaning the check could only ever have said "not put back"
+  whatever the emulator did. The shell reads the terminal itself now, the
+  moment `waitpid()` reports the emulator gone, and reports
+  `PUTBACK`/`STRANDED`/`NOTTY` down the note pipe it already had. This is
+  strictly tighter than what it replaced, on Linux too: it looks between the
+  emulator's exit and the shell's own exit rather than after both, and nothing
+  is skipped on any platform. Not vacuous — against a deliberately broken
+  emulator with `atexit(disable_raw_mode)` commented out it fails, with 15 of
+  33 cases failing in total. `tests/run_tests.sh` is 76 passed, 0 failed, 5
+  skipped on this Mac, where it was 74 passed, 1 failed before.
+
 - **`-Wshorten-64-to-32` stopped every GCC build**, `release.yml`'s
   `ubuntu-latest` and `ubuntu-24.04-arm` jobs included. It is a Clang-only
   option and GCC does not ignore an unknown `-W` flag, it fails the compile, so
@@ -212,8 +340,9 @@ Everything below has landed since the `v4.6.0` tag and is not yet in a release.
   `aarch64` gives `cpmemu-4.6.0-Linux-aarch64`, which was read out of
   `CPackConfig.cmake` rather than built. Nothing in CI publishes a cpack archive
   today, so this breaks nothing and stops being a trap for whoever adds a job
-  that does. The rest of the macOS release path in `todo.txt` is untouched and
-  still needs a Mac.
+  that does. The rest of the macOS release path — `STATIC=1`, the shared
+  library, the install name and a job to build any of it — is fixed above,
+  later in the same cycle.
 - **`DAA` in 8080 mode always subtracted.** It read bit 1 of the flag register
   as the Z80's N flag, and 8080 mode forces that bit to 1 because that is what
   an 8080's flag register reads back — so every `DAA` under `--8080` took the
@@ -284,9 +413,9 @@ Everything below has landed since the `v4.6.0` tag and is not yet in a release.
   `bdos_direct_console_io` turned the -1 into 0, which is also its value for
   "nothing waiting yet", so the give-up counter neither incremented nor reset. It
   routes through the shared `note_console_eof()` now and exits in 0.00s where
-  the pre-fix binary had to be killed after 15 seconds. This closes the tty and
-  Windows cases only — on POSIX a redirected *file* still never reaches the
-  read, which is open in `todo.txt`.
+  the pre-fix binary had to be killed after 15 seconds. This closed the tty and
+  Windows cases only; the POSIX redirected cases could not reach the read at
+  all until `stdin_has_data()` was changed, above, later in the same cycle.
 - **BDOS 10 silently dropped about twenty control characters**, TAB and ESC
   included, so ESC-to-cancel never reached the guest. It consumes only what
   CP/M 2.2 RDBUF consumes, stores the rest, and implements `^R`, `^E`, `^X` and
@@ -362,6 +491,49 @@ Everything below has landed since the `v4.6.0` tag and is not yet in a release.
 
 ### Documentation
 
+- **macOS is documented as a platform you can install and build on.** `README.md`
+  had no macOS install section at all, and now names the universal archive, the
+  `xattr -dr com.apple.quarantine` line and — this is the part worth writing
+  down — what happens when you skip it. The binary is signed ad hoc and is not
+  notarized, so Gatekeeper refuses it, and from a terminal that refusal has no
+  visible form: measured on macOS 27, the process starts, prints nothing and
+  sits in state `SN` until it is killed, where the same binary with the
+  attribute removed runs immediately. `curl -L` tags the download and macOS
+  `tar` copies the tag onto every file it extracts, so it lands on `bin/cpmemu`
+  as well as on the archive. `docs/BUILDING.md` gains the makefile and CMake
+  routes: why `STATIC=1` is refused and what to use instead, what `make shared`
+  produces and why it is not a `.so`, and the universal-binary cpack
+  invocation. Notarizing properly needs a Developer ID certificate and
+  `notarytool`; that is open in `todo.txt`.
+- **`todo.txt` is open items only again, and the checks that need a person are
+  a file of their own.** It had grown into an account of work already finished
+  — three of its six entries opened or closed with a paragraph explaining what
+  had landed and pointing at this file — and roughly two lines in three asked
+  nobody to do anything. It is 86 lines down to 46, every surviving item tagged
+  with what a machine has to be to pick it up (`[MAC]`, `[WINDOWS]`,
+  `[DECISION]`, `[RELEASE]`), and the four-terminal keyboard pass moved to a
+  new `MANUAL_CHECKS.md` as a checklist with the expected bytes in it. Two
+  numbers in it were wrong and had been copied out of source comments rather
+  than measured: the byte string the guest gets after the `& 0x7F` (see below),
+  and a claim that two POSIX cases and a Windows one ran "the same guest" —
+  they ran different guests with different expectations, and that error was
+  duplicated in `tests/pty_console.cc`, where the comment has been rewritten
+  with the cases it describes.
+- **The masked-byte measurement in `src/os/linux/platform.cc` was arithmetically
+  impossible.** The comment recorded the guest receiving `C3 29 4E 31 42 23 62
+  00 14`, but `0xC3 & 0x7F` is `0x43` and no byte at or above `0x80` survives
+  the mask at all. Re-measured with `con1hex` against the UTF-8 for e-acute,
+  alpha, pound and em-dash: `43 29 4E 31 42 23 62 00 14`. The `ISTRIP` entry
+  further down this section quoted the same wrong string out of that comment
+  and is corrected too.
+- **`src/CMakeLists.txt` no longer says "there is no Mac here".** The comment
+  on the cpack archive-naming branch said it was written from the documentation
+  and never measured. It is measured now: a plain build names the archive
+  `cpmemu-4.6.0-Darwin-arm64.tar.gz` and
+  `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` names it
+  `cpmemu-4.6.0-Darwin-arm64-x86_64.tar.gz`, with `lipo -info` confirming both
+  slices.
+
 - **The `ISTRIP` comment and the four `& 0x7F` read sites contradicted each
   other, and now they do not.** The comment in `src/os/linux/platform.cc` said
   the 8th bit survives and that clearing `ISTRIP` "is all we need". The first
@@ -372,7 +544,7 @@ Everything below has landed since the `v4.6.0` tag and is not yet in a release.
   what the clear does — keeps the bit through the line discipline — names the
   four sites that then take it off, and records what the guest actually gets:
   the UTF-8 bytes for e-acute, alpha, pound and em-dash come out as
-  `C3 29 4E 31 42 23 62 00 14`, and on the polled path a byte that masks to
+  `43 29 4E 31 42 23 62 00 14`, and on the polled path a byte that masks to
   `0x00` is dropped entirely because BDOS 6 reads 0 as "no character". **Only
   the prose changed. Whether CP/M should see eight bits is a real decision and
   nothing here makes it**; it is stated in `todo.txt` for whoever does.

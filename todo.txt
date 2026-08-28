@@ -2,85 +2,45 @@ Todo list.  Open items only - finished work is in CHANGELOG.md and in the commit
 messages that made the changes, not kept here.  There is no issue tracker; this
 file and github issues on avwohl/cpmemu are the only two mechanisms.
 
-- nobody has pressed the keys, on either platform.  tests/win_console.cc writes
-INPUT_RECORDs into the console input buffer with WriteConsoleInput and
-tests/pty_console.cc writes bytes into a pty master; each is faithful from the
-console or the line discipline inward, and each steps past the terminal program
-itself.  if Windows Terminal binds ctrl+left for its own use, or Terminal.app or
-iTerm binds something, the tests still pass and the user still loses the key.
-both harnesses have a --manual mode that runs a hex echo for a person to type
-at; someone with a keyboard should do one pass in Windows Terminal, one in a
-legacy conhost window, and one in each of Terminal.app and iTerm2.  the machine
-the windows side was tested on had no interactive terminal, only a windowless
-console.  the macOS side was driven through a pty by a program, which is not a
-person either: no real terminal emulator was ever in the loop, so whatever
-Terminal.app or iTerm sets in the termios we inherit is still unmeasured.
+Each item carries a tag for what a machine has to be to pick it up, so a session
+on another OS can see at a glance what it can take.  Checks that need a person
+at a keyboard are in MANUAL_CHECKS.md, not here.
 
-- nothing on the windows side has been executed since it was rewritten.  three
-of the entries that used to be here are done and in CHANGELOG.md: the 0xE0
-prefix guess, ctrl+break leaving the console raw, and the missing regression
-tests for the two.  os/windows/platform.cc reads INPUT_RECORDs now rather than
-calling _getch(), and installs a SetConsoleCtrlHandler; tests/win_console.cc has
-five new cases for those changes.  every line of it cross-compiles under
-x86_64-w64-mingw32-g++ with no warnings, under -Wextra as well as the -Wall
-run_tests.sh requires - and there is no wine and no windows machine here, so not
-one line of it has run.  the five new cases have never reported anything at all.
-four of them set the console input code page, which nothing in tests/ had ever
-done, and expect the bytes the guest gets *after* the & 0x7F at cpmemu.cc:2361 -
-so a decision on the eight-bit item below moves those expectations.  the fifth
-sends a CTRL_BREAK_EVENT to a process group the harness has to create for the
-purpose, or the event would come back and kill the harness.  someone with a
-windows box should run tests\win_console.bat once and say what it prints.
+- [MAC] [WINDOWS] nobody has ever typed at either console harness.  both have a
+--manual hex echo; the four terminals to try it in, and what right looks like,
+are in MANUAL_CHECKS.md.
 
-- a guest polling BDOS 6 against redirected input still spins on POSIX.
-stdin_has_data() (os/linux/platform.cc:280) returns false for anything that is
-not a tty, so the read at cpmemu.cc:2349 is never reached, note_console_eof()
-never counts, and the 1024-read give-up that ends a windows run cannot fire.
-blocked on the item below; it is not fixable on its own.
+- [WINDOWS] the rewritten Windows console path has never been executed.
+os/windows/platform.cc reads INPUT_RECORDs rather than calling _getch(), and
+installs a SetConsoleCtrlHandler; tests/win_console.cc has five cases for those
+- four set the console input code page, one sends a CTRL_BREAK_EVENT to a
+process group the harness creates for the purpose - and not one of them has
+ever reported anything.  someone with a windows box should run
+tests\win_console.bat and say what it prints.  the four code-page cases expect
+the bytes the guest gets *after* the & 0x7F, so settling the eight-bit item
+below moves their expectations.
 
-- the two platforms disagree about whether redirected input is visible to the
-polled path, and neither side of it was ever decided.  POSIX returns false from
-stdin_has_data() for anything that is not a tty, on purpose, so BDOS 6, BDOS 11
-and BIOS CONST never see a pipe or a file there.  windows answers for both
-(os/windows/platform.cc:382-402): a pipe through PeekNamedPipe, a file from its
-own position.  that means a guest which polls BDOS 11 or BIOS CONST as a break
-check while reading its real input through BDOS 1 can take a byte of its own
-script on windows and cannot on linux.  the windows half was already like that
-for pipes before any of this, so making files match was the smaller of the two
-changes available.  whichever way it is settled, three tests move with it: "a
-polled read takes nothing from a file" and "... from a pipe" in
-tests/pty_console.cc:805,808 against "polled input arrives from a file, not only
-from a pipe" in tests/win_console.cc:500 - the same guest printing T on POSIX
-and 41 T on windows.
+- [DECISION] whether a CP/M guest should see eight bits.  four console read
+sites in cpmemu.cc mask with & 0x7F - BDOS 1, the BDOS 10 buffer store, BDOS 6
+and BIOS CONIN - so the guest gets seven: measured, the UTF-8 for e-acute,
+alpha, pound and em-dash reaches it as 43 29 4E 31 42 23 62 00 14, and on the
+polled path a byte that masks to 0x00 is dropped outright because BDOS 6 reads 0
+as "no character".  the two answers are keep the masks and document that CP/M
+sees seven bits here, or drop them and let the guest have the byte.  the second
+is not four line deletions: BDOS 6 needs a way to say "no character" that is not
+0, and the code-page expectations in tests/win_console.cc move with it.
 
-- whether a CP/M guest should see eight bits is undecided, and the decision is
-all that is left of the ISTRIP item.  the prose contradiction is fixed: the
-comment in os/linux/platform.cc no longer says or implies that the 8th bit
-reaches the guest.  it says what is true - clearing ISTRIP keeps the bit through
-the line discipline, measured, 128 of 128 high bytes reaching read() unchanged -
-and then names the four sites that mask it off: cpmemu.cc:1591 (BDOS 1), :1771
-(BDOS 10 buffer store), :2361 (BDOS 6) and :2799 (BIOS CONIN).  so today the
-guest gets seven bits: feeding the UTF-8 bytes for e-acute, alpha, pound and
-em-dash gives it C3 29 4E 31 42 23 62 00 14, and on the polled path a byte that
-masks to 0x00 is dropped entirely because BDOS 6 reads 0 as "no character".
-the two answers are: keep the four masks and document that CP/M sees seven bits
-here, or drop all four and let the guest have the byte.  the second is not four
-line deletions - BDOS 6 would need a way to say "no character" that is not 0,
-and the windows code page cases added to tests/win_console.cc encode the masked
-answer in their expectations.  nobody has decided which, and nothing here does.
+- [RELEASE] [MAC] a downloaded macOS binary is signed ad hoc and not notarized,
+so Gatekeeper refuses it - and from a terminal the refusal has no visible form
+at all: measured, the process starts, prints nothing and sits in state SN until
+it is killed.  README.md tells the user to xattr -dr com.apple.quarantine, which
+is a workaround rather than a fix.  notarizing properly needs a Developer ID
+certificate and a notarytool step in the release workflow, and there is neither.
 
-- there is no macOS release path and the pieces that would make one do not work.
-`make STATIC=1` (src/makefile:19) cannot link at all: the Apple linker has no
-crt0.o and there is no static libc or libc++.  `make shared`
-(src/makefile:34,54-55,71) writes libqkz80.so with a bare install name that dyld
-cannot resolve from
-anywhere, and Apple's linker prefers it over libqkz80.a in the same -L
-directory, so a consumer links clean and aborts at exec; `make install-lib`
-(makefile:124) then points qkz80.pc at it.  none of this breaks CI today,
-because .github/workflows/release.yml:22-31 builds on ubuntu-latest and
-ubuntu-24.04-arm only - they are traps for whoever adds a macOS job.  a
-downloaded binary would also need notarizing or the user needs `xattr -d
-com.apple.quarantine`: measured, a build tagged with the quarantine attribute is
-refused by spctl and killed on exec.  every piece named above needs a Mac to
-work on.  the fourth piece that used to be in this entry, the missing
-CPACK_PACKAGE_FILE_NAME, did not need one and is fixed - see CHANGELOG.md.
+- [RELEASE] the build-macos job in .github/workflows/release.yml has never run
+on a GitHub runner.  every shell command in it was extracted from the YAML and
+executed by hand on macOS 27 arm64, and each produced what the job expects, but
+macos-latest is a different machine with a different Xcode and nothing has
+proved the job as a job.  release.yml runs on a push to main as well as on a
+release and a workflow_dispatch, so the next push settles it - watch that run
+rather than assuming it.

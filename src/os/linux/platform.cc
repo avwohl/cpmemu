@@ -250,9 +250,11 @@ void enable_raw_mode() {
     // cpmemu.cc:1591 (BDOS 1), :1771 (BDOS 10 buffer store), :2361 (BDOS 6) and
     // :2799 (BIOS CONIN) - so a high byte that arrives here intact reaches the
     // CP/M program with its top bit gone.  Measured: the UTF-8 bytes for
-    // e-acute, alpha, pound and em-dash give the guest C3 29 4E 31 42 23 62 00
-    // 14 after masking, and on the polled path a byte that masks to 0x00 is
-    // dropped outright, because BDOS 6 reads 0 as "no character".
+    // e-acute, alpha, pound and em-dash (C3 A9 CE B1 C2 A3 E2 80 94) give the
+    // guest 43 29 4E 31 42 23 62 00 14 after masking - the leading 43 is the
+    // C3 with its top bit taken off, and no byte at or above 0x80 can survive
+    // - and on the polled path a byte that masks to 0x00 is dropped outright,
+    // because BDOS 6 reads 0 as "no character".
     //
     // Whether CP/M should see eight bits is a real question and it is not
     // settled here; it is open in todo.txt.  What this clear buys is that
@@ -277,19 +279,47 @@ bool is_terminal() {
     return isatty(STDIN_FILENO) != 0;
 }
 
+// True when a read on stdin will not block.  Answers for a pipe and for a
+// regular file as well as for a terminal, which is what Windows has always
+// done (os/windows/platform.cc).
+//
+// This used to return false outright for anything that was not a tty, on
+// purpose, so BDOS 6, BDOS 11 and BIOS CONST never saw redirected input at
+// all.  The consequence was not "batch runs are quieter", it was a hang: a
+// guest that polls rather than blocks spun forever against a file or a pipe,
+// the read in cpmemu.cc was unreachable, note_console_eof() never counted, and
+// the 1024-read give-up that ends such a run could not fire.  Measured with
+// tests/con_guests.h's con6hex against `< file` and against a pipe: both ran
+// until killed and printed not one byte of their own input.
+//
+// select() rather than poll(), and that is a measurement rather than a taste.
+// Measured here on macOS 27 arm64: poll() sets POLLNVAL - "not a valid
+// descriptor" - on /dev/null and on /dev/zero, descriptors fstat() is
+// perfectly happy with, so `cpmemu prog.com < /dev/null` would have reported
+// "nothing waiting, ever" instead of end of input and hung exactly where this
+// change is meant to stop hanging.  select() answers correctly for all six
+// shapes stdin takes here: pipe with data, pipe whose writer has gone, file
+// with data, file at EOF, /dev/null, and a tty quiet or busy.
+//
+// A regular file at EOF and a pipe with no writer left are both readable as
+// far as select() is concerned, and that is precisely what makes the end of
+// input reachable: the caller reads, gets 0, and counts it.  "Readable" here
+// has always meant "a read will not block", never "a byte will come back".
 bool stdin_has_data() {
-    // For non-interactive use (pipes, /dev/null), don't report data available
-    // This prevents CP/M programs from checking for user abort when running batch
-    if (!is_terminal()) {
-        return false;
-    }
     fd_set readfds;
     struct timeval tv;
-    FD_ZERO(&readfds);
-    FD_SET(STDIN_FILENO, &readfds);
-    tv.tv_sec = 0;
-    tv.tv_usec = 0;
-    return select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv) > 0;
+    for (;;) {
+        FD_ZERO(&readfds);
+        FD_SET(STDIN_FILENO, &readfds);
+        tv.tv_sec = 0;
+        tv.tv_usec = 0;
+        int n = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv);
+        if (n >= 0) return n > 0;
+        // A signal is not an answer.  SIGCONT and SIGWINCH arrive here in
+        // ordinary use, and reporting "nothing waiting" for one would drop a
+        // keystroke that was in fact already queued.
+        if (errno != EINTR) return false;
+    }
 }
 
 // Read through read(2) rather than getchar(), so that stdin_has_data() above

@@ -133,8 +133,104 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # A job of its own rather than another row in the matrix above.  Every step
+  # in that job is Debian and RPM packaging - apt-get, gem install fpm, fpm -t
+  # deb, fpm -t rpm, and the versionless .deb/.rpm copies - and not one of them
+  # has a macOS counterpart, so a matrix row would mean an `if:` on six steps
+  # plus a parallel set of macOS ones in the same job.  Two jobs say what is
+  # happening.
+  #
+  # Its build step is also not the Linux one with the OS swapped.  Three
+  # things in that step are Darwin traps and all three were measured here on
+  # macOS 27 arm64:
+  #
+  #   make STATIC=1   cannot link.  The SDK ships no crt0.o and no static libc
+  #                   or libc++, so it stops at "ld: library 'crt0.o' not
+  #                   found"; src/makefile now refuses the flag outright rather
+  #                   than pretending, so this job must not pass it.
+  #   libqkz80.so     is not what a macOS build produces any more.  It is
+  #                   libqkz80.4.dylib with an unversioned symlink beside it,
+  #                   so `cp src/libqkz80.so` would just fail.
+  #   the archive     is built by cpack from src/CMakeLists.txt, not staged by
+  #                   hand, because there is no fpm target to stage for.
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION="${VERSION#v}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            # For push events, use date + short SHA
+            VERSION="0.0.0+$(date +%Y%m%d).${GITHUB_SHA::7}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      # Not what builds the artifact - it is what someone building from source
+      # runs, and its shared-library rules exist only on this platform, so they
+      # should break here rather than in that person's terminal.  No STATIC=1:
+      # see above.
+      - name: Build with the makefile
+        run: |
+          make -C src clean || true
+          make -C src
+          make -C src libs
+          ls -l src/libqkz80.a src/libqkz80.dylib src/libqkz80.4.dylib
+          otool -D src/libqkz80.dylib
+          ./src/cpmemu tests/simple_con.com
+
+      # One universal binary rather than an arm64 runner and an Intel one: it
+      # covers both architectures from a single job, and src/CMakeLists.txt
+      # already names the archive for both - cpmemu-<version>-Darwin-arm64-
+      # x86_64.tar.gz.
+      #
+      # The archive carries the binary, libqkz80.a and the headers, and no
+      # dylib.  A dylib's install name is an absolute path, so shipping one in
+      # a tarball a user unpacks wherever they like would hand them a library
+      # dyld cannot find; that needs an @rpath layout, which is a bigger change
+      # than a release job.
+      - name: Build the release archive
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          cmake -S src -B build-mac \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+          cmake --build build-mac --config Release --parallel
+          lipo -info build-mac/cpmemu
+          NAME="cpmemu-$VERSION-Darwin-arm64-x86_64"
+          ( cd build-mac && cpack -D CPACK_PACKAGE_VERSION="$VERSION" \
+                                  -D CPACK_PACKAGE_FILE_NAME="$NAME" )
+          mv "build-mac/$NAME.tar.gz" .
+          # A versionless copy so /releases/latest/download/ URLs work, as the
+          # Linux job does for the .deb and the .rpm
+          cp "$NAME.tar.gz" cpmemu-macos-universal.tar.gz
+          tar tzf "$NAME.tar.gz"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-universal
+          path: "*.tar.gz"
+
+      - name: Upload to Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: "*.tar.gz"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   collect:
-    needs: build
+    needs: [build, build-macos]
     runs-on: ubuntu-latest
     if: github.event_name == 'release'
     steps:
@@ -147,4 +243,4 @@ jobs:
       - name: List packages
         run: |
           echo "Built packages:"
-          find packages -type f \( -name "*.deb" -o -name "*.rpm" \) | sort
+          find packages -type f \( -name "*.deb" -o -name "*.rpm" -o -name "*.tar.gz" \) | sort

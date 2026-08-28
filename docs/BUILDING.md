@@ -145,6 +145,26 @@ cd src
 make
 ```
 
+`STATIC=1` is refused here, and the makefile says so rather than ignoring it.
+The SDK ships no `crt0.o`, no `libc.a`, no `libSystem.a` and no `libc++.a`, so
+`-static` cannot link at all - it stops at `ld: library 'crt0.o' not found` -
+and `-static-libstdc++` is accepted and silently ignored by Apple clang, so
+dropping the flag quietly would hand you a dynamically linked binary you
+believed was static. What does control portability across macOS versions is
+`MACOSX_DEPLOYMENT_TARGET`:
+
+```bash
+make MACOSX_DEPLOYMENT_TARGET=12.0
+```
+
+`make shared` produces `libqkz80.<major>.dylib` plus an unversioned
+`libqkz80.dylib` symlink, not a `.so`, and stamps an absolute install name so a
+consumer can find it at run time; `make install-lib` re-stamps that install
+name for wherever `PREFIX` puts it. A `.so` here was worse than a naming
+mistake: Apple's linker prefers one over the `libqkz80.a` beside it, and the
+bare install name it carried was one dyld could not resolve, so a consumer
+linked cleanly and then aborted at exec.
+
 ### Using CMake
 
 ```bash
@@ -152,6 +172,23 @@ cd src
 cmake -B build
 cmake --build build
 ```
+
+For a universal binary covering both Apple silicon and Intel, which is what the
+release workflow ships:
+
+```bash
+cd src
+cmake -B build -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+      -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+cmake --build build --parallel
+( cd build && cpack )
+```
+
+That writes `cpmemu-<version>-Darwin-arm64-x86_64.tar.gz`, holding the binary,
+`libqkz80.a` and the headers. No dylib goes into it: a dylib's install name is
+an absolute path, so one shipped in a tarball the user unpacks wherever they
+like would be a library dyld cannot find.
 
 ## Platform Abstraction
 

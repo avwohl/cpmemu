@@ -1,10 +1,11 @@
 prefix=@PREFIX@
 exec_prefix=${prefix}
-libdir=${prefix}/lib
-includedir=${prefix}/include/qkz80
+libdir=@LIBDIR@
+includedir=@INCLUDEDIR@
 
 Name: qkz80
 Description: Z80/8080 CPU emulator library
-Version: 4.6.0
+Version: @VERSION@
 Cflags: -I${includedir}
 Libs: -L${libdir} -lqkz80
+Libs.private: @LIBS_PRIVATE@
