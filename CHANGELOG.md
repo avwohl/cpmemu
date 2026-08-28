@@ -15,8 +15,8 @@ Everything below has landed since the `v4.6.0` tag and is not yet in a release.
 
 ### Added
 
-- **A macOS job in `.github/workflows/release.yml`, which has never run on a
-  GitHub runner.** `release.yml` built on `ubuntu-latest` and
+- **A macOS job in `.github/workflows/release.yml`.** `release.yml` built on
+  `ubuntu-latest` and
   `ubuntu-24.04-arm` only, so there was no macOS download and nothing in CI
   ever compiled the platform layer's other half. `build-macos` is a job of its
   own rather than a third row in the matrix: every step in that matrix is
@@ -32,12 +32,13 @@ Everything below has landed since the `v4.6.0` tag and is not yet in a release.
   the headers and deliberately no dylib: a dylib's install name is an absolute
   path, so one shipped in a tarball the user unpacks wherever they like is a
   library dyld cannot find, and an `@rpath` layout is a bigger change than a
-  release job. **Said plainly: every shell command in the job was extracted
-  from the YAML and executed by hand on macOS 27 arm64, and each produced what
-  the job expects — `lipo -info` reporting `x86_64 arm64`, both slices running,
-  the archive holding `bin/cpmemu`, seven headers and `libqkz80.a`. The job
-  itself has never run. `macos-latest` is a different machine with a different
-  Xcode.** That is in `todo.txt`.
+  release job. It was written by extracting every shell command from the YAML
+  and running it by hand on macOS 27 arm64 — `lipo -info` reporting `x86_64
+  arm64`, both slices running, the archive holding `bin/cpmemu`, seven headers
+  and `libqkz80.a` — and then **the job ran for real on `macos-latest` in run
+  33137416510 and succeeded**, alongside both existing Linux jobs. So the
+  platform layer's other half is compiled in CI now, on a machine that is not
+  the one this was written on.
 
 - **Five Windows console cases, and the two things the harness needed to reach
   them — none of which has ever been executed.** `tests/win_console.cc` could

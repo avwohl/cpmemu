@@ -36,11 +36,3 @@ at all: measured, the process starts, prints nothing and sits in state SN until
 it is killed.  README.md tells the user to xattr -dr com.apple.quarantine, which
 is a workaround rather than a fix.  notarizing properly needs a Developer ID
 certificate and a notarytool step in the release workflow, and there is neither.
-
-- [RELEASE] the build-macos job in .github/workflows/release.yml has never run
-on a GitHub runner.  every shell command in it was extracted from the YAML and
-executed by hand on macOS 27 arm64, and each produced what the job expects, but
-macos-latest is a different machine with a different Xcode and nothing has
-proved the job as a job.  release.yml runs on a push to main as well as on a
-release and a workflow_dispatch, so the next push settles it - watch that run
-rather than assuming it.
