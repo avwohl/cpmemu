@@ -10,6 +10,121 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
+## [Unreleased]
+
+Everything below has landed since the `v4.7.1` tag and is not yet in a release.
+Two open items from [`todo.txt`](todo.txt), which is down from five items to
+three. Two of the `todo.txt` pointers below are answered here rather than in
+`todo.txt`, where the items no longer are — the SECTRAN bug under v4.7.1 and the
+eight-bit decision under v4.7.0. The other pointers in this file are still open
+work. `src/cpmemu.cc` moves by 37 lines added and 1 removed, of which 12 are the
+fix, 24 are the comment explaining it and one is blank; the removed line is the
+`case BIOS_SECTRAN:` label leaving the stub group, not deleted logic. The tests
+are the bulk of the change. No version bump: `src/CMakeLists.txt` and
+`src/makefile` still read 4.7.1, so a binary built from main reports 4.7.1 and
+contains this.
+
+### Fixed
+
+- **BIOS SECTRAN did not set HL, and clobbered A.** It is documented to take BC
+  as the logical sector and DE as the translate table and to return the physical
+  sector in HL, but it shared the `CPM_BIOS_DISK` stub group with
+  HOME/SETTRK/SETSEC/SETDMA/READ/WRITE, which sets only A — so it had both
+  halves of its contract backwards. Measured before the fix, with a guest that
+  loads HL with `DEAD`, sets BC = 0005 and DE = 0 and calls `0FE30h`: HL came
+  back `DEAD` where a real BIOS answers `0005`, and A came back `00` under `ok`
+  and `01` under `fail`, overwriting a `5A` the guest had put there. It now
+  answers HL = BC when DE is 0, else the byte at DE+BC with H = 0, and does not
+  touch A. Nothing called it, which is why it went unnoticed since before the
+  changelog; `tests/sectran.asm` is the first caller in the tree's history.
+
+  It also leaves the stub group, and that is a behaviour change worth reading
+  twice: SECTRAN is arithmetic over guest memory and reaches no media, so there
+  is no failure for `CPM_BIOS_DISK=fail` to report and nothing unimplemented for
+  `=error` to refuse. All three modes now give the same answer, and `=error` no
+  longer ends the run on a table lookup — measured, it used to exit 1 printing
+  `FATAL: Unimplemented BIOS disk function at offset 48` before the guest got
+  HL back at all. Anyone using `=error` as a blanket tripwire for "the guest
+  touched the BIOS disk entries" loses SECTRAN from that net. The group still
+  stops a guest at the first call that would actually touch a disk.
+
+### Added
+
+- **`tests/sectran.asm` and seven checks, none of which existed.** The guest
+  calls SECTRAN through the jump table and prints what it answered; the command
+  tail picks the case. It is assembled at test time by both `pasmo` and
+  `z80asm`, byte-identical under each, so the assembler gate goes from 35 checks
+  to 42. Two of the seven are there because the other five were not enough: `W`
+  carries DE+BC past `FFFF`, and `A` prints the accumulator rather than HL.
+- **Nine cases in `tests/pty_console.cc` pinning seven-bit console input.**
+  Five cover the mask — one per console read site, plus a pipe twin of the
+  BDOS 1 case, because a pty case alone cannot tell this emulator's mask from a
+  line discipline that strips the bit. Measured: an emulator built with `ISTRIP`
+  set *and* the BDOS 1 mask deleted still passes the pty case and fails only the
+  pipe twin. Four cover `check_ctrl_c_exit`, which is handed the raw byte on
+  purpose so that a `0x83` counts as a high byte and not as a `^C`; it has four
+  call sites, the same mistake could be made at any one of them, and none was
+  covered.
+
+  Before these, nothing that runs asserted any of it. The only tests pinning the
+  masks were the four code-page cases in `tests/win_console.cc`, and by
+  `todo.txt`'s account not one of them has ever reported anything on any
+  machine.
+
+  The suite goes from 86 checks to 102, none failing.
+
+- **The checks were mutation-tested, and that is what shaped them.** A first
+  round of five SECTRAN checks and five seven-bit cases left five real
+  regressions undetected: SECTRAN clobbering A, dropping the cast that keeps
+  DE+BC inside the 64K array, the BDOS 10 line editor not masking what it
+  stores, and `check_ctrl_c_exit` fed the masked byte at BDOS 1 and again at
+  BIOS CONIN. All five applied at once built warning-clean under
+  `-Wall -Wextra` and the suite still reported 96 passed, 0 failed. The `W` and
+  `A` tails, the line-editor case and three of the four `^C` cases exist because
+  of that run; the same five-way mutant now fails six checks. Each check was
+  then confirmed to fail for its own reason rather than for a neighbour's.
+
+### Documentation
+
+- **Whether a CP/M guest should see eight bits is settled: it sees seven.** The
+  four `& 0x7F` console masks stay. No code changed for this; what changed is
+  that the answer is written down with what it costs, and that something now
+  tests it. README's Known Limitations carries the measurements: the byte that
+  masks to zero is consumed rather than delivered, so `80 41` at a BDOS 6 guest
+  yields `41` alone; two byte values do this, `0x00` and `0x80`, where real CP/M
+  loses only the first; BIOS CONST and BDOS 6 contradict each other on a typed
+  `0x80`, status saying ready and the read saying no character; and the mask is
+  applied after every raw-byte test, so a raw `0x8D` is stored as CR rather than
+  ending a line early and a raw `0xFF` is stored as `0x7F` rather than acting as
+  rubout.
+
+  The count in that section moves too. The item said four read sites; there are
+  six — `bdos_aux_input` (BDOS 3) and `bios_reader` mask identically. Those two
+  are the Reader device, they are documented, and they are still asserted by
+  nothing.
+
+- **`docs/cpm_disk_formats.md` gains a SECTRAN detail entry** in the same
+  per-function list as SELDSK, the other HL-returning BIOS call, including that
+  this emulator's own DPH sets XLT = 0 so a guest driving it through SELDSK
+  takes the no-translation path.
+
+- **README's BIOS section and `CPM_BIOS_DISK` row follow the code.** SECTRAN is
+  out of the stub list and into a bullet of its own, "Of the seven" is now "Of
+  the six", and the env-var table row names the six calls the modes still cover.
+  Anyone who relies on `=error` will find the carve-out there as well as here.
+
+- **`tests/README.md` describes the new cases** and gains a `sectran.asm` entry.
+  The gate count moved from 35 to 42 in all five places it is written — the
+  `run_tests.sh` comment and its `skipped=$((skipped + 42))`, `README.md`, and
+  `tests/README.md` twice — of which only the second is the source. Keeping
+  those in step is what the last bullet of the v4.7.1 entry below is about.
+
+- **Stale `cpmemu.cc:NNNN` citations are now function names.** Five references
+  naming four distinct lines — four in `src/os/linux/platform.cc` and one in
+  `tests/win_console.cc` — had drifted onto a `get_reg16` call, a bare brace, a
+  blank line and an unrelated `fprintf`. Function names cannot rot the same way,
+  which is the point.
+
 ## [4.7.1] - 2026-09-01
 
 Two bugs the v4.7.0 README audit turned up. Both were found by reading the
