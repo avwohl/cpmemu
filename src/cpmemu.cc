@@ -114,6 +114,28 @@ static void do_save_memory() {
           written, start, (uint16_t)(start + size - 1), save_memory_file);
 }
 
+// The three ways a CP/M program finishes: BDOS 0 System Reset, BIOS WBOOT, and
+// a jump to 0x0000.  Each used to exit(0) from where it was noticed and only
+// the jump saved the memory image, so --save-memory wrote nothing at all for a
+// program that ended through BDOS 0 - which is how most CP/M programs end, and
+// includes MOVCPM and SYSGEN, the two this flag exists for.  Measured before
+// the fix: a three-byte `jp 0` guest wrote the file, a five-byte `ld c,0 / jp
+// 5` guest wrote none and said nothing about it.  One exit for all three now.
+// The other three writers are elsewhere and stay there, because none of them is
+// a program finishing: the five-^C exit, the give-up at end of input, and the
+// instruction-limit watchdog at the bottom of main().
+//
+// disable_raw_mode() is not called here because atexit() covers it:
+// enable_raw_mode() registers the handler inside the same block that arms raw
+// mode (os/*/platform.cc), so a raw terminal always has one and a terminal that
+// was never made raw has nothing to put back.  The ^C and end-of-input paths
+// call it directly as belt and braces, not because they are a special case.
+static void program_exit(const char* why) {
+  fprintf(stderr, "%s\n", why);
+  do_save_memory();
+  exit(0);
+}
+
 // Check for ^C and handle exit logic
 // Always returns false - ^C reaches the CP/M program either way.
 // The exit is the escape hatch a raw-mode emulator needs, but WordStar binds
@@ -1350,9 +1372,7 @@ void CPMEmulator::filename_to_fcb(const std::string& filename, qkz80_uint16 fcb_
 bool CPMEmulator::handle_pc(qkz80_uint16 pc) {
   // Check for JMP 0 (exit)
   if (pc == 0) {
-    fprintf(stderr, "Program exit via JMP 0\n");
-    do_save_memory();
-    exit(0);
+    program_exit("Program exit via JMP 0");
   }
 
   // Check for BDOS call (trap at BDOS_BASE where jump from 0x0005 lands)
@@ -1387,8 +1407,7 @@ void CPMEmulator::bdos_call(qkz80_uint8 func) {
 
   switch (func) {
   case 0:  // System Reset
-    fprintf(stderr, "System reset\n");
-    exit(0);
+    program_exit("System reset");
     break;
 
   case 1:  // Console Input
@@ -2723,8 +2742,7 @@ void CPMEmulator::bios_call(int offset) {
     break;
 
   case BIOS_WBOOT:
-    fprintf(stderr, "BIOS WBOOT called - exiting\n");
-    exit(0);
+    program_exit("BIOS WBOOT called - exiting");
     break;
 
   // BIOS SELDSK - Select Disk, returns HL=DPH address or 0 if invalid
@@ -2763,8 +2781,14 @@ void CPMEmulator::bios_call(int offset) {
       fprintf(stderr, "Set CPM_BIOS_DISK=ok or CPM_BIOS_DISK=fail to change this behavior.\n");
       exit(1);
     } else if (bios_disk_mode == 1) {
-      // Fail mode - return error to caller
-      cpu->set_reg8(0x00, qkz80::reg_A);  // Return failure
+      // Fail mode - return error to caller.  A = 1 is the CP/M BIOS permanent
+      // error, which READ and WRITE are the two calls documented to return;
+      // the rest of this group returns no status at all, so the value is
+      // simply unread there.  This returned 0 until 4.7.1 - byte for byte
+      // what "ok" returns - so the mode the startup line announced as
+      // "BIOS disk functions will return failure" was invisible to the guest
+      // and every CPM_BIOS_DISK=fail run behaved as CPM_BIOS_DISK=ok.
+      cpu->set_reg8(0x01, qkz80::reg_A);  // Return failure
       if (debug || debug_bios_offsets.count(offset)) {
         fprintf(stderr, "BIOS disk function at offset %d - returning failure\n", offset);
       }
@@ -3358,5 +3382,12 @@ int main(int argc, char** argv) {
     }
   }
 
+  // The watchdog is the fourth way out, and it is the one where a memory image
+  // is worth most: a guest that ran away is exactly the post-mortem
+  // --save-memory exists for, and this path used to return 0 without writing
+  // one or saying it had not.  Not reachable from the test suite - the limit is
+  // nine billion instructions, about eight minutes here - so it is checked by
+  // reading rather than by running.
+  do_save_memory();
   return 0;
 }

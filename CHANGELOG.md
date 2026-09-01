@@ -10,6 +10,98 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
+## [4.7.1] - 2026-09-01
+
+Two bugs the v4.7.0 README audit turned up. Both were found by reading the
+source in order to document it, neither had a test, and both predate the
+changelog. `src/cpmemu.cc` moves by 27 lines added and 9 removed, most of that
+a comment and a five-line helper; the tests are the point.
+
+### Fixed
+
+- **`--save-memory` wrote nothing when the program exited through BDOS 0,
+  which is how most CP/M programs end.** Three things are a CP/M program
+  finishing — BDOS 0 System Reset, BIOS WBOOT, and a jump to `0x0000` — and
+  each called `exit(0)` from wherever it was noticed. Only the jump called
+  `do_save_memory()` first. So the flag worked for a guest that ended with
+  `jp 0` and silently produced no file for one that ended with `ld c,0` /
+  `call 5`, with nothing on stderr either way. That is the case the flag exists
+  for: MOVCPM and SYSGEN are the two programs named in its own help text and
+  both exit through the BDOS. Measured before the fix, with a guest that writes
+  `A5 5A` at `0200h`: `--save-memory` plus `jp 0` wrote the image, the same
+  guest plus BDOS 0 wrote no file at all, and BIOS WBOOT wrote none either. The
+  three paths now go through one `program_exit()` that prints, saves and exits.
+  `--save-range` works from all three, which it could not before because two of
+  them never reached the writer. A fourth exit turned up while this was being
+  checked and is fixed with it: the nine-billion-instruction watchdog at the
+  bottom of `main()` returned 0 without writing an image or saying it had not,
+  which is the one place a post-mortem is worth most. The suite cannot reach
+  that one - the limit is about eight minutes of running - so it is the only
+  part of this release checked by reading rather than by running.
+- **`CPM_BIOS_DISK=fail` was byte for byte identical to `CPM_BIOS_DISK=ok`.**
+  Both branches ran `set_reg8(0x00, reg_A)`; only the debug line and the
+  startup message differed, so the emulator announced "BIOS disk functions will
+  return failure" and then handed the guest the success code. A guest could not
+  tell the two modes apart, which made one of the three documented settings
+  unreachable in practice. `fail` returns A = 1 now, the CP/M BIOS permanent
+  error. Of the seven calls in that group only READ and WRITE return a status
+  in A — HOME, SETTRK, SETSEC and SETDMA return nothing — so the byte is simply
+  unread for the others, which is why the whole group can share one value.
+  SECTRAN is the exception worth naming: it is documented to return the
+  physical sector in HL, and this emulator sets only A and leaves HL as the
+  guest left it. Measured with a guest that puts `DEAD` in HL and calls SECTRAN
+  with BC = 0005 and DE = 0: HL comes back `DEAD` under both `ok` and `fail`,
+  where a real BIOS answers 0005. (Under `error` the emulator exits inside the
+  call, so the guest never gets HL back at all.) That is untouched here and is
+  now an open item in
+  `todo.txt` — it is a separate bug from either of these two, and A = 1 neither
+  helps nor hurts it. `error` is unchanged and was always the only visible mode.
+
+### Added
+
+- **Nine checks, behind the existing assembler gate, and two guests to reach
+  them.** `tests/savemem.asm` writes a marker and then finishes the way its
+  command tail asks — `0`, `W` or `J` — so one guest covers all three exits;
+  the suite runs it under `--save-memory --save-range=0200-0201` and compares
+  the two bytes that come back, which a zero-length or truncated write would
+  not survive. `tests/bios_disk.asm` calls HOME, READ or WRITE through the jump
+  table and prints the status byte as hex, covering `ok`, `fail` for all three
+  calls, and that `error` exits non-zero *with its diagnostic* — a bare
+  non-zero exit is also what a failure to start looks like.
+
+  Each check was then made to fail on purpose, which is the part worth
+  recording, because the first draft of three of them could not. `savemem.asm`
+  reached BDOS 0 with a `call`, so a build in which BDOS 0 no longer terminated
+  the guest simply fell through into the WBOOT branch below it, saved the image
+  there, and the check named for BDOS 0 printed PASS. The jump case had the
+  same hole from the other side: `0000h` holds the `JP WBOOT` the emulator
+  writes there, so an untrapped jump lands in WBOOT and saves anyway — and that
+  one cannot be closed from inside the guest at all. The `call` is a `jp` now
+  and every case greps stderr for the exit it is named after. Re-checked by
+  building three mutants, each with one of the three paths removed: each fails
+  exactly its own check and nothing else, where before two of them passed
+  against a build with the path deleted outright. Reverting `fail` to A = 0
+  fails its three checks and no others. The gate's skip count moves from 26
+  to 35.
+
+### Documentation
+
+- `README.md` had documented both bugs as behaviour, since at the time they
+  were. The `--save-memory` row no longer carries the BDOS 0 caveat, the
+  `CPM_BIOS_DISK` row distinguishes the modes, and the BIOS list says which of
+  the seven calls actually return a status. The ctrl+break paragraph 180 lines
+  further down had its own copy of the old list and is fixed too - it now
+  points at the option row rather than re-enumerating it, which is what let the
+  two drift apart in the first place.
+- The gate's check count is stated in four places and only one of them is the
+  source. `README.md`, `tests/README.md` twice and the `run_tests.sh` comment
+  all said 26; they say 35. `tests/README.md` also called the gated group "more
+  than half the suite", which it was not at 26 and is not at 35 - it is about
+  two fifths - and its list of sources assembled at test time had never gained
+  `cli_tail.asm`, let alone the two added here. The comment that counted the
+  assembled guests has had its number removed rather than corrected: it was
+  wrong the last two times a guest was added.
+
 ## [4.7.0] - 2026-09-01
 
 Everything below landed after the `v4.6.0` tag, which was published five months

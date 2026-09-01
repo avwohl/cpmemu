@@ -197,7 +197,7 @@ a CP/M-style tail such as `TEST,TEST.COM/N/E` alone.
 | `--z80` | Run in Z80 mode (default) |
 | `--8080` | Run in 8080 mode |
 | `--progress[=N]` | Report progress every N million instructions (default: disabled; 100 if flag used without N) |
-| `--save-memory=FILE` | Save memory to FILE on exit (for MOVCPM/SYSGEN). Written on a jump to 0x0000, the five-^C exit and the end-of-input give-up - **not** when the program exits through BDOS 0, which is how most CP/M programs end |
+| `--save-memory=FILE` | Save memory to FILE on exit (for MOVCPM/SYSGEN). Written however the program finishes: BDOS 0, BIOS WBOOT, a jump to 0x0000, the five-^C exit or the end-of-input give-up |
 | `--save-range=S-E` | Save only range S to E (hex, e.g., DC00-FFFF). Needs `--save-memory`; a range that does not parse is ignored without a message and the whole 64K is written |
 | `--int-cycles=N` | Enable timer interrupt every N cycles (e.g., 50000) |
 | `--int-rst=N` | RST number for the timer interrupt (0-7, default 7 = RST 38H). Only used when `--int-cycles` is given, and that also puts the CPU in IM 1, where every interrupt vectors to 0038h whatever N says - N takes effect only for a guest that switches itself to IM 0. N is masked to its low three bits rather than checked, so `--int-rst=9` is RST 1 |
@@ -252,7 +252,7 @@ reset`.
 | `CPM_PRINTER` | File for LIST device (printer) output, and for the `^P` console echo |
 | `CPM_AUX_IN` | File for Reader device input; end of file, or no file, reads as `^Z` |
 | `CPM_AUX_OUT` | File path for Punch device output |
-| `CPM_BIOS_DISK` | BIOS disk stubs: `ok` (default) and `fail` both return A = 0; `error` exits the emulator |
+| `CPM_BIOS_DISK` | BIOS disk stubs: `ok` (default) returns A = 0, `fail` returns A = 1 (the CP/M permanent error), `error` exits the emulator |
 | `CPM_DEBUG_BDOS` | Trace these BDOS functions: comma-separated decimal function numbers |
 | `CPM_DEBUG_BIOS` | Trace these BIOS entries: comma-separated decimal offsets into the jump table (6 CONST, 9 CONIN, 12 CONOUT, 15 LIST, 27 SELDSK) |
 
@@ -375,8 +375,7 @@ instead.
 On Windows there is one other way out: ctrl+break is not gated on
 `ENABLE_PROCESSED_INPUT`, so it still ends the process. A console control
 handler puts the console mode back on the way through. It writes no
-`--save-memory` image — only the five-^C exit, the give-up at end of input and a
-program exit through JMP 0 do that.
+`--save-memory` image; every exit listed under `--save-memory` above does.
 
 Turn the hatch off with `--no-ctrl-c-exit`, or with `ctrl_c_exit = false` in the
 config file, when the guest program binds ^C itself. WordStar binds ^C to
@@ -577,9 +576,14 @@ whatever is on the drive. Any other function number prints
   and 0 above that. Every letter is selectable because an unconfigured drive
   means the working directory, not an absent disk.
 - WBOOT: exits the emulator, as does a jump to 0x0000. BOOT is not implemented.
-- HOME, SETTRK, SETSEC, SETDMA, READ, WRITE, SECTRAN: stubs, controlled by
-  `CPM_BIOS_DISK`. File I/O is handled at the BDOS level, so a program that
-  drives the disk through the BIOS will not work.
+- HOME, SETTRK, SETSEC, SETDMA, READ, WRITE, SECTRAN: stubs, returning A = 0
+  or A = 1 per `CPM_BIOS_DISK`. Of the seven, only READ and WRITE return a
+  status in A; HOME, SETTRK, SETSEC and SETDMA return nothing, so the byte is
+  simply unread there. SECTRAN is documented to return the physical sector in
+  HL and this emulator does not set HL at all - a guest that calls it gets
+  whatever it had in HL back, which is an open item in
+  [`todo.txt`](todo.txt). File I/O is handled at the BDOS level, so a program
+  that drives the disk through the BIOS will not work.
 
 ## CP/M Memory Layout
 
@@ -623,7 +627,7 @@ section did: that is about five groups in, and a truncated run looks like a
 finished one unless something checks for the "Tests complete" line.
 
 Two parts of the suite need more than a compiler. The drive, mapping, config,
-CLI and ADM-3A guests are assembled at test time, so 26 checks skip unless
+CLI and ADM-3A guests are assembled at test time, so 35 checks skip unless
 `pasmo` or `z80asm` is on `PATH`. With `x86_64-w64-mingw32-g++` on `PATH` the
 suite also cross-compiles the Windows half of the platform layer and fails on
 any warning; without it, that step skips.

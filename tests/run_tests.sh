@@ -257,7 +257,8 @@ check_drive() {
 # pasmo is what tests/README.md names, but it is packaged almost nowhere - it is
 # not in Homebrew, so this whole group used to skip on any Mac.  z80asm (Bas
 # Wijnen's, which is in Homebrew and in Debian) takes these sources unchanged
-# and assembles all nine, so either will do.  A dialect that produced different
+# and assembles every one of them, so either will do.  No count here: it was
+# wrong the last two times a guest was added.  A dialect that produced different
 # bytes could not pass quietly: every check below compares the guest's output
 # against an exact string, so a mis-assembled program fails rather than drifts.
 if command -v pasmo >/dev/null 2>&1; then
@@ -273,12 +274,13 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: install pasmo or z80asm)"
-    # 26 checks live behind this gate, not the 6 an earlier version counted
-    skipped=$((skipped + 26))
+    # 35 checks live behind this gate, not the 6 an earlier version counted
+    skipped=$((skipped + 35))
 else
     echo
     asm_ok=1
-    for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren cli_tail con_eof con_spin adm3a; do
+    for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren cli_tail con_eof con_spin adm3a \
+               savemem bios_disk; do
         if ! assemble "$root/tests/$src.asm" "$tmp/$src.com" >"$tmp/asm.log" 2>&1; then
             echo "FAIL  assembling tests/$src.asm"
             sed 's/^/        /' <"$tmp/asm.log"
@@ -475,6 +477,98 @@ else
         printf 'program = %s/drv_read.com\n' "$tmp" >"$tmp/nodrv.cfg"
         check_drive "drive: none configured behaves as before" "$tmp/drv_read.com" "$tmp/nodrv.cfg" \
             "ZONLY.TXT" 'ZZZ'
+
+        # --- --save-memory on every way a program can finish -----------------
+        # BDOS 0, BIOS WBOOT and a jump to 0000h are all a CP/M program
+        # finishing, and only the jump used to write the image.  BDOS 0 is the
+        # one that matters: it is how most CP/M programs end, MOVCPM and SYSGEN
+        # among them, so --save-memory silently produced no file for the case
+        # the flag exists for.  The guest leaves A5 5A at 0200h and the marker
+        # has to survive into the file, which a zero-length or truncated write
+        # would not do.
+        # The exit line is checked as well as the bytes, and that is not
+        # belt-and-braces: 0000h holds the JP WBOOT the emulator writes there,
+        # so a jump to 0000h that stopped being trapped would land in WBOOT and
+        # still save.  Comparing only the marker would report PASS for a build
+        # in which the path being named had been deleted outright - verified by
+        # doing exactly that to each of the three in turn.
+        check_savemem() {
+            local name=$1 how=$2 want_exit=$3
+            rm -f "$tmp/mem.bin"
+            "$emu" --save-memory="$tmp/mem.bin" --save-range=0200-0201 \
+                   "$tmp/savemem.com" "$how" >/dev/null 2>"$tmp/smerr"
+            if ! grep -q "$want_exit" "$tmp/smerr"; then
+                printf 'FAIL  %s\n        stderr never said "%s"\n' "$name" "$want_exit"
+                sed 's/^/        /' <"$tmp/smerr"
+                failed=$((failed + 1))
+            elif [ ! -f "$tmp/mem.bin" ]; then
+                printf 'FAIL  %s\n        no file written\n' "$name"
+                sed 's/^/        /' <"$tmp/smerr"
+                failed=$((failed + 1))
+            elif [ "$(od -An -tx1 -v "$tmp/mem.bin" | tr -d ' \n')" = "a55a" ]; then
+                printf 'PASS  %s\n' "$name"
+                passed=$((passed + 1))
+            else
+                printf 'FAIL  %s\n        file holds: %s\n' "$name" \
+                    "$(od -An -tx1 -v "$tmp/mem.bin" | tr -d ' \n')"
+                failed=$((failed + 1))
+            fi
+        }
+        check_savemem "save-memory: BDOS 0 System Reset writes the image" 0 'System reset'
+        check_savemem "save-memory: BIOS WBOOT writes the image"          W 'BIOS WBOOT'
+        check_savemem "save-memory: a jump to 0000h writes the image"     J 'JMP 0'
+
+        # A run with no --save-memory must not announce a save.  Asserting on
+        # the absence of the file alone would test nothing, since only the flag
+        # can name that path; the "Saved" line is what a regression that made
+        # saving unconditional would actually produce.
+        rm -f "$tmp/mem.bin"
+        "$emu" "$tmp/savemem.com" 0 >/dev/null 2>"$tmp/nosave"
+        if [ -f "$tmp/mem.bin" ] || grep -q 'Saved .* bytes' "$tmp/nosave"; then
+            printf 'FAIL  save-memory: no flag, no save\n'
+            sed 's/^/        /' <"$tmp/nosave"
+            failed=$((failed + 1))
+        else
+            printf 'PASS  save-memory: no flag, no save\n'
+            passed=$((passed + 1))
+        fi
+
+        # --- CPM_BIOS_DISK tells the guest which mode it is in ---------------
+        # "fail" returned A = 0, byte for byte what "ok" returns, so a guest
+        # could not tell the two apart and the startup line announcing failure
+        # described nothing.  A = 1 is the CP/M BIOS permanent error.
+        check_bios_disk() {
+            local name=$1 mode=$2 call=$3 want=$4 got
+            got=$(CPM_BIOS_DISK="$mode" "$emu" "$tmp/bios_disk.com" "$call" 2>/dev/null)
+            if [ "$got" = "$want" ]; then
+                printf 'PASS  %s\n' "$name"
+                passed=$((passed + 1))
+            else
+                printf 'FAIL  %s\n        expected %s, got %s\n' "$name" "$want" "$got"
+                failed=$((failed + 1))
+            fi
+        }
+        check_bios_disk "bios disk: ok returns A = 0"        ok   R 00
+        check_bios_disk "bios disk: fail returns A = 1"      fail R 01
+        check_bios_disk "bios disk: fail is fail for WRITE"  fail W 01
+        check_bios_disk "bios disk: fail is fail for HOME"   fail H 01
+
+        # "error" is the third mode and the only one that was ever visible.
+        # The diagnostic is required as well as the status: a non-zero exit on
+        # its own would also be produced by the emulator failing to start, which
+        # has nothing to do with CPM_BIOS_DISK.
+        if CPM_BIOS_DISK=error "$emu" "$tmp/bios_disk.com" R >/dev/null 2>"$tmp/bderr"; then
+            printf 'FAIL  bios disk: error exits the emulator\n'
+            failed=$((failed + 1))
+        elif grep -q 'Unimplemented BIOS disk function' "$tmp/bderr"; then
+            printf 'PASS  bios disk: error exits the emulator\n'
+            passed=$((passed + 1))
+        else
+            printf 'FAIL  bios disk: error exits the emulator\n'
+            printf '        exited non-zero without the diagnostic\n'
+            sed 's/^/        /' <"$tmp/bderr"
+            failed=$((failed + 1))
+        fi
     fi
 fi
 

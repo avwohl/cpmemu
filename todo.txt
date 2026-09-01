@@ -30,6 +30,17 @@ sees seven bits here, or drop them and let the guest have the byte.  the second
 is not four line deletions: BDOS 6 needs a way to say "no character" that is not
 0, and the code-page expectations in tests/win_console.cc move with it.
 
+- BIOS SECTRAN does not set HL.  it is documented to take BC as the logical
+sector and DE as the translate table and to return the physical sector in HL -
+docs/cpm_disk_formats.md:178 says so - but cpmemu.cc:2770 has it sharing the
+CPM_BIOS_DISK stub group with HOME/SETTRK/SETSEC/SETDMA/READ/WRITE, which sets
+only A.  measured: a guest that loads HL with DEAD and calls SECTRAN with
+BC=0005 DE=0 gets DEAD back, where a real BIOS answers 0005.  the fix is small -
+break it out of the group and return HL=BC when DE is 0, else the byte at DE+BC
+- but nothing in the tree calls it, so it has never been noticed and there is no
+test to hang the fix on.  whoever takes it should add one beside the
+CPM_BIOS_DISK checks in run_tests.sh.
+
 - [RELEASE] [MAC] a downloaded macOS binary is signed ad hoc and not notarized,
 so Gatekeeper refuses it - and from a terminal the refusal has no visible form
 at all: measured, the process starts, prints nothing and sits in state SN until

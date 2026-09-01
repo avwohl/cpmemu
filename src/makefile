@@ -71,7 +71,7 @@ LIB_STATIC = lib$(LIB_NAME).a
 # One place for the version on this side of the build.  src/CMakeLists.txt
 # carries its own copy in project(... VERSION ...) and the two have to be moved
 # together; qkz80.pc no longer does, it is filled in from here.
-LIB_VERSION = 4.7.0
+LIB_VERSION = 4.7.1
 LIB_VERSION_MAJOR = 4
 ifeq ($(UNAME_S),Darwin)
 LIB_SHARED = lib$(LIB_NAME).$(LIB_VERSION_MAJOR).dylib

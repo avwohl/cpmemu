@@ -147,6 +147,20 @@ and what should come back is `MANUAL_CHECKS.md` in the repo root.
   translator in `console_output()` understands, checked against the exact ANSI
   bytes it emits. Assembled at test time; no `.com` is committed.
 
+### Exit and BIOS Stub Tests
+- **savemem.asm** - writes `A5 5A` at `0200h` and then finishes the way its
+  command tail asks: `0` for BDOS 0 System Reset, `W` for BIOS WBOOT, `J` for a
+  jump to `0000h`. All three have to write a `--save-memory` image; before
+  4.7.1 only the jump did. The runner checks the marker in the file *and* the
+  exit line on stderr, because `0000h` holds a `JP WBOOT` and a jump that
+  stopped being trapped would otherwise save through WBOOT and look fine.
+  Assembled at test time; no `.com` is committed.
+- **bios_disk.asm** - calls BIOS HOME, READ or WRITE through the jump table by
+  command tail (`H`, `R`, `W`) and prints the status byte in A as hex.
+  `CPM_BIOS_DISK=ok` gives `00` and `=fail` gives `01`; before 4.7.1 both gave
+  `00`, so the mode was invisible to a guest. Assembled at test time; no `.com`
+  is committed.
+
 ### Flag Verification Tests
 - **test_n_flag.asm** - Verifies N flag is set/cleared correctly
   - Expected output: `20 02 00`
@@ -361,10 +375,11 @@ z88dk.z88dk-z80asm -b test.asm
 cp test.bin test.com
 ```
 
-The drive mapping sources, the two console end-of-input programs and
-`adm3a.asm` are assembled at test time instead, so no binary for them is
-committed. `tests/run_tests.sh` uses `pasmo` if it is on `PATH` and `z80asm`
-otherwise, and skips the whole group - 26 checks - when neither is:
+The drive mapping sources, the two console end-of-input programs, `cli_tail.asm`,
+`adm3a.asm`, `savemem.asm` and `bios_disk.asm` are assembled at test time
+instead, so no binary for them is committed. `tests/run_tests.sh` uses `pasmo`
+if it is on `PATH` and `z80asm` otherwise, and skips the whole group - 35
+checks - when neither is:
 ```bash
 brew install z80asm        # macOS; pasmo is not in Homebrew
 apt install z80asm         # or pasmo
@@ -428,9 +443,9 @@ What is left is coverage of everything they do not reach:
    `MANUAL_CHECKS.md` in the repo root.
 2. The drive mapping group needs an assembler. It takes `pasmo` or `z80asm`,
    which covers Homebrew and Debian, but on a machine with neither it still
-   skips 26 checks - more than half the suite. Committing those ten `.com`
-   files as byte arrays the way `tests/con_guests.h` does would de-gate it
-   entirely.
+   skips 35 checks, about two fifths of the suite. Committing those twelve
+   `.com` files as byte arrays the way `tests/con_guests.h` does would de-gate
+   it entirely.
 3. There is no CI job running any of this; `.github/workflows/release.yml`
    builds and packages only, on Linux and macOS. Nothing in CI has ever
    compiled the Windows half except the cross-compile above, and nothing has
