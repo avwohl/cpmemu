@@ -2,16 +2,19 @@
 
 All notable changes to **cpmemu** are documented here.
 
-This file starts at `v4.6.0`. For most of this project's life the record of a
+This file starts at `v4.7.0`; `v4.6.0` is the tag it measures from, not an
+entry here. For most of this project's life the record of a
 change has been the commit message that made it, and those messages are longer
 and more specific than any changelog entry — they carry the measurements, the
 counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
-## [Unreleased]
+## [4.7.0] - 2026-09-01
 
-Everything below has landed since the `v4.6.0` tag and is not yet in a release.
+Everything below landed after the `v4.6.0` tag, which was published five months
+earlier on 2026-03-29. This is the first release to carry a macOS archive; the
+`.deb` and the `.rpm` are built as they were.
 
 ### Added
 
@@ -492,6 +495,28 @@ Everything below has landed since the `v4.6.0` tag and is not yet in a release.
 
 ### Documentation
 
+- **`README.md` was audited section by section against the source and rewritten
+  where the two disagreed — 485 lines to 796.** Five months of changes had gone
+  in without it, and the audit found more than the missing features: the memory
+  map reserved `0xFC00` for a CCP that does not exist and gave the TPA an end
+  address a page below where the loader actually stops, the first line of the
+  file promised "comprehensive BDOS/BIOS support" over a BIOS whose disk calls
+  are stubs, the BDOS table called three acknowledged no-ops (BDOS 28, 29, 30)
+  Supported and stopped at 40 when 48 is implemented, the BIOS list predated
+  SELDSK answering for every drive letter, the ^C hatch claimed "there is no
+  other way out" where Windows ctrl+break is one, and the sample config's
+  `*.BAS = ${HOME}/basic text` line names a directory on the host side — a form
+  that opens and then reads EOF forever. Newly documented rather than newly
+  corrected: `drive_A`..`drive_P`, the ADM-3A to ANSI translator with its
+  sequence table (it was in the emulator from the start and in the README
+  never), the qkz80 library and its `pkg-config` entry, suspend and signal
+  handling, that console input is masked to seven bits, and that `--save-memory`
+  writes nothing when the guest exits through BDOS 0 — which is how most CP/M
+  programs end. Every claim added or changed was checked against the source and,
+  where it could be, run: the library consumer example compiles under
+  `-Wall -Wextra` and runs, `-DQKZ80_NO_TRACE` takes `qkz80.o`'s `.text` from
+  26,046 bytes to 11,390, and the seven-bit measurement `43 29 4E 31 41 2E` came
+  from piping the UTF-8 for e-acute, alpha, `A` and `.` at a hex-echo guest.
 - **macOS is documented as a platform you can install and build on.** `README.md`
   had no macOS install section at all, and now names the universal archive, the
   `xattr -dr com.apple.quarantine` line and — this is the part worth writing

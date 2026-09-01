@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(cpmemu VERSION 4.6.0 LANGUAGES CXX)
+project(cpmemu VERSION 4.7.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
