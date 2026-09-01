@@ -10,9 +10,8 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
-## [Unreleased]
+## [4.7.2] - 2026-09-01
 
-Everything below has landed since the `v4.7.1` tag and is not yet in a release.
 Two open items from [`todo.txt`](todo.txt), which is down from five items to
 three. Two of the `todo.txt` pointers below are answered here rather than in
 `todo.txt`, where the items no longer are — the SECTRAN bug under v4.7.1 and the
@@ -20,9 +19,7 @@ eight-bit decision under v4.7.0. The other pointers in this file are still open
 work. `src/cpmemu.cc` moves by 37 lines added and 1 removed, of which 12 are the
 fix, 24 are the comment explaining it and one is blank; the removed line is the
 `case BIOS_SECTRAN:` label leaving the stub group, not deleted logic. The tests
-are the bulk of the change. No version bump: `src/CMakeLists.txt` and
-`src/makefile` still read 4.7.1, so a binary built from main reports 4.7.1 and
-contains this.
+are the bulk of the change.
 
 ### Fixed
 
