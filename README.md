@@ -252,7 +252,7 @@ reset`.
 | `CPM_PRINTER` | File for LIST device (printer) output, and for the `^P` console echo |
 | `CPM_AUX_IN` | File for Reader device input; end of file, or no file, reads as `^Z` |
 | `CPM_AUX_OUT` | File path for Punch device output |
-| `CPM_BIOS_DISK` | BIOS disk stubs: `ok` (default) returns A = 0, `fail` returns A = 1 (the CP/M permanent error), `error` exits the emulator |
+| `CPM_BIOS_DISK` | BIOS disk stubs: `ok` (default) returns A = 0, `fail` returns A = 1 (the CP/M permanent error), `error` exits the emulator. Covers HOME, SETTRK, SETSEC, SETDMA, READ and WRITE; SECTRAN is implemented and answers the same in all three modes |
 | `CPM_DEBUG_BDOS` | Trace these BDOS functions: comma-separated decimal function numbers |
 | `CPM_DEBUG_BIOS` | Trace these BIOS entries: comma-separated decimal offsets into the jump table (6 CONST, 9 CONIN, 12 CONOUT, 15 LIST, 27 SELDSK) |
 
@@ -490,13 +490,39 @@ arrow keys there has to decode the sequence itself.
 
 **Console input is seven bits.** All four console read sites — BDOS 1, the BDOS
 10 buffer store, BDOS 6 and BIOS CONIN — mask with `& 0x7F`, so no byte at or
-above 0x80 reaches the guest intact. The layers below do keep the eighth bit:
-POSIX raw mode clears ISTRIP, and the Windows console path encodes the key in
-the console input code page. The mask is above them. Measured: the UTF-8 for
-e-acute, alpha and `A` piped at a hex-echo guest comes back as
-`43 29 4E 31 41`. On the polled path a byte that masks to 0x00 is dropped
-outright, because BDOS 6 reads 0 as "no character". Whether a CP/M guest should
-see eight bits is open in [`todo.txt`](todo.txt).
+above 0x80 reaches the guest intact. BDOS 3 and BIOS READER mask the same way,
+which makes six read sites in all; those two are the Reader device, which is
+seven-bit in both directions. The layers below do keep the eighth bit: POSIX
+raw mode clears ISTRIP, and the Windows console path encodes the key in the
+console input code page. The mask is above them. Measured: the UTF-8 for
+e-acute, alpha and `A` piped at a hex-echo guest comes back as `43 29 4E 31 41`.
+
+This is deliberate and it is not going to change. A CP/M program written for
+this hardware expects seven bits, and the two things eight bits would buy —
+accented characters and a byte-exact console — are not what the software in
+this emulator's reach does. Dropping the masks is also not four line deletions:
+BDOS 6 spells "no character" as 0, so it would need another way to say it, and
+the code-page expectations in `tests/win_console.cc` are written against the
+masked bytes.
+
+What it costs, measured, so nobody has to rediscover it:
+
+- On the polled path a byte that masks to 0x00 is dropped outright, because
+  BDOS 6 reads 0 as "no character". Two input bytes do this, 0x00 and 0x80, and
+  the byte is consumed rather than left waiting: `80 41` at a BDOS 6 guest
+  yields `41` alone. CP/M 2.2 already spells "no character" 0, so a genuine NUL
+  is ambiguous on real hardware too; what this emulator adds is the second byte.
+- A guest that polls BIOS CONST until it says a key is ready and only then calls
+  BDOS 6 gets 0 back for a typed 0x80. Status and read contradict each other.
+- The mask is applied to what gets stored, after every raw-byte test, so a raw
+  0x8D is stored as CR rather than ending a BDOS 10 line early, a raw 0xFF is
+  stored as 0x7F rather than acting as rubout, and five raw 0x83 reach the guest
+  as five `03` without tripping the five-^C exit.
+
+The seven-bit cases in `tests/pty_console.cc` pin the console sites, over a pty
+and - for the blocking read, where it separates this mask from a line discipline
+that strips the bit - over a pipe as well, so the answer cannot change by
+accident. The two Reader sites are documented here but asserted by nothing.
 
 **Ctrl+V on Windows.** Windows Terminal is the default console host on Windows
 11, and it binds `ctrl+v` to `Terminal.PasteFromClipboard`. That binding does
@@ -576,14 +602,19 @@ whatever is on the drive. Any other function number prints
   and 0 above that. Every letter is selectable because an unconfigured drive
   means the working directory, not an absent disk.
 - WBOOT: exits the emulator, as does a jump to 0x0000. BOOT is not implemented.
-- HOME, SETTRK, SETSEC, SETDMA, READ, WRITE, SECTRAN: stubs, returning A = 0
-  or A = 1 per `CPM_BIOS_DISK`. Of the seven, only READ and WRITE return a
-  status in A; HOME, SETTRK, SETSEC and SETDMA return nothing, so the byte is
-  simply unread there. SECTRAN is documented to return the physical sector in
-  HL and this emulator does not set HL at all - a guest that calls it gets
-  whatever it had in HL back, which is an open item in
-  [`todo.txt`](todo.txt). File I/O is handled at the BDOS level, so a program
-  that drives the disk through the BIOS will not work.
+- SECTRAN: implemented, not a stub. BC is the logical sector and DE the
+  translate table, and the physical sector comes back in HL: the byte at DE +
+  BC with H = 0, which is the skeletal CBIOS lookup, or HL = BC when DE is 0,
+  which is the no-translation convention that listing omits. It is arithmetic
+  over the guest's own memory and reaches no media, so
+  it cannot fail and does not answer to `CPM_BIOS_DISK` - all three modes give
+  the same answer, and `error` no longer ends the run on a table lookup. The
+  call leaves A untouched, as the skeletal listing does.
+- HOME, SETTRK, SETSEC, SETDMA, READ, WRITE: stubs, returning A = 0 or A = 1
+  per `CPM_BIOS_DISK`. Of the six, only READ and WRITE return a status in A;
+  HOME, SETTRK, SETSEC and SETDMA return nothing, so the byte is simply unread
+  there. File I/O is handled at the BDOS level, so a program that drives the
+  disk through the BIOS will not work.
 
 ## CP/M Memory Layout
 
@@ -627,7 +658,8 @@ section did: that is about five groups in, and a truncated run looks like a
 finished one unless something checks for the "Tests complete" line.
 
 Two parts of the suite need more than a compiler. The drive, mapping, config,
-CLI and ADM-3A guests are assembled at test time, so 35 checks skip unless
+CLI, ADM-3A, save-memory, BIOS disk and SECTRAN guests are assembled at test
+time, so 42 checks skip unless
 `pasmo` or `z80asm` is on `PATH`. With `x86_64-w64-mingw32-g++` on `PATH` the
 suite also cross-compiles the Windows half of the platform layer and fails on
 any warning; without it, that step skips.

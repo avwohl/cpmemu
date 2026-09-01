@@ -274,13 +274,13 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: install pasmo or z80asm)"
-    # 35 checks live behind this gate, not the 6 an earlier version counted
-    skipped=$((skipped + 35))
+    # 42 checks live behind this gate, not the 6 an earlier version counted
+    skipped=$((skipped + 42))
 else
     echo
     asm_ok=1
     for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren cli_tail con_eof con_spin adm3a \
-               savemem bios_disk; do
+               savemem bios_disk sectran; do
         if ! assemble "$root/tests/$src.asm" "$tmp/$src.com" >"$tmp/asm.log" 2>&1; then
             echo "FAIL  assembling tests/$src.asm"
             sed 's/^/        /' <"$tmp/asm.log"
@@ -569,6 +569,50 @@ else
             sed 's/^/        /' <"$tmp/bderr"
             failed=$((failed + 1))
         fi
+
+        # --- BIOS SECTRAN answers in HL --------------------------------------
+        # SECTRAN takes BC = the logical sector and DE = the translate table
+        # and is documented to return the physical sector in HL, but it sat in
+        # the CPM_BIOS_DISK group above, which sets only A.  HL came back
+        # holding whatever the guest had left in it and the table was never
+        # read: Z, T and H printed 0000, 0000 and AA55 - the guest's own
+        # sentinels.
+        # SECTRAN is arithmetic, not I/O, so it cannot fail and does not belong
+        # in that group: the answer has to be the same in all three modes, and
+        # error mode must not take the emulator down over a table lookup, which
+        # is what it did.  The two mode checks use the dullest lookup the guest
+        # has - index 0, HL already clean - so that they move for the mode and
+        # for nothing else.  The exit status is checked as well as the digits:
+        # error mode exited 1 printing nothing, and an empty stdout must not be
+        # read as a quiet pass.
+        check_sectran() {
+            local name=$1 mode=$2 call=$3 want=$4 got rc
+            got=$(CPM_BIOS_DISK="$mode" "$emu" "$tmp/sectran.com" "$call" 2>/dev/null)
+            rc=$?
+            if [ $rc -eq 0 ] && [ "$got" = "$want" ]; then
+                printf 'PASS  %s\n' "$name"
+                passed=$((passed + 1))
+            else
+                printf 'FAIL  %s\n        expected %s exit 0, got %s exit %d\n' \
+                    "$name" "$want" "$got" "$rc"
+                failed=$((failed + 1))
+            fi
+        }
+        check_sectran "sectran: no table answers HL = BC"          ok    Z 1234
+        check_sectran "sectran: a table answers the byte at DE+BC" ok    T 0008
+        check_sectran "sectran: a table answers with H = 0"        ok    H 0006
+        check_sectran "sectran: fail mode translates anyway"       fail  M 0006
+        check_sectran "sectran: error mode translates anyway"      error M 0006
+        # The last two are here because a build could get all four above right
+        # and still be wrong.  W carries DE+BC past FFFF, which the five above
+        # never approach - their table sits low in the guest's own image - so
+        # without it the cast that keeps the sum inside 64K can be deleted and
+        # the suite stays green while the emulator reads off the end of its
+        # memory; the table address itself is ordinary, FF8F.  A is the
+        # half of the original bug no HL check can see: the stub group set the
+        # accumulator, and a real SECTRAN leaves it alone.
+        check_sectran "sectran: the table index wraps at FFFF"     ok    W 0009
+        check_sectran "sectran: A is left alone"                   fail  A 5A
     fi
 fi
 

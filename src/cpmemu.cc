@@ -2766,6 +2766,43 @@ void CPMEmulator::bios_call(int offset) {
     break;
   }
 
+  // BIOS SECTRAN - Sector Translate.  BC is the logical sector, DE the
+  // translate table, and the physical sector comes back in HL.  This shared
+  // the disk stub group below, which sets only A, so HL came back holding
+  // whatever the guest had left in it and the table was never read at all:
+  // measured, a guest that loaded HL with DEAD and called this with BC=0005
+  // and DE=0 got DEAD back where a real BIOS answers 0005.  It also clobbered
+  // A, which the skeletal CBIOS - XCHG / DAD B / MOV L,M / MVI H,0 / RET -
+  // leaves alone, so A is untouched here.
+  //
+  // It is arithmetic over guest memory and reaches no media, so there is no
+  // failure for CPM_BIOS_DISK=fail to report and nothing unimplemented for
+  // =error to refuse: it now answers the same way in all three modes.  That
+  // is a behavior change for =error, which used to take the emulator down
+  // over a table lookup.  The group below still stops a guest at the first
+  // call that would actually touch a disk.
+  case BIOS_SECTRAN: {
+    qkz80_uint8* mem = cpu->get_mem();
+    qkz80_uint16 sector = cpu->get_reg16(qkz80::regp_BC);
+    qkz80_uint16 table = cpu->get_reg16(qkz80::regp_DE);
+    // DE = 0 means no translation, and it is the case this emulator's own
+    // DPH drives: the XLT word at DPH_ADDR is zero.  The answer there is the
+    // logical sector itself, not the byte at address BC.  The skeletal CBIOS
+    // has no such test and would index off page zero; answering BC is the
+    // no-translation convention, not that listing.  The cast keeps the
+    // sum inside the 64K address space, as ADD HL,BC does; without it a
+    // table at FFFF reads off the end of the memory array.
+    qkz80_uint16 phys = table ? mem[(qkz80_uint16)(table + sector)] : sector;
+    // set_reg16 takes the value first.  A table entry is a byte, so this is
+    // also what clears H on that path, the MVI H,0 of the skeletal listing.
+    cpu->set_reg16(phys, qkz80::regp_HL);
+    if (debug || debug_bios_offsets.count(offset)) {
+      fprintf(stderr, "BIOS SECTRAN: sector %04X table %04X -> %04X\n",
+              (unsigned)sector, (unsigned)table, (unsigned)phys);
+    }
+    break;
+  }
+
   // Other disk I/O functions - behavior controlled by bios_disk_mode
   case BIOS_HOME:
   case BIOS_SETTRK:
@@ -2773,7 +2810,6 @@ void CPMEmulator::bios_call(int offset) {
   case BIOS_SETDMA:
   case BIOS_READ:
   case BIOS_WRITE:
-  case BIOS_SECTRAN:
     if (bios_disk_mode == 2) {
       // Error mode - exit emulator
       fprintf(stderr, "FATAL: Unimplemented BIOS disk function at offset %d\n", offset);

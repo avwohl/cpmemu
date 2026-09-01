@@ -39,6 +39,24 @@ The guest programs live in `tests/con_guests.h` and are shared with the Windows
 harness, so a case named the same on both platforms runs the same code and the
 two results can be read side by side.
 
+Nine of its cases pin seven-bit console input, in two groups. Five cover the
+mask itself - one per console read site, plus a pipe twin of the BDOS 1 case,
+because a pty case alone cannot tell the emulator's mask from a line discipline
+that strips the bit. Until they were written the only tests asserting any of
+this were the four code-page cases in `tests/win_console.cc`, which have never
+been executed on any machine. One of the five asserts a loss rather than a
+value: BDOS 6 spells "no character" 0, so the byte that masks to zero is
+consumed and never delivered. That case is the tripwire - giving the guest
+eight bits means rewriting it deliberately.
+
+The other four cover `check_ctrl_c_exit`, which is fed the raw byte on purpose
+so that a 0x83 counts as a high byte and not as a ^C. It has four call sites and
+the mistake could be made at any one of them, so each is driven separately; each
+fails by truncation, because the emulator exits before the guest can finish the
+line. Mutation testing is what put them here: with the mask left alone and only
+the ^C argument masked, the suite was green before these existed - at all four
+sites, not just the three the group had no case for.
+
 The case it exists for is `^V` and `^O`. BSD and XNU gate `VLNEXT` and
 `VDISCARD` on `IEXTEN` outside the `ICANON` block, so without the `IEXTEN` clear
 in `enable_raw_mode()` the line discipline eats those two bytes before the guest
@@ -147,7 +165,7 @@ and what should come back is `MANUAL_CHECKS.md` in the repo root.
   translator in `console_output()` understands, checked against the exact ANSI
   bytes it emits. Assembled at test time; no `.com` is committed.
 
-### Exit and BIOS Stub Tests
+### Exit and BIOS Tests
 - **savemem.asm** - writes `A5 5A` at `0200h` and then finishes the way its
   command tail asks: `0` for BDOS 0 System Reset, `W` for BIOS WBOOT, `J` for a
   jump to `0000h`. All three have to write a `--save-memory` image; before
@@ -160,6 +178,17 @@ and what should come back is `MANUAL_CHECKS.md` in the repo root.
   `CPM_BIOS_DISK=ok` gives `00` and `=fail` gives `01`; before 4.7.1 both gave
   `00`, so the mode was invisible to a guest. Assembled at test time; no `.com`
   is committed.
+- **sectran.asm** - calls BIOS SECTRAN through the jump table and prints what
+  it answered, as hex. The command tail picks the case: `T` a table lookup,
+  `H` the same with HL dirtied first, `M` the dullest lookup there is, `W` a
+  lookup whose DE+BC carries past FFFF, `A` the accumulator instead of HL, and
+  anything else no table at all. Five of the six print four hex digits of HL;
+  `A` prints two of the accumulator. SECTRAN used to share the `CPM_BIOS_DISK`
+  stub group, which sets only A, so HL came back holding the guest's own
+  sentinel and the table was never read. `M` exists so the two mode checks
+  move for the mode and for nothing else, `W` so the 64K wrap cannot be
+  deleted unnoticed, and `A` because the accumulator is the half of the old
+  bug no HL check can see. Assembled at test time; no `.com` is committed.
 
 ### Flag Verification Tests
 - **test_n_flag.asm** - Verifies N flag is set/cleared correctly
@@ -376,9 +405,9 @@ cp test.bin test.com
 ```
 
 The drive mapping sources, the two console end-of-input programs, `cli_tail.asm`,
-`adm3a.asm`, `savemem.asm` and `bios_disk.asm` are assembled at test time
-instead, so no binary for them is committed. `tests/run_tests.sh` uses `pasmo`
-if it is on `PATH` and `z80asm` otherwise, and skips the whole group - 35
+`adm3a.asm`, `savemem.asm`, `bios_disk.asm` and `sectran.asm` are assembled at
+test time instead, so no binary for them is committed. `tests/run_tests.sh` uses
+`pasmo` if it is on `PATH` and `z80asm` otherwise, and skips the whole group - 42
 checks - when neither is:
 ```bash
 brew install z80asm        # macOS; pasmo is not in Homebrew
@@ -443,7 +472,7 @@ What is left is coverage of everything they do not reach:
    `MANUAL_CHECKS.md` in the repo root.
 2. The drive mapping group needs an assembler. It takes `pasmo` or `z80asm`,
    which covers Homebrew and Debian, but on a machine with neither it still
-   skips 35 checks, about two fifths of the suite. Committing those twelve
+   skips 42 checks, about two fifths of the suite. Committing those thirteen
    `.com` files as byte arrays the way `tests/con_guests.h` does would de-gate
    it entirely.
 3. There is no CI job running any of this; `.github/workflows/release.yml`

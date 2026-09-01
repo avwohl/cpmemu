@@ -732,6 +732,69 @@ static const Case cases[] = {
     { "BIOS CONST and CONIN see the same keys as BDOS", PROG(bioshex_com),
       NULL, "^V,^O,A,.", "", "16 0F 41 2E ", "", 15000, StdinPty, NULL, false, 0, NULL },
 
+    // ---- seven-bit console input -----------------------------------------
+    // Every console read site masks the byte it hands the guest with & 0x7F,
+    // so a CP/M program here sees seven bits.  That is a decision rather than
+    // a law: every layer below keeps the eighth bit, and POSIX raw mode clears
+    // ISTRIP specifically so it does.  Until these cases were written the only
+    // tests that pinned any of it were the four code-page cases in
+    // tests/win_console.cc, which have never been executed on any machine, so
+    // the masks were asserted by nothing that runs.  Whoever gives the guest
+    // eight bits has to rewrite these deliberately - a failure here is that
+    // decision being made by accident, not a regression to mask away.
+    //
+    // The keys are the UTF-8 for e-acute, alpha, pound and em-dash: nine bytes
+    // in, nine bytes out with bit 7 cleared on each.
+    { "console input is seven bits", PROG(con1hex_com),
+      NULL, "xC3,xA9,xCE,xB1,xC2,xA3,xE2,x80,x94,.", "",
+      "43 29 4E 31 42 23 62 00 14 2E ", "", 15000, StdinPty, NULL, false, 0, NULL },
+
+    { "seven bits over redirected input too", PROG(con1hex_com),
+      NULL, "", "", "43 29 4E 31 42 23 62 00 14 2E ", "", 15000, StdinPipe,
+      "\xC3\xA9\xCE\xB1\xC2\xA3\xE2\x80\x94.", false, 0, NULL },
+
+    { "BIOS CONIN strips the eighth bit too", PROG(bioshex_com),
+      NULL, "xC3,xA9,.", "", "43 29 2E ", "", 15000, StdinPty, NULL, false, 0, NULL },
+
+    // BDOS 6 spells "no character" 0, so the one input byte that masks to zero
+    // is not merely altered on the polled path - it is consumed and never
+    // delivered.  0x80 in, nothing out: the guest sees the A that followed it
+    // and nothing before.  It is the only byte the mask destroys outright, and
+    // 0x00 is indistinguishable from an idle console on real CP/M too; what
+    // this emulator adds is the second one.
+    { "BDOS 6 loses a byte that masks to zero", PROG(con6hex_com),
+      NULL, "x80,A,.", "", "41 2E ", "", 15000, StdinPty, NULL, false, 0, NULL },
+
+    // The line editor is the fourth read site and the one that masks what it
+    // stores rather than what it returns.  0xC3 is stored as 'C' and echoed as
+    // 'C', so the guest reads back 43.
+    { "the line editor stores seven bits too", PROG(con10buf_com),
+      NULL, "xC3,Enter", "", "C\r\n43 ", "", 15000, StdinPty, NULL, false, 0, NULL },
+
+    // The mask is applied to what gets stored, after every raw-byte test, so
+    // the escape hatch counts real ^C rather than bytes that merely mask to
+    // one.  Five 0x83 reach the guest as five 03 and the emulator stays up;
+    // five real 0x03 end it, which is the case below.  check_ctrl_c_exit has
+    // four call sites and the same mistake could be made at any one of them,
+    // so all four are here: BDOS 6, BDOS 1, the line editor and BIOS CONIN.
+    // Each fails by truncation - the emulator exits before the guest can print
+    // the byte that would have finished the line.
+    { "a byte that masks to ^C is not a ^C", PROG(con6hex_com),
+      NULL, "x83,x83,x83,x83,x83,.", "", "03 03 03 03 03 2E ", "", 15000,
+      StdinPty, NULL, false, 0, NULL },
+
+    { "nor at the blocking read", PROG(con1hex_com),
+      NULL, "x83,x83,x83,x83,x83,.", "", "03 03 03 03 03 2E ", "", 15000,
+      StdinPty, NULL, false, 0, NULL },
+
+    { "nor at BIOS CONIN", PROG(bioshex_com),
+      NULL, "x83,x83,x83,x83,x83,.", "", "03 03 03 03 03 2E ", "", 15000,
+      StdinPty, NULL, false, 0, NULL },
+
+    { "nor in the line editor", PROG(con10buf_com),
+      NULL, "x83,x83,x83,x83,x83,Enter", "",
+      "^C^C^C^C^C\r\n03 03 03 03 03 ", "", 15000, StdinPty, NULL, false, 0, NULL },
+
     // The escape hatch a raw-mode emulator needs.  The fifth ^C exits before
     // the guest can print it, so only four appear.
     { "five typed ^C exit the emulator", PROG(con6hex_com),

@@ -520,11 +520,13 @@ static const Case cases[] = {
     // as the tie-breaker, so a character whose first byte is 0xE0 was a guess
     // that code page 437 lost intermittently and 65001 lost every time.
     //
-    // The bytes expected below are what the guest receives *today*, which is
-    // after the `& 0x7F` at cpmemu.cc:2361 - alpha is E0 in code page 437 and
-    // the guest sees 60.  Whether CP/M should see eight bits is open in
-    // todo.txt; when that is settled these expectations move with it, and that
-    // is the point of writing them out as bytes.
+    // The bytes expected below are what the guest receives after the `& 0x7F`
+    // in bdos_direct_console_io - alpha is E0 in code page 437 and the guest
+    // sees 60.  Whether CP/M should see eight bits is settled: the masks stay,
+    // so these expectations are final.  A mismatch here is a fault in the
+    // console path, not a decision still to be made, and that is the point of
+    // writing them out as bytes.  The POSIX twins of these are the seven-bit
+    // cases in tests/pty_console.cc, which do run.
     { "an E0 character is a character, not a key prefix", PROG(con6hex_com),
       "U+03B1,.", "", "60 2E ", "", false, 15000, NULL, false, 437 },
 

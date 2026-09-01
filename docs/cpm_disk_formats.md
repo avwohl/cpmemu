@@ -197,6 +197,14 @@ The BIOS provides 17 entry points (51 bytes of jump instructions):
 - Uses track/sector/DMA set by previous calls
 - Returns A=0 for success, A=1 for error
 
+**SECTRAN (Sector Translate):**
+- Logical sector in BC, translate table address in DE
+- Returns HL=BC when DE=0, the no-translation case; otherwise HL is the byte
+  at DE+BC, with H=0
+- A is not touched, and neither is the table
+- This emulator's own DPH sets XLT=0, so a guest driving it through SELDSK
+  takes the DE=0 path
+
 ### Disk Parameter Header (DPH)
 
 Each disk has a DPH structure:

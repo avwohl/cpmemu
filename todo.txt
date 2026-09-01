@@ -17,29 +17,9 @@ installs a SetConsoleCtrlHandler; tests/win_console.cc has five cases for those
 process group the harness creates for the purpose - and not one of them has
 ever reported anything.  someone with a windows box should run
 tests\win_console.bat and say what it prints.  the four code-page cases expect
-the bytes the guest gets *after* the & 0x7F, so settling the eight-bit item
-below moves their expectations.
-
-- [DECISION] whether a CP/M guest should see eight bits.  four console read
-sites in cpmemu.cc mask with & 0x7F - BDOS 1, the BDOS 10 buffer store, BDOS 6
-and BIOS CONIN - so the guest gets seven: measured, the UTF-8 for e-acute,
-alpha, pound and em-dash reaches it as 43 29 4E 31 42 23 62 00 14, and on the
-polled path a byte that masks to 0x00 is dropped outright because BDOS 6 reads 0
-as "no character".  the two answers are keep the masks and document that CP/M
-sees seven bits here, or drop them and let the guest have the byte.  the second
-is not four line deletions: BDOS 6 needs a way to say "no character" that is not
-0, and the code-page expectations in tests/win_console.cc move with it.
-
-- BIOS SECTRAN does not set HL.  it is documented to take BC as the logical
-sector and DE as the translate table and to return the physical sector in HL -
-docs/cpm_disk_formats.md:178 says so - but cpmemu.cc:2770 has it sharing the
-CPM_BIOS_DISK stub group with HOME/SETTRK/SETSEC/SETDMA/READ/WRITE, which sets
-only A.  measured: a guest that loads HL with DEAD and calls SECTRAN with
-BC=0005 DE=0 gets DEAD back, where a real BIOS answers 0005.  the fix is small -
-break it out of the group and return HL=BC when DE is 0, else the byte at DE+BC
-- but nothing in the tree calls it, so it has never been noticed and there is no
-test to hang the fix on.  whoever takes it should add one beside the
-CPM_BIOS_DISK checks in run_tests.sh.
+the bytes the guest gets *after* the & 0x7F.  the masks are staying - a CP/M
+guest here sees seven bits from the console - so those expectations are final
+and a mismatch is a fault in the console path, not a decision still to make.
 
 - [RELEASE] [MAC] a downloaded macOS binary is signed ad hoc and not notarized,
 so Gatekeeper refuses it - and from a terminal the refusal has no visible form

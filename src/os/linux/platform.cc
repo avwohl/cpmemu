@@ -247,18 +247,26 @@ void enable_raw_mode() {
     //
     // It is not all the emulator needs, and this comment used to imply it was.
     // All four console read sites in cpmemu.cc then mask with & 0x7F -
-    // cpmemu.cc:1591 (BDOS 1), :1771 (BDOS 10 buffer store), :2361 (BDOS 6) and
-    // :2799 (BIOS CONIN) - so a high byte that arrives here intact reaches the
-    // CP/M program with its top bit gone.  Measured: the UTF-8 bytes for
-    // e-acute, alpha, pound and em-dash (C3 A9 CE B1 C2 A3 E2 80 94) give the
-    // guest 43 29 4E 31 42 23 62 00 14 after masking - the leading 43 is the
-    // C3 with its top bit taken off, and no byte at or above 0x80 can survive
-    // - and on the polled path a byte that masks to 0x00 is dropped outright,
-    // because BDOS 6 reads 0 as "no character".
+    // bdos_read_console (BDOS 1), the store in bdos_read_console_buffer
+    // (BDOS 10), bdos_direct_console_io (BDOS 6) and bios_conin - so a high
+    // byte that arrives here intact reaches the CP/M program with its top bit
+    // gone.  bdos_aux_input (BDOS 3) and bios_reader mask identically, which
+    // makes six read sites in all; those two are the Reader device rather than
+    // the console.  Function names rather than line numbers because the four
+    // that used to be written here had all drifted off the lines they named.
+    // Measured: the UTF-8 bytes for e-acute, alpha, pound and em-dash
+    // (C3 A9 CE B1 C2 A3 E2 80 94) give the guest 43 29 4E 31 42 23 62 00 14
+    // after masking - the leading 43 is the C3 with its top bit taken off, and
+    // no byte at or above 0x80 can survive - and on the polled path a byte
+    // that masks to 0x00 is dropped outright, because BDOS 6 reads 0 as
+    // "no character".
     //
-    // Whether CP/M should see eight bits is a real question and it is not
-    // settled here; it is open in todo.txt.  What this clear buys is that
-    // settling it either way needs no change to this layer.
+    // Whether CP/M should see eight bits was a real question and it is now
+    // settled: the masks stay, and a CP/M guest here sees seven bits.  The
+    // reasoning and what it costs are in README.md under Known Limitations,
+    // and tests/pty_console.cc pins the bytes so the answer cannot change by
+    // accident.  What this clear buys is that revisiting it needs no change to
+    // this layer.
     // Set minimum characters to 1 and timeout to 0
     raw.c_cc[VMIN] = 1;
     raw.c_cc[VTIME] = 0;
