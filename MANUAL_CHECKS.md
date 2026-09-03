@@ -84,5 +84,8 @@ on Windows Terminal and no `SetConsoleMode` call changes it — that one is in
 `README.md` as a limitation, not a finding.
 
 Note that this pass and running `tests\win_console.bat` without `--manual` are
-two different things. The automated Windows cases have also never been executed
-anywhere, which is an item in `todo.txt` tagged `[WINDOWS]`.
+two different things. The automated cases now run on every push: the `windows`
+job in `.github/workflows/ci.yml` builds `cpmemu.exe` with MSVC and runs all 25
+of them on a `windows-latest` runner, and they pass. What that job cannot do is
+press a key on a keyboard, which is what the pass above is for and why it is
+still open.

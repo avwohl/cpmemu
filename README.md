@@ -664,6 +664,13 @@ time, so 42 checks skip unless
 suite also cross-compiles the Windows half of the platform layer and fails on
 any warning; without it, that step skips.
 
+Both of those skip quietly and exit 0, which on a bare machine means a green
+tick over three fifths of the suite. `tests/run_tests.sh --require` makes any
+skip a machine could fix by installing something a failure instead, and names
+what to install. `.github/workflows/ci.yml` runs the suite that way on
+`ubuntu-latest`, runs it on `macos-latest`, and runs `tests\win_console.bat` on
+`windows-latest`, on every push.
+
 The terminal layer is unreachable through a pipe, so it has harnesses of its
 own: `tests/pty_console.cc` gives the emulator a real pty and runs everywhere
 except Windows, and `tests/win_console.cc` writes `INPUT_RECORD`s into a real

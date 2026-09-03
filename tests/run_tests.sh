@@ -247,8 +247,12 @@ drive_sandbox() {
     rm -rf "$sb"
     mkdir -p "$sb/a" "$sb/b"
     printf 'AAA' >"$sb/a/hello.txt"
-    printf 'BBB' >"$sb/b/hello.txt"
+    # other.txt before hello.txt, deliberately.  "drive: search scopes to the
+    # drive" asserts they come back sorted, and if they were created in sorted
+    # order that check could not tell a sort from a filesystem handing back
+    # creation order - which is what it was doing before, on both counts.
     printf 'CCC' >"$sb/b/other.txt"
+    printf 'BBB' >"$sb/b/hello.txt"
     printf 'ZZZ' >"$sb/zonly.txt"      # cwd decoy: must never be reached from a mapped drive
     { echo "drive_A = $sb/a"; echo "drive_B = $sb/b"; } >"$sb/drives.cfg"
 }
@@ -339,10 +343,18 @@ else
 
         # Search is scoped to the drive: B has two files, and the cwd decoy is
         # not among them.
+        #
+        # The order is the sort platform::list_directory promises, not the
+        # order the two files were created in.  This expectation used to read
+        # OTHER before HELLO, which was this machine's readdir(3) order and
+        # nothing more: the first CI run of these 42 checks failed here on a
+        # GitHub ubuntu runner, whose ext4 handed them back the other way
+        # round.  The emulator now sorts, so both orders cannot be right and
+        # this is the one that is.
         printf 'program = %s/drv_dir.com\n' "$tmp" >"$tmp/dir.cfg"
         cat "$cfg" >>"$tmp/dir.cfg"
         check_drive "drive: search scopes to the drive" "$tmp/drv_dir.com" "$tmp/dir.cfg" "B:" \
-            'OTHER   TXT\r\nHELLO   TXT\r\n'
+            'HELLO   TXT\r\nOTHER   TXT\r\n'
 
         # Login vector reports exactly the configured drives.
         printf 'program = %s/drv_login.com\n' "$tmp" >"$tmp/login.cfg"

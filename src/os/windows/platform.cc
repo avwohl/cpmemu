@@ -9,6 +9,7 @@
 #include <io.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <algorithm>
 #include <cstdlib>
 #include <cstdio>
 
@@ -527,6 +528,11 @@ std::vector<DirEntry> list_directory(const char* path) {
     } while (FindNextFileA(hFind, &ffd) != 0);
 
     FindClose(hFind);
+    // FindFirstFile order is the filesystem's - sorted on NTFS, not promised
+    // anywhere - so sort here too, so both platforms answer alike: see the
+    // contract in os/platform.h.
+    std::sort(entries.begin(), entries.end(),
+              [](const DirEntry& a, const DirEntry& b) { return a.name < b.name; });
     return entries;
 }
 

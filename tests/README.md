@@ -472,10 +472,15 @@ What is left is coverage of everything they do not reach:
    `MANUAL_CHECKS.md` in the repo root.
 2. The drive mapping group needs an assembler. It takes `pasmo` or `z80asm`,
    which covers Homebrew and Debian, but on a machine with neither it still
-   skips 42 checks, about two fifths of the suite. Committing those thirteen
-   `.com` files as byte arrays the way `tests/con_guests.h` does would de-gate
-   it entirely.
-3. There is no CI job running any of this; `.github/workflows/release.yml`
-   builds and packages only, on Linux and macOS. Nothing in CI has ever
-   compiled the Windows half except the cross-compile above, and nothing has
-   ever run it.
+   skips 42 checks, about two fifths of the suite. CI installs `z80asm` and
+   runs with `--require`, so the gate can no longer hide there; a local run on
+   a machine with neither assembler still skips them, and committing those
+   thirteen `.com` files as byte arrays the way `tests/con_guests.h` does would
+   de-gate it entirely.
+3. `.github/workflows/ci.yml` now runs this suite on `ubuntu-latest` and
+   `macos-latest` and `tests\win_console.bat` on `windows-latest`, on every
+   push. The Windows console cases ran there for the first time and report 25
+   passed, 0 failed, which includes the four code-page cases and the
+   `CTRL_BREAK_EVENT` one. Pass `--require` (CI does) to make a skip for want
+   of a tool a failure: without it the first CI run reported 60 passed and a
+   green tick, having skipped the 42 checks behind the assembler gate.

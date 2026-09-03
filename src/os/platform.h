@@ -77,6 +77,15 @@ struct DirEntry {
 
 // List files in a directory
 // Returns empty vector on error
+//
+// Sorted by name, byte order, and that is part of the contract rather than an
+// implementation detail.  Unsorted, this returns readdir(3) order on POSIX and
+// FindFirstFile order on Windows - which is arbitrary on ext4 and sorted on
+// NTFS - so a CP/M DIR of the same drive directory listed differently on
+// different hosts, and on the same host after the files were rewritten.  Found
+// by tests/drv_dir.asm: "drive: search scopes to the drive" asserted the order
+// two files come back in, passed on the machine it was written on, and failed
+// on a GitHub ubuntu runner the first time CI ran it.
 std::vector<DirEntry> list_directory(const char* path);
 
 // ============================================================================

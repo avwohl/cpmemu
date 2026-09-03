@@ -9,6 +9,7 @@
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <algorithm>
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
@@ -413,6 +414,10 @@ std::vector<DirEntry> list_directory(const char* path) {
     }
 
     closedir(dir);
+    // readdir(3) order is whatever the filesystem stored, so sort: see the
+    // contract in os/platform.h.
+    std::sort(entries.begin(), entries.end(),
+              [](const DirEntry& a, const DirEntry& b) { return a.name < b.name; });
     return entries;
 }
 
