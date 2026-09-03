@@ -165,8 +165,16 @@ jobs:
     #
     # Two gates, not one, so the halves are independent: a certificate with no
     # notary credentials signs and does not notarize, rather than failing.
+    #
+    # HAVE_SIGNING names all three signing secrets, the identity included.
+    # Testing only the .p12 pair meant a repository that had set those two
+    # and not the identity would reach the signing step and run
+    # `codesign --sign ""`, which codesign rejects and set -e turns into a
+    # failed release - and that half-configured state is exactly where
+    # docs/macos-signing.md tells a maintainer to stop on the way up.  An
+    # incomplete set skips.
     env:
-      HAVE_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' }}
+      HAVE_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' && secrets.MACOS_SIGN_IDENTITY != '' }}
       HAVE_NOTARY: ${{ secrets.MACOS_NOTARY_KEY != '' && secrets.MACOS_NOTARY_KEY_ID != '' && secrets.MACOS_NOTARY_ISSUER_ID != '' }}
 
     steps:
@@ -275,9 +283,18 @@ jobs:
           codesign --force --options runtime --timestamp \
                    --sign "$SIGN_IDENTITY" build-mac/cpmemu
           codesign --verify --strict --verbose=2 build-mac/cpmemu
-          # Kept for the verification step after cpack.  One CDHash per slice,
-          # because this is a universal binary.
-          codesign -dvvv build-mac/cpmemu 2>&1 | grep '^CDHash=' | sort > "$RUNNER_TEMP/cdhash.signed"
+          # Kept for the verification step after cpack, one line per slice.
+          # --arch is required rather than tidy: codesign's display mode
+          # reports the CodeDirectory of one architecture, the runner's own
+          # unless told otherwise, so without this loop the x86_64 half of a
+          # universal binary is never compared - and a rewrite of that half
+          # is precisely what the check below exists to catch.
+          : > "$RUNNER_TEMP/cdhash.signed"
+          for arch in arm64 x86_64; do
+            printf '%s ' "$arch" >> "$RUNNER_TEMP/cdhash.signed"
+            codesign -dvvv --arch "$arch" build-mac/cpmemu 2>&1 |
+              grep '^CDHash=' >> "$RUNNER_TEMP/cdhash.signed"
+          done
           cat "$RUNNER_TEMP/cdhash.signed"
 
       - name: Notarize
@@ -336,7 +353,12 @@ jobs:
           tar xzf "$NAME.tar.gz" -C "$RUNNER_TEMP/verify"
           BIN="$RUNNER_TEMP/verify/$NAME/bin/cpmemu"
           codesign --verify --strict --verbose=2 "$BIN"
-          codesign -dvvv "$BIN" 2>&1 | grep '^CDHash=' | sort > "$RUNNER_TEMP/cdhash.shipped"
+          : > "$RUNNER_TEMP/cdhash.shipped"
+          for arch in arm64 x86_64; do
+            printf '%s ' "$arch" >> "$RUNNER_TEMP/cdhash.shipped"
+            codesign -dvvv --arch "$arch" "$BIN" 2>&1 |
+              grep '^CDHash=' >> "$RUNNER_TEMP/cdhash.shipped"
+          done
           if ! diff -u "$RUNNER_TEMP/cdhash.signed" "$RUNNER_TEMP/cdhash.shipped"; then
             echo "cpack changed the binary after it was signed: the archive is not notarized." >&2
             exit 1

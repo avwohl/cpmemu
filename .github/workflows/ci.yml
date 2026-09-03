@@ -17,9 +17,14 @@
 # a tool can quietly stop working and a skip would absorb it again.
 name: Tests
 
+# Every branch, not a named list.  This used to say [main, drain-todo], which
+# named the topic branch of the change that added the file - so the moment that
+# branch merged and was deleted, nothing but main was tested.  Work here is
+# pushed as branches rather than as pull requests, so the pull_request trigger
+# does not cover it: a branch has to be tested before it lands, not after.
 on:
   push:
-    branches: [main, drain-todo]
+    branches: ['**']
   pull_request:
   workflow_dispatch:
 
@@ -96,13 +101,31 @@ jobs:
 
   # The instruction exercisers take about 18 minutes for the three of them, so
   # they are not in the linux job above.  On demand, from the Actions tab.
+  #
+  # --zex runs the whole default suite AND the three exercisers, so this job
+  # needs the same tools the linux job does.  It did not have them, and did not
+  # pass --require either: it was the one job still running 60 of 102 checks and
+  # reporting success, which is the bug the header of this file claims every job
+  # here is proof against.  It was the survivor because it is the one job a push
+  # never runs.
   exercisers:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+      - name: Install z80asm and the mingw cross-compiler
+        run: |
+          sudo apt-get update || (sleep 30 && sudo apt-get update)
+          sudo apt-get install -y z80asm g++-mingw-w64-x86-64
       - name: Build
         run: make -C src
+      # CPMEMU_ZEX_TIMEOUT so the suite's own overrun message can fire.  Left
+      # at its 3600s default, three hung exercisers can want three hours while
+      # GitHub kills the job at 90 minutes, and the log then ends mid-run with
+      # no verdict - no "overran Ns, N groups, N errors" naming which one hung
+      # and how far it got.  900s is generous against a measured 7 minutes.
       - name: zexdoc, zexall and 8080exm
-        run: tests/run_tests.sh --zex
+        env:
+          CPMEMU_ZEX_TIMEOUT: '900'
+        run: tests/run_tests.sh --zex --require
