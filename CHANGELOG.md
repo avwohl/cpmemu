@@ -37,9 +37,10 @@ growing while the list of open items did not shrink.
   builds `cpmemu.exe` with MSVC and runs `tests\win_console.bat`. The
   exercisers are a `workflow_dispatch` job, about 18 minutes for the three.
 
-- **The Windows console cases ran, for the first time anywhere: 26 passed, 0
+- **The Windows console cases ran, for the first time anywhere: 28 passed, 0
   failed.** `tests/win_console.cc` had been written, shipped and carried through
-  six release cycles without one of its cases reporting a verdict. All five that
+  six release cycles without one of its cases reporting a verdict. Twenty-five
+  of the twenty-eight existed already; three are new here. All five that
   `todo.txt` singled out pass — the four that set the console input code page
   (an `E0` character under 437, two of them in a row, a three-byte UTF-8
   character under 65001, and a surrogate pair) and the one that sends a
@@ -76,10 +77,25 @@ growing while the list of open items did not shrink.
   it.
 
   Measured rather than argued: with the old function put back on a branch of its
-  own, the new case times out on the runner; with the fix, it passes. A file and
-  a character device are now readable whether or not anything is left, an open
-  empty pipe is not, and a `PeekNamedPipe` failure of `ERROR_BROKEN_PIPE` is —
-  which is what POSIX `select()` says of a pipe with no writer.
+  own, the new case times out on the runner — `the emulator had to be killed: it
+  never finished`, with the other 25 still passing — and with the fix it passes.
+
+  A regular file is now readable whether or not anything is left, an open empty
+  pipe is not, and a `PeekNamedPipe` failure of `ERROR_BROKEN_PIPE` is, which is
+  what POSIX `select()` says of a pipe with no writer. A character device is not
+  one answer but two: `NUL` reads 0 at once and is readable, while a serial line
+  with the default `COMMTIMEOUTS` — every field zero, meaning wait forever —
+  would block, and blocking is what BDOS 6's polled form and BIOS CONST promise
+  never to do. `GetCommState` tells them apart and `ClearCommError` answers for
+  the comm port without reading from it, so `cpmemu prog.com < COM1` does not
+  trade one hang for another. A handle `GetFileType` cannot classify at all,
+  which is what a service or a `DETACHED_PROCESS` is handed, is readable too: a
+  read on it fails at once, and that is end of input.
+
+  `tests/win_console.cc` can now give a guest a pipe — the write end is filled
+  and closed before the emulator starts — because the `ERROR_BROKEN_PIPE` branch
+  had no test on any platform. "polled input arrives from a pipe too" and "a
+  polled reader whose pipe is closed is stopped" are the two that reach it.
 
 - **A CP/M `DIR` depended on the host filesystem.** `platform::list_directory()`
   returned `readdir(3)` order on POSIX and `FindFirstFile` order on Windows.
@@ -113,6 +129,21 @@ growing while the list of open items did not shrink.
   prevent, so it is fixed twice: the tools are installed *and* `--require` says
   a missing one is a failure, because an install that quietly stops working
   would otherwise be absorbed by a skip all over again.
+
+  `--require` then had to be taught about three more places it could not see.
+  `CPMEMU_SKIP_OK` allows a named skip through, which is how the macOS job
+  requires everything except the mingw cross-compile — installing a Windows
+  cross-compiler on a Mac to repeat a check the ubuntu job already does buys
+  nothing, and running that job without `--require` at all would have let a
+  broken `brew install` hide 42 checks. Worse, `--require` was blind to the two
+  sub-harnesses: `pty_console.cc` skips its whole run when no pty can be opened,
+  and folding its counts in without registering the skip meant 42 checks — the
+  entire reason the macOS job exists — could vanish under a green tick.
+  Measured by forcing that branch: "60 passed, 0 failed, 5 skipped", exit 0.
+  And `--require` never handed the rule down to `tests\win_console.bat`, so the
+  whole `CPMEMU_REQUIRE_MSVC` chain was reachable only from `ci.yml`; from
+  `run_tests.sh` on a Windows box with no Visual Studio it skipped and exited 0
+  having run none of the console cases.
 
 - **macOS notarization is written and waits on a certificate.** `release.yml`
   imports a Developer ID certificate, signs with `--options runtime
