@@ -162,8 +162,8 @@ growing while the list of open items did not shrink.
   membership, so the membership has been there all along. What is genuinely
   missing is a **Developer ID Application** certificate, which is a different
   certificate from the Apple Distribution one that signs store and TestFlight
-  builds — the store signs and notarizes its own copy, and none of that carries
-  over to a tarball distributed outside it. The same membership covers it at no
+  builds — the store signs its own copy and runs equivalent checks of its own,
+  and none of that carries over to a tarball distributed outside it. The same membership covers it at no
   extra cost; it has to be created in the account, exported with its private
   key, and then the signing path has to be run for the first time.
   `MANUAL_CHECKS.md` carries it, because it needs a person on a Mac signed in

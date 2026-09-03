@@ -87,13 +87,20 @@ that the steps then test, and not a `secrets` expression in each step.
 	  Admin and App Manager. If the enrolment is an individual one this is
 	  moot — an individual is their own Account Holder. On an organization
 	  account it may be someone else. (There is an Admin-accessible
-	  "cloud-managed" Developer ID certificate, but Xcode holds its key and
-	  there is no `.p12` to export, so it is no use to CI.)
-	- **Five per team, and no self-service way past that.** Developer ID is
-	  exempt from the one-certificate-per-team rule that binds the others,
-	  with a budget of five Application and five Installer certificates. An
-	  account that has shipped for a while may have spent them; past the
-	  limit only Developer Programs Support can help.
+	  "cloud-managed" Developer ID certificate, but its key is held remotely
+	  by Apple and signing happens through Xcode's Organizer workflow, so
+	  there is no `.p12` to export and it is no use to CI. Apple documents
+	  no export step for one; it does not say outright that there is none.)
+	- **Five per team as of this writing, and no self-service way past
+	  that.** Developer ID is exempt from the one-certificate-per-team rule
+	  that binds the others, with a budget of five Application and five
+	  Installer certificates. An account that has shipped for a while may
+	  have spent them; past the limit only Developer Programs Support can
+	  help. Apple has moved this number before — it used to be two — so
+	  check the current text rather than trusting this line. Nor can these
+	  be revoked from the account page to make room: Apple's own reference
+	  says to email `product-security@apple.com`, and warns that revoking
+	  one stops users installing what it signed.
 	- **Nothing here costs money.** The $99 membership that makes App Store
 	  and TestFlight possible is the same one that covers this, and Apple
 	  lists distributing outside the Mac App Store with a Developer ID
