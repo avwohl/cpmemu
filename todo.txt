@@ -15,7 +15,10 @@ Where the other things are:
   github issues     avwohl/cpmemu, for anything waiting on someone else
 
 The three items that were here until 2026-09-03 are in CHANGELOG.md under
-v4.8.0.  Two were done: the Windows console cases run in CI now and pass, and
-the macOS notarization step is written and gated on a certificate that has to be
-bought before it can run.  The third - a person pressing keys in four terminal
-programs - was never a todo.txt item, and is in MANUAL_CHECKS.md.
+v4.8.0.  One was done: the Windows console cases run in CI now and pass.  The
+macOS notarization step is written and gated, and has never executed - it wants
+a Developer ID Application certificate, which is created rather than bought, on
+a Mac signed in to the Apple account; that is a person-at-a-keyboard job and so
+it is in MANUAL_CHECKS.md, with docs/macos-signing.md for the detail.  The
+third - a person pressing keys in four terminal programs - was never a todo.txt
+item and is in MANUAL_CHECKS.md too.

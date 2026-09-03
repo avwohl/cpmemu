@@ -7,9 +7,16 @@ attribute by hand. This file is what it would take to stop doing that.
 **None of this has run.** The steps are in `.github/workflows/release.yml`, in
 the `build-macos` job, and each is gated on `env.HAVE_SIGNING` or
 `env.HAVE_NOTARY`, both of which are false because the secrets are not set.
-Adding the five secrets below is the whole of the remaining work; nothing else
-in the workflow has to change. Until then the job builds and packages exactly
-as it did, and the workflow is green with the signing steps skipped.
+Until then the job builds and packages exactly as it did, and the workflow is
+green with the signing steps skipped.
+
+Nothing else in the workflow has to change. What is left is a setup task and a
+first real run: create the Developer ID Application certificate, export it,
+mint the notary key, set the five secrets, and then cut a release and read the
+log — because none of the signing path has ever executed, and a keychain
+import, `security set-key-partition-list`, the per-architecture `CDHash`
+comparison after `cpack` and `notarytool --wait` are four things that have
+never been observed working here.
 
 ## What it is worth, and what it is not
 
@@ -49,11 +56,48 @@ that the steps then test, and not a `secrets` expression in each step.
 
 `MACOS_CERTIFICATE_P12`
 	The Developer ID Application certificate and its private key, as a
-	base64 `.p12`. Export it from Keychain Access (right-click the
-	certificate → Export), then `base64 -i cert.p12 | pbcopy`. Getting the
-	certificate in the first place needs a paid Apple Developer Program
-	membership; that is the part of this that costs money and cannot be
-	done from here.
+	base64 `.p12`.
+
+	**It has to be created before it can be exported, and it is not the
+	certificate the App Store already uses.** A store or TestFlight build
+	is signed with an App Store distribution certificate; the store signs
+	its own copy and runs its own equivalent checks, and none of that
+	reaches a tarball shipped from GitHub. Apple is explicit that using the
+	wrong one fails late rather than early: "You can only notarize apps
+	that you sign with a Developer ID certificate. If you use any other
+	certificate — like a Mac App Distribution certificate, or a self-signed
+	certificate — notarization fails." The ad-hoc signature this project
+	ships today is on the same list.
+
+	So: developer.apple.com → Certificates, Identifiers & Profiles →
+	Certificates → + → Developer ID Application, or Xcode → Settings →
+	Accounts → Manage Certificates → + → Developer ID Application. Then
+	Keychain Access → My Certificates → right-click → Export as `.p12`
+	with a password, and `base64 -i cert.p12 | pbcopy`. Export it on the
+	machine that generated the request: a certificate downloaded onto a
+	different Mac has no private key attached and cannot be exported as a
+	usable `.p12`.
+
+	Three things worth knowing before starting, each of which is otherwise
+	discovered at the worst moment:
+
+	- **Only the Account Holder can create one.** Not Admin. Apple's role
+	  table checks "Create Developer ID certificates" for Account Holder
+	  alone, while ordinary distribution certificates are also open to
+	  Admin and App Manager. If the enrolment is an individual one this is
+	  moot — an individual is their own Account Holder. On an organization
+	  account it may be someone else. (There is an Admin-accessible
+	  "cloud-managed" Developer ID certificate, but Xcode holds its key and
+	  there is no `.p12` to export, so it is no use to CI.)
+	- **Five per team, and no self-service way past that.** Developer ID is
+	  exempt from the one-certificate-per-team rule that binds the others,
+	  with a budget of five Application and five Installer certificates. An
+	  account that has shipped for a while may have spent them; past the
+	  limit only Developer Programs Support can help.
+	- **Nothing here costs money.** The $99 membership that makes App Store
+	  and TestFlight possible is the same one that covers this, and Apple
+	  lists distributing outside the Mac App Store with a Developer ID
+	  certificate as a benefit of it.
 
 `MACOS_CERTIFICATE_PASSWORD`
 	The password set when exporting the `.p12`.
@@ -70,6 +114,15 @@ that the steps then test, and not a `secrets` expression in each step.
 	Connect → Users and Access → Integrations → App Store Connect API, with
 	the Developer role. The `.p8` downloads once and cannot be downloaded
 	again. `base64 -i AuthKey_XXXXXXXXXX.p8 | pbcopy`.
+
+	**It must be a Team key.** Apple: "Individual keys aren't able to use
+	Provisioning endpoints, access Sales and Finance, or notaryTool." So a
+	key made under the Individual API Key section of a user profile is
+	rejected by the very tool it is here for. Generate it from the Team
+	Keys tab instead. The word collides confusingly with enrolment type:
+	somebody *enrolled as an individual* is their own team's Admin and can
+	make Team keys perfectly well — it is the key's type that matters, not
+	the membership's.
 
 `MACOS_NOTARY_KEY_ID`
 	The key ID beside it, the `XXXXXXXXXX` in the filename.
@@ -90,8 +143,8 @@ job log shows `"status":"Accepted"`.
 The `.pkg` route, if the offline and double-click cases ever matter, needs one
 more secret: installer packages are signed with a Developer ID **Installer**
 certificate, which is a different `.p12` from the Developer ID **Application**
-one above. Both come with the same membership, so it is another export, not
-another purchase.
+one above. Same membership, same Account Holder restriction, and its own budget
+of five — so it is another certificate to create, not another thing to buy.
 
 ## After the first signed release
 

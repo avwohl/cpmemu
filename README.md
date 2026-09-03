@@ -141,8 +141,15 @@ empty answer means it is gone. Downloading with `curl`, as above, avoids the
 whole thing: `curl` sets no quarantine attribute, and the line costs nothing
 when there is nothing to remove.
 
-Notarizing properly needs a Developer ID certificate, which needs a paid Apple
-Developer Program membership that this project does not have. The `notarytool`
+Notarizing properly needs a Developer ID Application certificate. That is not
+the certificate an App Store or TestFlight build is signed with — those are App
+Store distribution certificates, and the store signs its own copy and runs
+equivalent checks of its own, none of which leaves Apple — so a project
+distributing a tarball outside the store needs its own, which the same paid
+membership already covers at no extra cost. Apple names this exact case:
+"When code signing items like Mach-O files, disk images, bundles, apps, command
+line tools […] sign with a Developer ID Application certificate." The
+`notarytool`
 half is written and sits in `.github/workflows/release.yml` behind a check for
 the certificate, so it skips; [`docs/macos-signing.md`](docs/macos-signing.md)
 lists the five secrets that would turn it on, and is honest about the limit -

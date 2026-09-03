@@ -233,7 +233,7 @@ jobs:
       # HAS EVER RUN: this repository has no Developer ID certificate, so the
       # secrets are absent, every step below is skipped, and the archive is the
       # ad-hoc-signed one it has always been.  It is written down so that
-      # acquiring a certificate is the whole of the remaining work rather than
+      # creating a certificate is the whole of the remaining work rather than
       # the smaller half of it.  docs/macos-signing.md says which secrets to
       # create and how to produce each value.
       #

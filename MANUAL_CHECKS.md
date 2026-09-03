@@ -85,7 +85,57 @@ on Windows Terminal and no `SetConsoleMode` call changes it — that one is in
 
 Note that this pass and running `tests\win_console.bat` without `--manual` are
 two different things. The automated cases now run on every push: the `windows`
-job in `.github/workflows/ci.yml` builds `cpmemu.exe` with MSVC and runs all 25
+job in `.github/workflows/ci.yml` builds `cpmemu.exe` with MSVC and runs all 28
 of them on a `windows-latest` runner, and they pass. What that job cannot do is
 press a key on a keyboard, which is what the pass above is for and why it is
 still open.
+
+---
+
+## Turn on macOS signing and notarization
+
+**Why this cannot be automated.** It needs a person on a Mac signed in to the
+Apple Developer account, and one of the steps is restricted to a role that only
+a person holds. Everything that *can* be automated already is: the signing and
+notarizing steps are written in `.github/workflows/release.yml` and gated on
+secrets that do not exist yet, so they skip and the job is green.
+
+This is not a purchase. The project ships an app through the App Store and uses
+TestFlight, neither of which is possible without a paid Apple Developer Program
+membership — so the membership has been there all along. What is missing is a
+**Developer ID Application** certificate, which is a different certificate from
+the App Store ones and is covered by that same membership at no extra cost.
+
+[`docs/macos-signing.md`](docs/macos-signing.md) has the detail and the traps.
+The short form:
+
+1. As the **Account Holder** (Admin is not enough for this one), create a
+   Developer ID Application certificate — developer.apple.com → Certificates,
+   Identifiers & Profiles → Certificates → + . Five per team is the budget.
+2. Export it from Keychain Access as a `.p12`, on the machine that made the
+   request, or it will have no private key.
+3. Mint an App Store Connect API key — a **Team** key, not an Individual one;
+   Apple does not let Individual keys use `notarytool` at all.
+4. Set the five repository secrets `docs/macos-signing.md` lists.
+5. Cut a release and read the log. None of the signing path has ever run, so
+   this step is a test, not a formality: the keychain import,
+   `security set-key-partition-list`, the per-architecture `CDHash` check after
+   `cpack`, and `notarytool --wait` have never been observed working here.
+   Expect `"status":"Accepted"`.
+
+What right looks like afterwards, from a Mac that did not build it:
+
+```bash
+curl -LO https://github.com/avwohl/cpmemu/releases/latest/download/cpmemu-macos-universal.tar.gz
+tar xzf cpmemu-macos-universal.tar.gz
+spctl --assess --type execute --verbose=4 cpmemu-*-Darwin-arm64-x86_64/bin/cpmemu
+```
+
+`accepted` and `source=Notarized Developer ID`. If it says `rejected`, the
+ticket is not being found and the `xattr` line in `README.md` has to stay.
+
+Note what this does **not** buy, so the README is not over-corrected
+afterwards: a notarization ticket cannot be stapled to a bare Mach-O
+executable, so a browser download on a machine that is offline still needs the
+`xattr` line. Only shipping a `.pkg` or `.dmg` would fix that, and that changes
+what the download is.

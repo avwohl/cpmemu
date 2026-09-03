@@ -149,13 +149,31 @@ growing while the list of open items did not shrink.
   `run_tests.sh` on a Windows box with no Visual Studio it skipped and exited 0
   having run none of the console cases.
 
-- **macOS notarization is written and waits on a certificate.** `release.yml`
+- **macOS notarization is written, gated, and has never run.** `release.yml`
   imports a Developer ID certificate, signs with `--options runtime
   --timestamp`, and submits to `notarytool --wait`, all behind two job-level
   gates that are false today because the secrets do not exist — so the job runs
   exactly as before. `docs/macos-signing.md` lists the five secrets and how to
-  produce each. What remains is buying the membership, which is not an
-  engineering task.
+  produce each.
+
+  What remains is not a purchase. This entry first said it was, which was
+  wrong: the project ships an app through the App Store and uses TestFlight,
+  neither of which is possible without a paid Apple Developer Program
+  membership, so the membership has been there all along. What is genuinely
+  missing is a **Developer ID Application** certificate, which is a different
+  certificate from the Apple Distribution one that signs store and TestFlight
+  builds — the store signs and notarizes its own copy, and none of that carries
+  over to a tarball distributed outside it. The same membership covers it at no
+  extra cost; it has to be created in the account, exported with its private
+  key, and then the signing path has to be run for the first time.
+  `MANUAL_CHECKS.md` carries it, because it needs a person on a Mac signed in
+  to that account — and one step needs a role only a person holds. Three traps
+  are written down there and in `docs/macos-signing.md` rather than left to be
+  hit: only the **Account Holder** can create a Developer ID certificate, which
+  Admin cannot and which Apple's own overview page misstates; there is a budget
+  of five per team with no self-service way past it; and the App Store Connect
+  API key must be a **Team** key, because Apple does not permit Individual keys
+  to use `notarytool` at all.
 
   A step after packaging checks the archived binary's `CDHash` against the
   signed one, because `cpack` re-runs the CMake install rule rather than copying
@@ -904,7 +922,10 @@ earlier on 2026-03-29. This is the first release to carry a macOS archive; the
   routes: why `STATIC=1` is refused and what to use instead, what `make shared`
   produces and why it is not a `.so`, and the universal-binary cpack
   invocation. Notarizing properly needs a Developer ID certificate and
-  `notarytool`; that is open in `todo.txt`.
+  `notarytool`; that is open in `todo.txt`. (It is not, as of v4.8.0:
+  `notarytool` is written and gated, the certificate step is in
+  `MANUAL_CHECKS.md`, and `todo.txt` is empty. Left as written otherwise —
+  this is what the release said at the time.)
 - **`todo.txt` is open items only again, and the checks that need a person are
   a file of their own.** It had grown into an account of work already finished
   — three of its six entries opened or closed with a paragraph explaining what
