@@ -479,7 +479,7 @@ What is left is coverage of everything they do not reach:
    de-gate it entirely.
 3. `.github/workflows/ci.yml` now runs this suite on `ubuntu-latest` and
    `macos-latest` and `tests\win_console.bat` on `windows-latest`, on every
-   push. The Windows console cases ran there for the first time and report 25
+   push. The Windows console cases ran there for the first time and report 28
    passed, 0 failed, which includes the four code-page cases and the
    `CTRL_BREAK_EVENT` one. Pass `--require` (CI does) to make a skip for want
    of a tool a failure: without it the first CI run reported 60 passed and a

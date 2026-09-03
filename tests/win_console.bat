@@ -8,9 +8,11 @@ REM
 REM Finding the compiler used to be one absolute path - "...\Visual Studio\18\
 REM Community" - and a SKIP when it was not there.  That is why these tests had
 REM never run anywhere: the only machine that could finally run them is a
-REM GitHub Actions windows runner, whose install is "...\Visual Studio\2022\
-REM Enterprise", so the runner took the SKIP, and a SKIP exits 0, so CI went
-REM green having executed nothing.  vswhere.exe ships with every Visual Studio
+REM GitHub Actions windows runner, and that image carries Enterprise in the
+REM same 18 directory - "...\Visual Studio\18\Enterprise" - so the runner
+REM would have taken the SKIP too, and a SKIP exits 0, so CI would have gone
+REM green having executed nothing.  A different edition, not a different
+REM version, which is why the answer is vswhere and not a bumped number.  vswhere.exe ships with every Visual Studio
 REM installer since 2017 and reports what is actually installed; the hardcoded
 REM path stays as the last resort for a machine whose installer is gone.
 REM

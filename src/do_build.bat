@@ -4,8 +4,8 @@ setlocal enabledelayedexpansion
 REM Ask the installer where Visual Studio is rather than naming one path.
 REM This used to hardcode "...\Visual Studio\18\Community" - the same path
 REM z80cpmw uses - and fail outright anywhere else, which is every CI runner
-REM (a GitHub Actions windows image installs 2022 Enterprise) and every machine
-REM with a different edition.  vswhere.exe ships with every Visual Studio
+REM (a GitHub Actions windows image installs Enterprise in that same 18
+REM directory) and every machine with a different edition.  vswhere.exe ships with every Visual Studio
 REM installer since 2017; the old path stays as the last resort.
 set "VSDIR="
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"

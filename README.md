@@ -192,10 +192,12 @@ cd cpmemu\src
 do_build.bat
 ```
 
-`do_build.bat` looks for `vcvarsall.bat` under `C:\Program Files\Microsoft
-Visual Studio\18\Community` and stops if it is not there. For another edition
-or version, change `VSDIR` at the top of the script, or take the CMake or MinGW
-route in [docs/BUILDING.md](docs/BUILDING.md).
+`do_build.bat` asks `vswhere.exe` where Visual Studio is, which finds whatever
+edition and version is installed; it falls back to `C:\Program Files\Microsoft
+Visual Studio\18\Community` only if the installer is gone, and stops if that is
+not there either. To force a particular one, set `VSDIR` at the top of the
+script, or take the CMake or MinGW route in
+[docs/BUILDING.md](docs/BUILDING.md).
 
 `make install` installs a second program, `cpm_disk`, for creating and editing
 CP/M disk images; it is not in the `.deb` or the `.rpm`. See

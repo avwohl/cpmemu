@@ -56,9 +56,12 @@ growing while the list of open items did not shrink.
   The reason they had never run is worth recording, because it is not "nobody
   had a Windows machine". `tests\win_console.bat` named one absolute path —
   `...\Visual Studio\18\Community` — and printed `SKIP` when it was not there.
-  The only machine that could ever run these is a CI runner, whose install is
-  `...\Visual Studio\2022\Enterprise`. The one machine that could do the job
-  was the one guaranteed to decline it, and a skip exits 0. Both that file and
+  The only machine that could ever run these is a CI runner, and the
+  `windows-latest` image is `windows-2025-vs2026`, which carries Visual Studio
+  Enterprise 2026 at `...\Visual Studio\18\Enterprise` and no other. The same
+  version directory, a different edition — which is why the fix is `vswhere.exe`
+  and not a bumped version number in the path. The one machine that could do the
+  job was the one guaranteed to decline it, and a skip exits 0. Both that file and
   `src/do_build.bat` now ask `vswhere.exe`, which ships with every Visual Studio
   installer since 2017.
 
