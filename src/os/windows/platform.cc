@@ -40,7 +40,18 @@ void disable_raw_mode() {
         // bit of the saved mode is ignored, so the user would be left with quick
         // edit off after we exit
         SetConsoleMode(hStdin, original_console_mode | ENABLE_EXTENDED_FLAGS);
-        console_mode_saved = false;
+        // console_mode_saved is deliberately NOT cleared here.  It means "there
+        // is a console mode to put back", which stays true, and clearing it
+        // would mean "we already put it back, so there is nothing left to do" -
+        // a different claim, and a false one if the restore is ever raced.
+        // This matters more here than the same line did on POSIX, because this
+        // function has two callers that can run at once: atexit(), on the main
+        // thread, and console_ctrl_handler(), which the OS runs on a thread it
+        // makes for the purpose.  os/linux/platform.cc:unapply_raw_mode()
+        // records what the equivalent cost there - one failure in 120 runs of
+        // the seven kill cases, widening to all seven every time with the
+        // window opened to 50ms on purpose.  Restoring a console that is
+        // already restored writes back the mode it is already in.
     }
 }
 
@@ -93,7 +104,16 @@ void enable_raw_mode() {
     }
 
     if (!console_mode_saved) {
-        GetConsoleMode(hStdin, &original_console_mode);
+        // Only claim to have a console mode to restore if we actually read
+        // one.  Going ahead regardless leaves original_console_mode at 0, and
+        // disable_raw_mode() would then write 0 | ENABLE_EXTENDED_FLAGS to the
+        // console on the way out: no line input, no echo, no processed input,
+        // and a shell the user has to reset by hand.  The POSIX side guards
+        // its tcgetattr for the same reason and says so - pushing back a
+        // zeroed struct is worse than not restoring at all.
+        if (!GetConsoleMode(hStdin, &original_console_mode)) {
+            return;
+        }
         console_mode_saved = true;
         atexit(disable_raw_mode);
         // Nothing to preserve the way the POSIX loop preserves SIG_IGN: a
