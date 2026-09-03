@@ -15,7 +15,7 @@
 # Guest output uses CP/M line endings, so the expectations below are written
 # with explicit \r\n.
 #
-# Usage: tests/run_tests.sh [--zex] [--help]
+# Usage: tests/run_tests.sh [--zex] [--require] [--help]
 #   --zex   also run zexdoc, zexall and 8080exm.  zexdoc and zexall take about
 #           7 minutes each on the machine this was measured on - 13m46s for the
 #           pair, 67 groups each - and 8080exm adds 25 more groups under --8080
@@ -24,6 +24,17 @@
 #           headroom for slower hardware; override it with CPMEMU_ZEX_TIMEOUT
 #           (seconds).  The preliminary 8080 test is not among them: it runs in
 #           under a tenth of a second and is in the default suite.
+#   --require
+#           a skip for want of a tool is a failure.  Same as
+#           CPMEMU_REQUIRE_ALL=1.  A skip exits 0, so on a machine missing an
+#           assembler this suite reports "60 passed, 0 failed, 46 skipped" and
+#           a green tick - which is what the first CI job to run it did, having
+#           executed three fifths of it.  Under this flag the three skips a
+#           machine can fix by installing something - no assembler, no mingw,
+#           a .com that has gone missing - fail instead.  The two platform
+#           skips do not: the pty harness cannot run on Windows and the console
+#           harness cannot run anywhere else, and no install changes that.  Nor
+#           do the exercisers, which are opt-in above by design.
 
 set -u
 
@@ -32,12 +43,14 @@ root=$(dirname -- "$here")
 emu=$root/src/cpmemu
 run_zex=0
 zex_timeout=${CPMEMU_ZEX_TIMEOUT:-3600}
+require_all=${CPMEMU_REQUIRE_ALL:-0}
 
 for arg in "$@"; do
     case $arg in
         --zex)  run_zex=1 ;;
+        --require) require_all=1 ;;
         --help|-h)
-            sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '2,38p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *)
             echo "unknown option: $arg (try --help)" >&2
@@ -48,6 +61,18 @@ done
 passed=0
 failed=0
 skipped=0
+
+# Every skip that means "this machine is missing a tool" registers itself here,
+# so --require can turn the lot into one failure at the end.  Registering is
+# separate from printing because the count behind a gate is not always one: 42
+# checks sit behind the assembler.
+soft_skips=0
+soft_skip_list=
+soft_skip() {
+    soft_skips=$((soft_skips + 1))
+    soft_skip_list="$soft_skip_list
+        $1"
+}
 
 tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
@@ -104,6 +129,7 @@ check() {
     if [ ! -f "$root/$prog" ]; then
         printf 'SKIP  %s\n        missing: %s\n' "$name" "$prog"
         skipped=$((skipped + 1))
+        soft_skip "$name (missing: $prog)"
         return
     fi
 
@@ -145,6 +171,7 @@ check_zex() {
     if [ ! -f "$root/$prog" ]; then
         printf 'SKIP  %s\n        missing: %s\n' "$name" "$prog"
         skipped=$((skipped + 1))
+        soft_skip "$name (missing: $prog)"
         return
     fi
 
@@ -276,6 +303,7 @@ if [ -z "$assembler" ]; then
     echo "SKIP  drive mapping tests (no assembler: install pasmo or z80asm)"
     # 42 checks live behind this gate, not the 6 an earlier version counted
     skipped=$((skipped + 42))
+    soft_skip "drive mapping tests: 42 checks, no assembler (pasmo or z80asm)"
 else
     echo
     asm_ok=1
@@ -719,6 +747,7 @@ echo
 if ! command -v x86_64-w64-mingw32-g++ >/dev/null 2>&1; then
     echo "SKIP  windows cross-compile (x86_64-w64-mingw32-g++ not on PATH)"
     skipped=$((skipped + 1))
+    soft_skip "windows cross-compile: x86_64-w64-mingw32-g++ not on PATH"
 else
     wintmp=$tmp/win
     rm -rf "$wintmp"
@@ -802,6 +831,16 @@ else
     echo
     echo "SKIP  zexdoc, zexall and 8080exm (pass --zex to run them)"
     skipped=$((skipped + 3))
+fi
+
+# A skip exits 0, so a machine with no assembler runs three fifths of this
+# suite and reports a green tick.  Under --require that is a failure, named,
+# with what to install.
+if [ "$require_all" = 1 ] && [ $soft_skips -gt 0 ]; then
+    echo
+    printf 'FAIL  %d skip(s) are failures because --require is set:%s\n' \
+           "$soft_skips" "$soft_skip_list"
+    failed=$((failed + 1))
 fi
 
 echo

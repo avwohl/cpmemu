@@ -1,18 +1,20 @@
 # Tests.  The other workflow in here, release.yml, builds and packages; it runs
-# no test suite at all, so until this file existed nothing in the tree was
+# no test suite at all, so until this file existed nothing in the tree had been
 # checked by a machine other than the one the change was written on.
 #
 # The point of the windows job is narrower than "run the tests on Windows".
-# tests/win_console.cc has five cases that drive a real console with
-# WriteConsoleInput, and src/os/windows/platform.cc is the code they cover.
-# Neither had ever been executed anywhere: the Windows console path was
-# rewritten, cross-compiled, and shipped without one of its tests reporting a
-# single verdict.  This job is the first machine to run them.
+# tests/win_console.cc drives a real console with WriteConsoleInput, and
+# src/os/windows/platform.cc is the code it covers.  Neither had ever been
+# executed anywhere: the Windows console path was rewritten, cross-compiled and
+# shipped without one of its cases reporting a single verdict.  This job is the
+# first machine to run them.
 #
-# Every job here sets whatever "do not skip" switch its suite has.  A skip that
-# exits 0 is the failure mode this file exists to prevent - it is how the
-# Windows cases stayed unexecuted through six release cycles while the tree
-# looked tested.
+# Every job passes its suite's "do not skip" switch.  A skip exits 0, so a
+# runner missing a tool reports a green tick having run part of the suite - the
+# first version of this file did exactly that, running 60 of 102 checks on
+# ubuntu because z80asm was not installed, and reporting success.  The tools are
+# installed below AND the suites are told to fail on a skip, because installing
+# a tool can quietly stop working and a skip would absorb it again.
 name: Tests
 
 on:
@@ -27,37 +29,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # tests/run_tests.sh cross-compiles src/os/windows/platform.cc with
-      # mingw and fails on any warning.  Without the compiler that check prints
-      # SKIP, so it is installed rather than left to chance.
-      - name: Install the mingw cross-compiler
+      # z80asm assembles 13 guests at test time; without it 42 checks - about
+      # two fifths of the suite - skip.  g++-mingw-w64 is for the cross-compile
+      # of src/os/windows/platform.cc, which fails on any warning.
+      - name: Install z80asm and the mingw cross-compiler
         run: |
           sudo apt-get update || (sleep 30 && sudo apt-get update)
-          sudo apt-get install -y g++-mingw-w64-x86-64
+          sudo apt-get install -y z80asm g++-mingw-w64-x86-64
 
       - name: Build
         run: make -C src
 
-      # One run, checked twice: the exit status, and then the transcript for a
-      # skip that should not be there.  A skipped cross-compile would mean the
-      # mingw install above quietly did not take, and the suite exits 0 either
-      # way, so the exit status alone cannot see it.
       - name: Run the test suite
-        run: |
-          set -o pipefail
-          tests/run_tests.sh 2>&1 | tee out.log
-      - name: Check the windows cross-compile actually ran
-        run: |
-          grep -q 'PASS  windows cross-compile' out.log || {
-            echo "the windows cross-compile did not run:"
-            grep -i 'cross-compile' out.log
-            exit 1
-          }
+        run: tests/run_tests.sh --require
 
   macos:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+
+      # The same assembler as the linux job: z80asm 1.8 in both Homebrew and
+      # Debian, so the 13 guests are assembled by the same program on both.
+      - name: Install z80asm
+        run: brew install z80asm
 
       # No STATIC=1: the macOS SDK ships no crt0.o and src/makefile refuses the
       # flag outright.  release.yml's build-macos job says the same at length.
@@ -67,7 +61,8 @@ jobs:
       # This suite allocates a pty and drives cpmemu through it, which is the
       # only way to reach the termios layer in src/os/linux/platform.cc - the
       # file both POSIX platforms share.  It had been run on macOS by hand and
-      # by no machine.
+      # by no machine.  The windows cross-compile is not required here: mingw is
+      # a linux-job concern and installing it on macOS buys nothing.
       - name: Run the test suite
         run: tests/run_tests.sh
 
@@ -83,8 +78,8 @@ jobs:
       # CPMEMU_REQUIRE_MSVC=1 turns win_console.bat's "no compiler" skip and
       # win_console.exe's "no emulator" and "no console to drive" skips into
       # failures.  All three exit 0 otherwise, and on this runner the first of
-      # them used to fire: the batch file named one Visual Studio path and the
-      # runner has another.
+      # them used to fire: the batch file named one Visual Studio path and this
+      # image has another.
       - name: Run the Windows console tests
         shell: cmd
         env:
