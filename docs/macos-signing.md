@@ -5,11 +5,11 @@ is refused by Gatekeeper and `README.md` tells the user to strip the quarantine
 attribute by hand. This file is what it would take to stop doing that.
 
 **None of this has run.** The steps are in `.github/workflows/release.yml`, in
-the `build-macos` job, and every one of them is `if: env.HAVE_SIGNING ==
-'true'`, which is false because `MACOS_CERTIFICATE_P12` is not set. Adding the
-five secrets below is the whole of the remaining work; nothing else in the
-workflow has to change. Until then the job builds and packages exactly as it
-did, and the workflow is green with the signing steps skipped.
+the `build-macos` job, and each is gated on `env.HAVE_SIGNING` or
+`env.HAVE_NOTARY`, both of which are false because the secrets are not set.
+Adding the five secrets below is the whole of the remaining work; nothing else
+in the workflow has to change. Until then the job builds and packages exactly
+as it did, and the workflow is green with the signing steps skipped.
 
 ## What it is worth, and what it is not
 
@@ -20,11 +20,10 @@ but cannot be attached to one. This release is one bare binary inside a
 `.tar.gz`, so the best available outcome is *notarized and unstapled*, and
 Gatekeeper looks the ticket up over the network:
 
-| the user | today | signed and notarized, unstapled |
-|---|---|---|
-| downloads with `curl`, runs it | works; `curl` sets no quarantine attribute | works |
-| downloads in a browser, is online | refused, silently — the process sits in state `SN` | works |
-| downloads in a browser, is offline | refused, silently | still refused |
+	the user	today	signed, notarized, unstapled
+	downloads with curl, runs it	works; curl sets no quarantine attribute	works
+	browser download, online	refused silently: sits in state SN	works
+	browser download, offline	refused silently	still refused
 
 So notarizing removes the `xattr` step for everyone except a user who is both
 downloading through a browser and offline. Covering that last case too means
@@ -34,8 +33,19 @@ download is, not a change to make quietly inside a release job.
 
 ## The secrets
 
-Create these five under Settings → Secrets and variables → Actions. The first
-one is the switch: with `MACOS_CERTIFICATE_P12` unset, none of the steps run.
+Create these five under Settings → Secrets and variables → Actions. There are
+two independent gates: the certificate pair turns on signing, and the three
+notary values turn on notarization. A certificate with no notary credentials
+signs and does not notarize, rather than failing, so they can be added in two
+sittings.
+
+`secrets` cannot be read from a step's `if:` — the contexts available there are
+`github`, `needs`, `strategy`, `matrix`, `job`, `runner`, `env`, `vars`,
+`steps` and `inputs`, and a job-level `if:` gets fewer still. A job-level
+`env:` *can* read secrets. That is why the gate is a job-level `env:` block
+that the steps then test, and not a `secrets` expression in each step.
+
+### Signing
 
 `MACOS_CERTIFICATE_P12`
 	The Developer ID Application certificate and its private key, as a
@@ -53,6 +63,8 @@ one is the switch: with `MACOS_CERTIFICATE_P12` unset, none of the steps run.
 	`Developer ID Application: Some Name (TEAMID1234)`. `security
 	find-identity -v -p codesigning` lists what a keychain holds.
 
+### Notarizing
+
 `MACOS_NOTARY_KEY`
 	An App Store Connect API key, as a base64 `.p8`. Create it at App Store
 	Connect → Users and Access → Integrations → App Store Connect API, with
@@ -68,6 +80,18 @@ one is the switch: with `MACOS_CERTIFICATE_P12` unset, none of the steps run.
 An Apple ID with an app-specific password works with `notarytool` too, in place
 of the last three. The API key is used here because it does not expire when the
 account's password changes and does not carry a person's Apple ID into CI.
+
+Bring them up in three passes, so a failure says which half is wrong: run the
+workflow with no secrets and check all four gated steps report *skipped* and
+the tarball is the shape it is today; add the certificate pair alone and check
+signing passes while notarizing skips; then add the notary three and check the
+job log shows `"status":"Accepted"`.
+
+The `.pkg` route, if the offline and double-click cases ever matter, needs one
+more secret: installer packages are signed with a Developer ID **Installer**
+certificate, which is a different `.p12` from the Developer ID **Application**
+one above. Both come with the same membership, so it is another export, not
+another purchase.
 
 ## After the first signed release
 

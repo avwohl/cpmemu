@@ -504,6 +504,27 @@ static const Case cases[] = {
     { "the blocking read still takes its bytes from a file", PROG(con1hex_com),
       "", "", "41 42 2E ", "", false, 15000, "AB." },
 
+    // The other half of reaching the read, and the half this file had no case
+    // for while the bug was in the tree.  This guest runs out of input rather
+    // than being told to stop: the text has no '.', so nothing in the guest
+    // ends the run and the give-up in cpmemu.cc has to.
+    //
+    // That give-up was unreachable on Windows.  stdin_has_data() answered "a
+    // byte will come back" rather than "a read will not block", so at the end
+    // of a file it said no, the read was never attempted, note_console_eof()
+    // never counted, and the guest polled until it was killed.  The POSIX side
+    // had fixed exactly this and says so at length in os/linux/platform.cc;
+    // the Windows side still had it in all three redirected shapes - a file at
+    // EOF, a pipe whose writer has gone, and NUL - and none of the 25 cases
+    // here could see it, because every one of them stops on a '.' before the
+    // input runs out.  tests/pty_console.cc has the twin, named the same.
+    //
+    // Only the polled path.  console_getchar() reads the file directly without
+    // asking stdin_has_data(), so the blocking cases above were never affected
+    // - which is why "an empty file is end of input" passed throughout.
+    { "a polled reader that runs out of input is stopped", PROG(con6hex_com),
+      "", "", "41 42 ", "reads past end of input", false, 20000, "AB" },
+
     { "an empty file is end of input: CR once, then ^Z", PROG(coneof_com),
       "", "", "0D 1A ", "", false, 15000, "" },
 

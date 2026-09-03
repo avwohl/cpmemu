@@ -386,21 +386,41 @@ bool stdin_has_data() {
         // a file rather than a pipe, every status call therefore said no, so a
         // guest polling BDOS 6 sat there forever with its input sitting on disk
         // unread - while the same bytes through a pipe worked.  Ask what the
-        // handle is first, and answer a file from its own position.
+        // handle is first.
+        //
+        // "Readable" means "a read will not block", not "a byte will come
+        // back", and the difference is the whole of the end-of-input path.
+        // os/linux/platform.cc:stdin_has_data() says the same at length and
+        // for the same reason: the caller reads, gets 0, and counts it, and
+        // the 1024-read give-up in cpmemu.cc ends a run the guest cannot end
+        // itself, because BDOS 6 spells "no character" and "end of input" both
+        // as 0.  Answering false at the end of input makes the read
+        // unreachable, so note_console_eof() never counts and the give-up can
+        // never fire - the guest spins until it is killed.  That is the bug
+        // this file had in all three redirected shapes while the POSIX side
+        // had already fixed it.
         HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
         DWORD type = GetFileType(h) & ~(DWORD)FILE_TYPE_REMOTE;
         if (type == FILE_TYPE_DISK) {
-            // Through the CRT handle, so this agrees with the _read() below
-            int fd = _fileno(stdin);
-            __int64 pos = _telli64(fd);
-            __int64 len = _filelengthi64(fd);
-            return pos >= 0 && len >= 0 && pos < len;
+            // A read on a regular file does not block whether or not anything
+            // is left, so this is true at EOF as well.  It used to be
+            // pos < len, which is exactly the "a byte will come back" answer.
+            return true;
+        }
+        if (type == FILE_TYPE_CHAR) {
+            // NUL, and any other character device: a read returns 0 at once.
+            return true;
         }
         DWORD available = 0;
         if (PeekNamedPipe(h, NULL, 0, NULL, &available, NULL)) {
+            // An open pipe with nothing in it is the one shape where a read
+            // really would block, so this stays a data question.
             return available > 0;
         }
-        return false;
+        // The writer has gone.  A read returns 0 immediately, which is end of
+        // input, so this is readable - the POSIX select() says the same of a
+        // pipe with no writer left.
+        return GetLastError() == ERROR_BROKEN_PIPE;
     }
 
     // A waiting record answers for the key, not for what the key means here:

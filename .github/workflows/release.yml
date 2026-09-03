@@ -156,11 +156,18 @@ jobs:
   build-macos:
     runs-on: macos-latest
 
-    # The signing steps below key off this rather than testing `secrets`
-    # directly in each `if:`.  A job-level env can read secrets, and a
-    # step-level `if:` can read env, so one place decides and six steps agree.
+    # The signing steps key off these rather than testing `secrets` in each
+    # `if:`, and that is a correctness point rather than a tidiness one:
+    # `secrets` is not one of the contexts a step-level `if:` can read (github,
+    # needs, strategy, matrix, job, runner, env, vars, steps, inputs), nor a
+    # job-level one.  A job-level `env:` may read secrets, and a step `if:` may
+    # read env, so the gate has to be built here.
+    #
+    # Two gates, not one, so the halves are independent: a certificate with no
+    # notary credentials signs and does not notarize, rather than failing.
     env:
-      HAVE_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
+      HAVE_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' }}
+      HAVE_NOTARY: ${{ secrets.MACOS_NOTARY_KEY != '' && secrets.MACOS_NOTARY_KEY_ID != '' && secrets.MACOS_NOTARY_ISSUER_ID != '' }}
 
     steps:
       - name: Checkout code
@@ -268,9 +275,13 @@ jobs:
           codesign --force --options runtime --timestamp \
                    --sign "$SIGN_IDENTITY" build-mac/cpmemu
           codesign --verify --strict --verbose=2 build-mac/cpmemu
+          # Kept for the verification step after cpack.  One CDHash per slice,
+          # because this is a universal binary.
+          codesign -dvvv build-mac/cpmemu 2>&1 | grep '^CDHash=' | sort > "$RUNNER_TEMP/cdhash.signed"
+          cat "$RUNNER_TEMP/cdhash.signed"
 
       - name: Notarize
-        if: env.HAVE_SIGNING == 'true'
+        if: env.HAVE_SIGNING == 'true' && env.HAVE_NOTARY == 'true'
         env:
           NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
           NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
@@ -304,6 +315,33 @@ jobs:
           # Linux job does for the .deb and the .rpm
           cp "$NAME.tar.gz" cpmemu-macos-universal.tar.gz
           tar tzf "$NAME.tar.gz"
+
+      # cpack does not copy the binary, it re-runs the CMake install rule, and
+      # a CMake install may rewrite a Mach-O - an RPATH edit, or a strip under
+      # CPACK_STRIP_FILES.  Any rewrite changes the CDHash, which invalidates
+      # the signature and orphans the notarization ticket, and it does so
+      # silently: the release would simply not be notarized and nobody would
+      # find out until a user's Gatekeeper refused it.  This target has no
+      # rpath and CPACK_STRIP_FILES is unset, so today it does not happen;
+      # nothing in src/CMakeLists.txt promises that it will go on not
+      # happening, so the shipped bytes are checked against the signed ones
+      # rather than assumed to be them.
+      - name: Check the archived binary is the one that was signed
+        if: env.HAVE_SIGNING == 'true'
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          NAME="cpmemu-$VERSION-Darwin-arm64-x86_64"
+          rm -rf "$RUNNER_TEMP/verify"; mkdir -p "$RUNNER_TEMP/verify"
+          tar xzf "$NAME.tar.gz" -C "$RUNNER_TEMP/verify"
+          BIN="$RUNNER_TEMP/verify/$NAME/bin/cpmemu"
+          codesign --verify --strict --verbose=2 "$BIN"
+          codesign -dvvv "$BIN" 2>&1 | grep '^CDHash=' | sort > "$RUNNER_TEMP/cdhash.shipped"
+          if ! diff -u "$RUNNER_TEMP/cdhash.signed" "$RUNNER_TEMP/cdhash.shipped"; then
+            echo "cpack changed the binary after it was signed: the archive is not notarized." >&2
+            exit 1
+          fi
+          echo "the archived binary matches the signed one"
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
