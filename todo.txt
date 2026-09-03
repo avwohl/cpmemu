@@ -1,29 +1,21 @@
-Todo list.  Open items only - finished work is in CHANGELOG.md and in the commit
-messages that made the changes, not kept here.  There is no issue tracker; this
-file and github issues on avwohl/cpmemu are the only two mechanisms.
+Todo list.  Open items only.
 
-Each item carries a tag for what a machine has to be to pick it up, so a session
-on another OS can see at a glance what it can take.  Checks that need a person
-at a keyboard are in MANUAL_CHECKS.md, not here.
+There are none.
 
-- [MAC] [WINDOWS] nobody has ever typed at either console harness.  both have a
---manual hex echo; the four terminals to try it in, and what right looks like,
-are in MANUAL_CHECKS.md.
+The rules that used to be in this header - what belongs here, what a tag means,
+where finished work goes - are in CLAUDE.md now.  They were rules rather than
+work, and keeping them here made the file look like it had contents when it did
+not.
 
-- [WINDOWS] the rewritten Windows console path has never been executed.
-os/windows/platform.cc reads INPUT_RECORDs rather than calling _getch(), and
-installs a SetConsoleCtrlHandler; tests/win_console.cc has five cases for those
-- four set the console input code page, one sends a CTRL_BREAK_EVENT to a
-process group the harness creates for the purpose - and not one of them has
-ever reported anything.  someone with a windows box should run
-tests\win_console.bat and say what it prints.  the four code-page cases expect
-the bytes the guest gets *after* the & 0x7F.  the masks are staying - a CP/M
-guest here sees seven bits from the console - so those expectations are final
-and a mismatch is a fault in the console path, not a decision still to make.
+Where the other things are:
 
-- [RELEASE] [MAC] a downloaded macOS binary is signed ad hoc and not notarized,
-so Gatekeeper refuses it - and from a terminal the refusal has no visible form
-at all: measured, the process starts, prints nothing and sits in state SN until
-it is killed.  README.md tells the user to xattr -dr com.apple.quarantine, which
-is a workaround rather than a fix.  notarizing properly needs a Developer ID
-certificate and a notarytool step in the release workflow, and there is neither.
+  CHANGELOG.md      finished work, and the commit messages under it
+  MANUAL_CHECKS.md  checks that need a person at a keyboard
+  CLAUDE.md         how this repo records work, and the qkz80 sibling trap
+  github issues     avwohl/cpmemu, for anything waiting on someone else
+
+The three items that were here until 2026-09-03 are in CHANGELOG.md under
+v4.8.0.  Two were done: the Windows console cases run in CI now and pass, and
+the macOS notarization step is written and gated on a certificate that has to be
+bought before it can run.  The third - a person pressing keys in four terminal
+programs - was never a todo.txt item, and is in MANUAL_CHECKS.md.

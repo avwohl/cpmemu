@@ -10,6 +10,141 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
+## [4.8.0] - 2026-09-03
+
+`todo.txt` is empty. It had three items; two are answered here and the third —
+a person pressing keys on four terminal programs — was never a `todo.txt` item
+at all and is in [`MANUAL_CHECKS.md`](MANUAL_CHECKS.md), where that file's own
+header always said it belonged.
+
+The change that made the rest possible is the first one: there was no CI job
+running any test, on any platform, so nothing in this tree had ever been checked
+by a machine other than the one the change was written on. There is one now, and
+it found two bugs within the hour — one in code nobody had ever executed and one
+in code everybody had.
+
+The process rules that used to sit in `todo.txt`'s header — what belongs there,
+what belongs in `CHANGELOG.md`, what belongs in `MANUAL_CHECKS.md`, the tag
+convention, the commit style, the qkz80 sibling-project trap — are now in
+`CLAUDE.md`. They were rules, not work, and they were the reason the file kept
+growing while the list of open items did not shrink.
+
+### Added
+
+- **A test workflow: `.github/workflows/ci.yml`.** `release.yml` builds and
+  packages and runs no test suite, so this is the first CI that runs anything.
+  `ubuntu-latest` and `macos-latest` run `tests/run_tests.sh`; `windows-latest`
+  builds `cpmemu.exe` with MSVC and runs `tests\win_console.bat`. The
+  exercisers are a `workflow_dispatch` job, about 18 minutes for the three.
+
+- **The Windows console cases ran, for the first time anywhere: 26 passed, 0
+  failed.** `tests/win_console.cc` had been written, shipped and carried through
+  six release cycles without one of its cases reporting a verdict. All five that
+  `todo.txt` singled out pass — the four that set the console input code page
+  (an `E0` character under 437, two of them in a row, a three-byte UTF-8
+  character under 65001, and a surrogate pair) and the one that sends a
+  `CTRL_BREAK_EVENT` and checks the console mode is put back. The seven-bit
+  expectations they encode are confirmed rather than merely asserted.
+
+  The reason they had never run is worth recording, because it is not "nobody
+  had a Windows machine". `tests\win_console.bat` named one absolute path —
+  `...\Visual Studio\18\Community` — and printed `SKIP` when it was not there.
+  The only machine that could ever run these is a CI runner, whose install is
+  `...\Visual Studio\2022\Enterprise`. The one machine that could do the job
+  was the one guaranteed to decline it, and a skip exits 0. Both that file and
+  `src/do_build.bat` now ask `vswhere.exe`, which ships with every Visual Studio
+  installer since 2017.
+
+- **`tests/run_tests.sh --require`**, and `CPMEMU_REQUIRE_ALL=1` for the same
+  thing. A skip for want of a tool is a failure under it, named, with what to
+  install. The two platform skips are exempt, because no install makes a pty
+  harness run on Windows, and so are the opt-in exercisers.
+
+- **`CLAUDE.md`**, and **`docs/macos-signing.md`**.
+
+### Fixed
+
+- **A polled guest hung at the end of redirected input on Windows.** The POSIX
+  side had fixed this and written down why; the Windows side still had it, in
+  all three redirected shapes, and none of the 25 cases could see it.
+  `stdin_has_data()` answered "a byte will come back" rather than "a read will
+  not block": a regular file at EOF returned `pos < len`, and a pipe whose
+  writer has closed and `NUL` both fail `PeekNamedPipe`, which was read as "no
+  input". BDOS 6, BDOS 11 and BIOS CONST all gate their read on that call, so
+  the read was never attempted, `note_console_eof()` never counted, and the
+  1024-read give-up could never fire. The guest polled until something killed
+  it.
+
+  Measured rather than argued: with the old function put back on a branch of its
+  own, the new case times out on the runner; with the fix, it passes. A file and
+  a character device are now readable whether or not anything is left, an open
+  empty pipe is not, and a `PeekNamedPipe` failure of `ERROR_BROKEN_PIPE` is —
+  which is what POSIX `select()` says of a pipe with no writer.
+
+- **A CP/M `DIR` depended on the host filesystem.** `platform::list_directory()`
+  returned `readdir(3)` order on POSIX and `FindFirstFile` order on Windows.
+  Neither is promised: ext4 hands back hash order, and NTFS sorts, so the same
+  drive directory listed differently on Linux and Windows and differently on two
+  Linux machines. Both platforms now sort by name in byte order, and
+  `os/platform.h` states it as a contract.
+
+  Found by CI on its first run of the 42 assembler-gated checks: "drive: search
+  scopes to the drive" passed on the machine it was written on and failed on a
+  GitHub ubuntu runner, because the test was asserting an order nothing
+  guaranteed. Its two files are now created in reverse-alphabetical order, so
+  the check can tell a sort from a filesystem returning creation order — it
+  could not before.
+
+- **Two Windows raw-mode guards the POSIX side has and this one did not.**
+  `enable_raw_mode()` ignored what `GetConsoleMode()` returned and claimed a
+  mode to restore anyway, so a failure would have written mode `0x0080` to the
+  console on exit — no line input, no echo, and a shell to reset by hand.
+  `disable_raw_mode()` cleared its "there is something to put back" flag after
+  restoring, which on Windows is raced by design: `atexit()` runs it on the main
+  thread and the console control handler runs it on a thread the OS makes.
+  Neither is reachable by any case, which is why the first run passed without
+  finding them.
+
+### Documentation
+
+- **CI ran 60 of 102 checks and reported success.** The first version of
+  `ci.yml` did not install an assembler, so the 42 checks behind that gate
+  skipped and the job was green. That is the failure this workflow exists to
+  prevent, so it is fixed twice: the tools are installed *and* `--require` says
+  a missing one is a failure, because an install that quietly stops working
+  would otherwise be absorbed by a skip all over again.
+
+- **macOS notarization is written and waits on a certificate.** `release.yml`
+  imports a Developer ID certificate, signs with `--options runtime
+  --timestamp`, and submits to `notarytool --wait`, all behind two job-level
+  gates that are false today because the secrets do not exist — so the job runs
+  exactly as before. `docs/macos-signing.md` lists the five secrets and how to
+  produce each. What remains is buying the membership, which is not an
+  engineering task.
+
+  A step after packaging checks the archived binary's `CDHash` against the
+  signed one, because `cpack` re-runs the CMake install rule rather than copying
+  the file, and a rewrite would invalidate the signature and orphan the ticket
+  silently.
+
+  The honest limit is written down rather than discovered later: a notarization
+  ticket **cannot be stapled to a bare Mach-O executable** — `stapler` takes
+  disk images, flat packages and bundles — so this release would be notarized
+  and unstapled, and Gatekeeper would look the ticket up online. That covers
+  every user except one downloading through a browser while offline. Covering
+  that one means shipping a `.pkg` or `.dmg`, which is a decision about what the
+  download is.
+
+- **macOS `tar` does propagate `com.apple.quarantine`, and Apple's
+  documentation says it does not.** `README.md` has claimed the propagation for
+  some time and a user's install instructions rest on it, while Apple's
+  developer documentation states that "unarchiving tools (tar, unzip) don't
+  quarantine or propagate quarantine". Measured on macOS 26.5.2, on a runner, it
+  propagates both ways: an attribute written onto a `.tar.gz` after it was built
+  lands on the file extracted from it, and an attribute on a file at archive
+  time survives into the extracted copy. The README is right; the note now says
+  so and says what was measured.
+
 ## [4.7.2] - 2026-09-01
 
 Two open items from [`todo.txt`](todo.txt), which is down from five items to
