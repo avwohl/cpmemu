@@ -1,0 +1,105 @@
+# Tests.  The other workflow in here, release.yml, builds and packages; it runs
+# no test suite at all, so until this file existed nothing in the tree was
+# checked by a machine other than the one the change was written on.
+#
+# The point of the windows job is narrower than "run the tests on Windows".
+# tests/win_console.cc has five cases that drive a real console with
+# WriteConsoleInput, and src/os/windows/platform.cc is the code they cover.
+# Neither had ever been executed anywhere: the Windows console path was
+# rewritten, cross-compiled, and shipped without one of its tests reporting a
+# single verdict.  This job is the first machine to run them.
+#
+# Every job here sets whatever "do not skip" switch its suite has.  A skip that
+# exits 0 is the failure mode this file exists to prevent - it is how the
+# Windows cases stayed unexecuted through six release cycles while the tree
+# looked tested.
+name: Tests
+
+on:
+  push:
+    branches: [main, drain-todo]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # tests/run_tests.sh cross-compiles src/os/windows/platform.cc with
+      # mingw and fails on any warning.  Without the compiler that check prints
+      # SKIP, so it is installed rather than left to chance.
+      - name: Install the mingw cross-compiler
+        run: |
+          sudo apt-get update || (sleep 30 && sudo apt-get update)
+          sudo apt-get install -y g++-mingw-w64-x86-64
+
+      - name: Build
+        run: make -C src
+
+      # One run, checked twice: the exit status, and then the transcript for a
+      # skip that should not be there.  A skipped cross-compile would mean the
+      # mingw install above quietly did not take, and the suite exits 0 either
+      # way, so the exit status alone cannot see it.
+      - name: Run the test suite
+        run: |
+          set -o pipefail
+          tests/run_tests.sh 2>&1 | tee out.log
+      - name: Check the windows cross-compile actually ran
+        run: |
+          grep -q 'PASS  windows cross-compile' out.log || {
+            echo "the windows cross-compile did not run:"
+            grep -i 'cross-compile' out.log
+            exit 1
+          }
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No STATIC=1: the macOS SDK ships no crt0.o and src/makefile refuses the
+      # flag outright.  release.yml's build-macos job says the same at length.
+      - name: Build
+        run: make -C src
+
+      # This suite allocates a pty and drives cpmemu through it, which is the
+      # only way to reach the termios layer in src/os/linux/platform.cc - the
+      # file both POSIX platforms share.  It had been run on macOS by hand and
+      # by no machine.
+      - name: Run the test suite
+        run: tests/run_tests.sh
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build cpmemu.exe with MSVC
+        shell: cmd
+        run: src\do_build.bat
+
+      # CPMEMU_REQUIRE_MSVC=1 turns win_console.bat's "no compiler" skip and
+      # win_console.exe's "no emulator" and "no console to drive" skips into
+      # failures.  All three exit 0 otherwise, and on this runner the first of
+      # them used to fire: the batch file named one Visual Studio path and the
+      # runner has another.
+      - name: Run the Windows console tests
+        shell: cmd
+        env:
+          CPMEMU_REQUIRE_MSVC: '1'
+        run: tests\win_console.bat
+
+  # The instruction exercisers take about 18 minutes for the three of them, so
+  # they are not in the linux job above.  On demand, from the Actions tab.
+  exercisers:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: make -C src
+      - name: zexdoc, zexall and 8080exm
+        run: tests/run_tests.sh --zex

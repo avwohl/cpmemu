@@ -36,6 +36,7 @@
  * or, against a cpmemu built somewhere else:
  *     win_console.exe path\to\cpmemu.exe
  *     win_console.exe --manual path\to\cpmemu.exe    (type keys yourself)
+ *     win_console.exe --require path\to\cpmemu.exe   (a skip is a failure)
  */
 
 // fopen and snprintf are what this needs; the CRT wants the _s forms
@@ -628,16 +629,25 @@ static int manual_mode(const std::string& emu, const std::string& com) {
 
 int main(int argc, char** argv) {
     bool manual = false;
+    // --require says a skip is a failure.  Every skip below is a case of "this
+    // machine cannot run these tests", which is the right answer on a laptop
+    // and the wrong one in CI, where these tests are the entire point of the
+    // job and exiting 0 having run none of them is indistinguishable from
+    // having run them all.  tests\win_console.bat passes it when
+    // CPMEMU_REQUIRE_MSVC is set.
+    bool require = false;
     std::string emu;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--manual") == 0) manual = true;
+        else if (strcmp(argv[i], "--require") == 0) require = true;
         else emu = argv[i];
     }
     if (emu.empty()) emu = "..\\src\\cpmemu.exe";
 
     if (GetFileAttributesA(emu.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        printf("SKIP  windows console (no emulator at %s)\n", emu.c_str());
-        return 0;
+        printf("%s  windows console (no emulator at %s)\n",
+               require ? "FAIL" : "SKIP", emu.c_str());
+        return require ? 1 : 0;
     }
 
     // A console with no window is normal under a pseudoconsole, so ask CONIN$
@@ -646,16 +656,18 @@ int main(int argc, char** argv) {
                            FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
     if (g_con_in == INVALID_HANDLE_VALUE) {
         if (!AllocConsole()) {
-            printf("SKIP  windows console (no console to drive)\n");
-            return 0;
+            printf("%s  windows console (no console to drive)\n",
+                   require ? "FAIL" : "SKIP");
+            return require ? 1 : 0;
         }
         HWND w = GetConsoleWindow();
         if (w) ShowWindow(w, SW_HIDE);
         g_con_in = CreateFileA("CONIN$", GENERIC_READ | GENERIC_WRITE,
                                FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
         if (g_con_in == INVALID_HANDLE_VALUE) {
-            printf("SKIP  windows console (no console to drive)\n");
-            return 0;
+            printf("%s  windows console (no console to drive)\n",
+                   require ? "FAIL" : "SKIP");
+            return require ? 1 : 0;
         }
     }
     // The child's stdin must be inheritable or CreateProcess hands it nothing

@@ -1,8 +1,20 @@
 @echo off
-setlocal
+setlocal enabledelayedexpansion
 
-REM Use the same VS path as z80cpmw
-set VSDIR=C:\Program Files\Microsoft Visual Studio\18\Community
+REM Ask the installer where Visual Studio is rather than naming one path.
+REM This used to hardcode "...\Visual Studio\18\Community" - the same path
+REM z80cpmw uses - and fail outright anywhere else, which is every CI runner
+REM (a GitHub Actions windows image installs 2022 Enterprise) and every machine
+REM with a different edition.  vswhere.exe ships with every Visual Studio
+REM installer since 2017; the old path stays as the last resort.
+set "VSDIR="
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if not exist "%VSWHERE%" set "VSWHERE=%ProgramFiles%\Microsoft Visual Studio\Installer\vswhere.exe"
+if exist "%VSWHERE%" (
+    for /f "usebackq delims=" %%i in (`"!VSWHERE!" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2^>nul`) do set "VSDIR=%%i"
+)
+if not defined VSDIR set "VSDIR=C:\Program Files\Microsoft Visual Studio\18\Community"
+
 set VCVARS="%VSDIR%\VC\Auxiliary\Build\vcvarsall.bat"
 
 if not exist %VCVARS% (
