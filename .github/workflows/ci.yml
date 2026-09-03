@@ -99,8 +99,10 @@ jobs:
           CPMEMU_REQUIRE_MSVC: '1'
         run: tests\win_console.bat
 
-  # The instruction exercisers take about 18 minutes for the three of them, so
-  # they are not in the linux job above.  On demand, from the Actions tab.
+  # The instruction exercisers are not in the linux job above.  About 18 minutes
+  # for the three, measured on the machine run_tests.sh was written on; measured
+  # on an ubuntu runner, 6m23s - zexdoc 2m36s, zexall 2m33s, 8080exm 1m14s.  On
+  # demand, from the Actions tab.
   #
   # --zex runs the whole default suite AND the three exercisers, so this job
   # needs the same tools the linux job does.  It did not have them, and did not
@@ -124,7 +126,7 @@ jobs:
       # at its 3600s default, three hung exercisers can want three hours while
       # GitHub kills the job at 90 minutes, and the log then ends mid-run with
       # no verdict - no "overran Ns, N groups, N errors" naming which one hung
-      # and how far it got.  900s is generous against a measured 7 minutes.
+      # and how far it got.  900s against a slowest-measured 2m36s here.
       - name: zexdoc, zexall and 8080exm
         env:
           CPMEMU_ZEX_TIMEOUT: '900'
