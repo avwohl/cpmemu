@@ -36,8 +36,12 @@
 #           harness cannot run anywhere else, and no install changes that.  Nor
 #           do the exercisers, which are opt-in above by design.
 #           CPMEMU_SKIP_OK allows named ones through: a space or comma
-#           separated list of "assembler", "mingw" and "missing-com".  The
-#           macOS CI job passes "mingw" and nothing else.
+#           separated list of "assembler", "mingw", "missing-com",
+#           "posix-console" and "windows-console".  The macOS CI job passes
+#           "mingw" and nothing else.  The last two cover skips the pty and
+#           console sub-harnesses print themselves, which are skips of this
+#           suite too - pty_console.cc skipping for want of a pty is 42 checks
+#           gone, and --require could not see it.
 
 set -u
 
@@ -53,7 +57,7 @@ for arg in "$@"; do
         --zex)  run_zex=1 ;;
         --require) require_all=1 ;;
         --help|-h)
-            sed -n '2,41p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '2,45p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *)
             echo "unknown option: $arg (try --help)" >&2
@@ -748,6 +752,17 @@ case $(uname -s) in
                 passed=$((passed + $(grep -c '^PASS  ' "$ptylog")))
                 failed=$((failed + $(grep -c '^FAIL  ' "$ptylog")))
                 skipped=$((skipped + $(grep -c '^SKIP  ' "$ptylog")))
+                # A skip the sub-harness printed is a skip of this suite, and
+                # --require was blind to these: pty_console.cc skips its whole
+                # run when no pty can be opened, and that is 42 checks - the
+                # entire reason the macOS job exists - vanishing under a green
+                # tick.  Measured: forcing that branch gave "60 passed, 0
+                # failed, 5 skipped" and exit 0 with --require set.
+                grep '^SKIP  ' "$ptylog" >"$tmp/ptyskips" 2>/dev/null || :
+                while IFS= read -r skipline; do
+                    [ -n "$skipline" ] || continue
+                    soft_skip posix-console "posix console: ${skipline#SKIP  }"
+                done <"$tmp/ptyskips"
             else
                 printf 'FAIL  posix console (pty_console reported nothing)\n'
                 tail -5 "$ptylog" | sed 's/^/        /'
@@ -816,7 +831,17 @@ case $(uname -s) in
         # tree builds, and cmd /c splits a second argument that has a space in
         # it however it is quoted, which a checkout under "My Documents" would
         # hit.  One argument survives, because cmd strips the single pair.
-        MSYS_NO_PATHCONV=1 cmd.exe /c "$winbat" >"$winlog" 2>&1
+        # Hand the rule down.  win_console.bat turns its own "no compiler"
+        # skip, and win_console.exe's "no emulator" and "no console to drive"
+        # skips, into failures when this is set - and without it the whole
+        # CPMEMU_REQUIRE_MSVC chain added for CI was unreachable from here, so
+        # `run_tests.sh --require` on a Windows box with no Visual Studio
+        # exited 0 having run none of the 26 console cases.
+        if [ "$require_all" = 1 ]; then
+            MSYS_NO_PATHCONV=1 CPMEMU_REQUIRE_MSVC=1 cmd.exe /c "$winbat" >"$winlog" 2>&1
+        else
+            MSYS_NO_PATHCONV=1 cmd.exe /c "$winbat" >"$winlog" 2>&1
+        fi
         # Its own totals line would double count against this script's
         grep -v -e '^[0-9][0-9]* passed' -e '^$' "$winlog"
         # Counting only the verdicts it printed would let a launch that never
@@ -826,6 +851,14 @@ case $(uname -s) in
             passed=$((passed + $(grep -c '^PASS  ' "$winlog")))
             failed=$((failed + $(grep -c '^FAIL  ' "$winlog")))
             skipped=$((skipped + $(grep -c '^SKIP  ' "$winlog")))
+            # Belt and braces: with CPMEMU_REQUIRE_MSVC set these come back as
+            # FAIL rather than SKIP, so this is for the case where some future
+            # skip in there does not honour the variable.
+            grep '^SKIP  ' "$winlog" >"$tmp/winskips" 2>/dev/null || :
+            while IFS= read -r skipline; do
+                [ -n "$skipline" ] || continue
+                soft_skip windows-console "windows console: ${skipline#SKIP  }"
+            done <"$tmp/winskips"
         else
             printf 'FAIL  windows console (win_console.bat reported nothing)\n'
             tail -5 "$winlog" | sed 's/^/        /'

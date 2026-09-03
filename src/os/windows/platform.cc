@@ -428,7 +428,31 @@ bool stdin_has_data() {
             return true;
         }
         if (type == FILE_TYPE_CHAR) {
-            // NUL, and any other character device: a read returns 0 at once.
+            // Not all character devices are alike, and answering "readable"
+            // for all of them trades one hang for another.  NUL reads 0 at
+            // once, so it is readable.  A serial line does not: with the
+            // default COMMTIMEOUTS every field is zero, which means wait
+            // forever, so ReadFile on COM1 blocks until a byte arrives - and
+            // it is BDOS 6's polled form and BIOS CONST that call this, both
+            // of which promise never to block.  `cpmemu prog.com < COM1` would
+            // freeze inside a status call.
+            //
+            // GetCommState is the discriminator: it succeeds only on a comm
+            // device.  For one, ClearCommError answers the real question -
+            // how many bytes are actually in the input queue - without
+            // reading any of them.
+            DCB dcb;
+            memset(&dcb, 0, sizeof(dcb));
+            dcb.DCBlength = sizeof(dcb);
+            if (GetCommState(h, &dcb)) {
+                COMSTAT cs;
+                DWORD errs = 0;
+                memset(&cs, 0, sizeof(cs));
+                if (ClearCommError(h, &errs, &cs)) {
+                    return cs.cbInQue > 0;
+                }
+                return false;
+            }
             return true;
         }
         DWORD available = 0;
@@ -440,7 +464,20 @@ bool stdin_has_data() {
         // The writer has gone.  A read returns 0 immediately, which is end of
         // input, so this is readable - the POSIX select() says the same of a
         // pipe with no writer left.
-        return GetLastError() == ERROR_BROKEN_PIPE;
+        DWORD err = GetLastError();
+        if (err == ERROR_BROKEN_PIPE) {
+            return true;
+        }
+        // Anything GetFileType could not classify lands here too, and that
+        // includes the handle simply not being there: a process started by
+        // CreateProcess with STARTF_USESTDHANDLES and hStdInput = NULL - a
+        // scheduled task, a service, DETACHED_PROCESS - gets NULL back from
+        // GetStdHandle, GetFileType says FILE_TYPE_UNKNOWN, and PeekNamedPipe
+        // fails with ERROR_INVALID_HANDLE.  A read on it fails immediately
+        // rather than blocking, and console_getchar() turns that into end of
+        // input, so "readable" is the answer that lets the run end.  Saying
+        // no here is the same unreachable-give-up bug in a fourth shape.
+        return type == FILE_TYPE_UNKNOWN || err == ERROR_INVALID_HANDLE;
     }
 
     // A waiting record answers for the key, not for what the key means here:

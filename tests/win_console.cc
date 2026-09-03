@@ -420,6 +420,14 @@ struct Case {
     // mode and has had its keys.  CTRL_BREAK_EVENT is the one that gets past a
     // cleared ENABLE_PROCESSED_INPUT.
     DWORD ctrl_event;
+    // With stdin_text, hand the guest a PIPE holding those bytes rather than a
+    // file: the write end is closed before the emulator starts, so the pipe is
+    // drained and then broken.  A file and a pipe reach different branches of
+    // stdin_has_data() - a file answers from GetFileType, a pipe from
+    // PeekNamedPipe, and a pipe whose writer has gone answers from
+    // GetLastError() == ERROR_BROKEN_PIPE, which nothing else here reaches.
+    // Last field so every case above is unaffected.
+    bool stdin_pipe;
 };
 
 #define PROG(p) p, sizeof(p)
@@ -524,6 +532,17 @@ static const Case cases[] = {
     // - which is why "an empty file is end of input" passed throughout.
     { "a polled reader that runs out of input is stopped", PROG(con6hex_com),
       "", "", "41 42 ", "reads past end of input", false, 20000, "AB" },
+
+    // The same two questions against a pipe rather than a file, which is a
+    // different branch of stdin_has_data() end to end: a file answers from
+    // GetFileType, a pipe from PeekNamedPipe, and a pipe whose writer has gone
+    // answers from ERROR_BROKEN_PIPE.  That last branch had no test on any
+    // platform until these; tests/pty_console.cc has the POSIX twins.
+    { "polled input arrives from a pipe too", PROG(con6hex_com),
+      "", "", "41 42 2E ", "", false, 15000, "AB.", false, 0, 0, true },
+
+    { "a polled reader whose pipe is closed is stopped", PROG(con6hex_com),
+      "", "", "41 42 ", "reads past end of input", false, 20000, "AB", false, 0, 0, true },
 
     { "an empty file is end of input: CR once, then ^Z", PROG(coneof_com),
       "", "", "0D 1A ", "", false, 15000, "" },
@@ -741,6 +760,33 @@ int main(int argc, char** argv) {
                                      &nul_sa, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
             if (stdin_file == INVALID_HANDLE_VALUE) {
                 printf("FAIL  %s\n        cannot open NUL (%lu)\n", c.name, GetLastError());
+                DeleteFileA(com);
+                failed++;
+                continue;
+            }
+        } else if (c.stdin_text && c.stdin_pipe) {
+            // Fill the pipe and close the write end before the child starts.
+            // The bytes are already in the buffer, so nothing can deadlock on
+            // a full pipe, and the child sees data followed by a broken pipe.
+            HANDLE wr = INVALID_HANDLE_VALUE;
+            if (!CreatePipe(&stdin_file, &wr, &nul_sa, 0)) {
+                printf("FAIL  %s\n        cannot create a pipe (%lu)\n", c.name, GetLastError());
+                DeleteFileA(com);
+                failed++;
+                continue;
+            }
+            // Only the read end is the child's
+            SetHandleInformation(wr, HANDLE_FLAG_INHERIT, 0);
+            size_t n = strlen(c.stdin_text);
+            bool wrote = true;
+            if (n > 0) {
+                DWORD put = 0;
+                wrote = WriteFile(wr, c.stdin_text, (DWORD)n, &put, NULL) && put == n;
+            }
+            CloseHandle(wr);
+            if (!wrote) {
+                printf("FAIL  %s\n        cannot fill the pipe (%lu)\n", c.name, GetLastError());
+                CloseHandle(stdin_file);
                 DeleteFileA(com);
                 failed++;
                 continue;
