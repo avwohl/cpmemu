@@ -36,14 +36,16 @@ growing while the list of open items did not shrink.
   `ubuntu-latest` and `macos-latest` run `tests/run_tests.sh`; `windows-latest`
   builds `cpmemu.exe` with MSVC and runs `tests\win_console.bat`. The
   exercisers are a `workflow_dispatch` job. That job had never been run at all
-  until it was dispatched here: **105 passed, 0 failed** — the whole default
-  suite plus zexdoc, zexall and 8080exm, 159 instruction groups between them
-  with no CRC mismatches. It took 6m23s on an ubuntu runner rather than the
+  until it was dispatched here: **105 passed, 0 failed, 1 skipped** — the whole
+  default suite plus zexdoc, zexall and 8080exm, 159 instruction groups between
+  them with no CRC mismatches. The skip is the Windows console harness, one of
+  the two platform skips `--require` exempts; quoting the line without it would
+  be the very thing this release is about. It took 6m23s on an ubuntu runner rather than the
   about-18-minutes measured on the machine `run_tests.sh` was written on.
 
 - **The Windows console cases ran, for the first time anywhere: 28 passed, 0
   failed.** `tests/win_console.cc` had been written, shipped and carried through
-  six release cycles without one of its cases reporting a verdict. Twenty-five
+  three releases without one of its cases reporting a verdict. Twenty-five
   of the twenty-eight existed already; three are new here. All five that
   `todo.txt` singled out pass — the four that set the console input code page
   (an `E0` character under 437, two of them in a row, a three-byte UTF-8
