@@ -122,13 +122,19 @@ release it will load on.
 download is tagged `com.apple.quarantine`, and macOS `tar` copies that tag onto
 every file it extracts, so it ends up on `bin/cpmemu` as well as on the archive.
 
-That middle claim is worth pinning, because Apple's own developer documentation
-says the opposite - "unarchiving tools (tar, unzip) don't quarantine or
-propagate quarantine". Measured on macOS 26.5.2, it propagates both ways: an
-attribute written onto a `.tar.gz` after it was built lands on the file
-extracted from it, and an attribute on a file at the time it is archived
-survives into the extracted copy. Apple's statement does not describe this
-macOS. Believe the measurement.
+That middle claim is worth pinning, because Apple says the opposite. Apple
+Developer Technical Support, in the pinned forum answer on trusted execution:
+"Unix-y unarchiving tools, like `tar` and `unzip`, don't propagate quarantine to
+the unarchived files."
+
+Measured on macOS 26.5.2, `tar` does propagate it: an attribute written onto a
+`.tar.gz` after the archive was built lands on the file extracted from it. That
+is the case Apple's sentence is about, and it does not describe this macOS.
+Believe the measurement. (A second case was measured at the same time — an
+attribute on a file at the moment it is archived also survives into the
+extracted copy — but that is libarchive storing and restoring an extended
+attribute across a round trip, which is a different thing and not evidence
+either way about Apple's claim.)
 The binary is signed ad hoc and is not notarized, so Gatekeeper refuses a tagged
 copy - `spctl -a -t exec` on it says `rejected` - and from a terminal that
 refusal has no visible form at all. Measured on macOS 27: the process starts,

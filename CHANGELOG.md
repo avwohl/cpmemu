@@ -196,12 +196,19 @@ growing while the list of open items did not shrink.
 - **macOS `tar` does propagate `com.apple.quarantine`, and Apple's
   documentation says it does not.** `README.md` has claimed the propagation for
   some time and a user's install instructions rest on it, while Apple's
-  developer documentation states that "unarchiving tools (tar, unzip) don't
-  quarantine or propagate quarantine". Measured on macOS 26.5.2, on a runner, it
-  propagates both ways: an attribute written onto a `.tar.gz` after it was built
-  lands on the file extracted from it, and an attribute on a file at archive
-  time survives into the extracted copy. The README is right; the note now says
-  so and says what was measured.
+  Developer Technical Support states, in the pinned forum answer on trusted
+  execution, that "Unix-y unarchiving tools, like `tar` and `unzip`, don't
+  propagate quarantine to the unarchived files". Measured on macOS 26.5.2, on a
+  runner, `tar` does propagate it: an attribute written onto a `.tar.gz` after
+  the archive was built lands on the file extracted from it. The README is
+  right; the note now says so and says what was measured.
+
+  A second case was measured in the same step — an attribute present on a file
+  when it is archived survives into the extracted copy — and it is *not* a
+  second contradiction of Apple. That one is libarchive storing and restoring an
+  extended attribute across a round trip, which is a different mechanism from
+  the propagation Apple's sentence denies. The workflow comment anticipated as
+  much before it ran. Two measurements, one of which bears on the claim.
 
 ## [4.7.2] - 2026-09-01
 
