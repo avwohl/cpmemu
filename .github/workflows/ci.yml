@@ -61,10 +61,18 @@ jobs:
       # This suite allocates a pty and drives cpmemu through it, which is the
       # only way to reach the termios layer in src/os/linux/platform.cc - the
       # file both POSIX platforms share.  It had been run on macOS by hand and
-      # by no machine.  The windows cross-compile is not required here: mingw is
-      # a linux-job concern and installing it on macOS buys nothing.
+      # by no machine.
+      #
+      # --require here too, so a brew install that stops working cannot hide 42
+      # checks behind a green tick - the hole this job had until the ubuntu one
+      # demonstrated it.  CPMEMU_SKIP_OK allows exactly one skip through:
+      # installing a Windows cross-compiler on a Mac to repeat a check the
+      # linux job already does would be silly.  The assembler is not on that
+      # list and cannot go missing quietly.
       - name: Run the test suite
-        run: tests/run_tests.sh
+        env:
+          CPMEMU_SKIP_OK: mingw
+        run: tests/run_tests.sh --require
 
   windows:
     runs-on: windows-latest

@@ -35,6 +35,9 @@
 #           skips do not: the pty harness cannot run on Windows and the console
 #           harness cannot run anywhere else, and no install changes that.  Nor
 #           do the exercisers, which are opt-in above by design.
+#           CPMEMU_SKIP_OK allows named ones through: a space or comma
+#           separated list of "assembler", "mingw" and "missing-com".  The
+#           macOS CI job passes "mingw" and nothing else.
 
 set -u
 
@@ -50,7 +53,7 @@ for arg in "$@"; do
         --zex)  run_zex=1 ;;
         --require) require_all=1 ;;
         --help|-h)
-            sed -n '2,38p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '2,41p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *)
             echo "unknown option: $arg (try --help)" >&2
@@ -66,12 +69,21 @@ skipped=0
 # so --require can turn the lot into one failure at the end.  Registering is
 # separate from printing because the count behind a gate is not always one: 42
 # checks sit behind the assembler.
+# Each takes a token so a caller can allow one by name: CPMEMU_SKIP_OK is a
+# space or comma separated list of tokens that --require lets through.  The
+# macOS CI job uses it for "mingw", because installing a Windows cross-compiler
+# on a Mac to satisfy a check the linux job already does would be silly - and
+# that is the whole list, so the assembler cannot quietly go missing there the
+# way it did on ubuntu.
 soft_skips=0
 soft_skip_list=
 soft_skip() {
+    case " $(printf '%s' "${CPMEMU_SKIP_OK:-}" | tr ',' ' ') " in
+        *" $1 "*) return ;;
+    esac
     soft_skips=$((soft_skips + 1))
     soft_skip_list="$soft_skip_list
-        $1"
+        $2"
 }
 
 tmp=$(mktemp -d) || exit 1
@@ -129,7 +141,7 @@ check() {
     if [ ! -f "$root/$prog" ]; then
         printf 'SKIP  %s\n        missing: %s\n' "$name" "$prog"
         skipped=$((skipped + 1))
-        soft_skip "$name (missing: $prog)"
+        soft_skip missing-com "$name (missing: $prog)"
         return
     fi
 
@@ -171,7 +183,7 @@ check_zex() {
     if [ ! -f "$root/$prog" ]; then
         printf 'SKIP  %s\n        missing: %s\n' "$name" "$prog"
         skipped=$((skipped + 1))
-        soft_skip "$name (missing: $prog)"
+        soft_skip missing-com "$name (missing: $prog)"
         return
     fi
 
@@ -307,7 +319,7 @@ if [ -z "$assembler" ]; then
     echo "SKIP  drive mapping tests (no assembler: install pasmo or z80asm)"
     # 42 checks live behind this gate, not the 6 an earlier version counted
     skipped=$((skipped + 42))
-    soft_skip "drive mapping tests: 42 checks, no assembler (pasmo or z80asm)"
+    soft_skip assembler "drive mapping tests: 42 checks, no assembler (pasmo or z80asm)"
 else
     echo
     asm_ok=1
@@ -759,7 +771,7 @@ echo
 if ! command -v x86_64-w64-mingw32-g++ >/dev/null 2>&1; then
     echo "SKIP  windows cross-compile (x86_64-w64-mingw32-g++ not on PATH)"
     skipped=$((skipped + 1))
-    soft_skip "windows cross-compile: x86_64-w64-mingw32-g++ not on PATH"
+    soft_skip mingw "windows cross-compile: x86_64-w64-mingw32-g++ not on PATH"
 else
     wintmp=$tmp/win
     rm -rf "$wintmp"
