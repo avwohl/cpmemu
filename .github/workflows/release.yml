@@ -156,6 +156,12 @@ jobs:
   build-macos:
     runs-on: macos-latest
 
+    # The signing steps below key off this rather than testing `secrets`
+    # directly in each `if:`.  A job-level env can read secrets, and a
+    # step-level `if:` can read env, so one place decides and six steps agree.
+    env:
+      HAVE_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -197,15 +203,99 @@ jobs:
       # a tarball a user unpacks wherever they like would hand them a library
       # dyld cannot find; that needs an @rpath layout, which is a bigger change
       # than a release job.
-      - name: Build the release archive
+      - name: Build the universal binary
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
           cmake -S src -B build-mac \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
           cmake --build build-mac --config Release --parallel
           lipo -info build-mac/cpmemu
+
+      # ------------------------------------------------------------------
+      # Signing and notarization.  Everything from here to "Build the release
+      # archive" runs only when MACOS_CERTIFICATE_P12 is set, and NONE OF IT
+      # HAS EVER RUN: this repository has no Developer ID certificate, so the
+      # secrets are absent, every step below is skipped, and the archive is the
+      # ad-hoc-signed one it has always been.  It is written down so that
+      # acquiring a certificate is the whole of the remaining work rather than
+      # the smaller half of it.  docs/macos-signing.md says which secrets to
+      # create and how to produce each value.
+      #
+      # What this buys, and what it does not.  A notarization ticket cannot be
+      # stapled to a bare Mach-O executable - stapler takes disk images, flat
+      # installer packages and bundles, and Apple's position is that tickets
+      # are created for standalone binaries but cannot be attached to them.
+      # This release ships one bare binary in a tarball, so it is notarized and
+      # unstapled, and Gatekeeper looks the ticket up online.  A user who is
+      # online stops needing the `xattr` line in README.md; a user who is
+      # offline still needs it.  Making it work offline as well means shipping
+      # a .pkg or a .dmg, which changes what the download is and what the
+      # install instructions say, and is not a thing to decide inside a
+      # release job.
+      - name: Import the Developer ID certificate
+        if: env.HAVE_SIGNING == 'true'
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          # A random password for a keychain that lives as long as this job
+          KEYCHAIN_PASSWORD=$(uuidgen)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          # Without this, codesign blocks on a GUI prompt no runner can answer
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: Sign the binary
+        if: env.HAVE_SIGNING == 'true'
+        env:
+          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          set -euo pipefail
+          # --options runtime is the hardened runtime, which notarization
+          # requires; --timestamp is a secure timestamp, which it also
+          # requires.  This replaces the ad-hoc signature clang applies on
+          # arm64 rather than adding to it.
+          codesign --force --options runtime --timestamp \
+                   --sign "$SIGN_IDENTITY" build-mac/cpmemu
+          codesign --verify --strict --verbose=2 build-mac/cpmemu
+
+      - name: Notarize
+        if: env.HAVE_SIGNING == 'true'
+        env:
+          NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          echo "$NOTARY_KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          # notarytool takes an archive, not a bare executable
+          ditto -c -k --keepParent build-mac/cpmemu "$RUNNER_TEMP/cpmemu.zip"
+          # --wait, so a rejection fails this job rather than being discovered
+          # by whoever downloads the release
+          xcrun notarytool submit "$RUNNER_TEMP/cpmemu.zip" \
+            --key "$RUNNER_TEMP/notary.p8" \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" \
+            --wait
+          rm -f "$RUNNER_TEMP/notary.p8" "$RUNNER_TEMP/cpmemu.zip"
+          # No `stapler staple` here, and not by oversight: see the note above.
+          # It would exit 73, "The staple and validate action failed".
+          spctl --assess --type execute --verbose=4 build-mac/cpmemu || \
+            echo "note: spctl assessed the unstapled binary as above"
+
+      - name: Build the release archive
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
           NAME="cpmemu-$VERSION-Darwin-arm64-x86_64"
           ( cd build-mac && cpack -D CPACK_PACKAGE_VERSION="$VERSION" \
                                   -D CPACK_PACKAGE_FILE_NAME="$NAME" )

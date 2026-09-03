@@ -66,6 +66,39 @@ jobs:
       - name: Run the test suite
         run: tests/run_tests.sh
 
+      # TEMPORARY - measuring one claim in README.md, then coming out again.
+      # README says macOS tar copies com.apple.quarantine onto every file it
+      # extracts.  Apple DTS says the opposite: "unarchiving tools (tar, unzip)
+      # don't quarantine or propagate quarantine".  Both cannot be right, and a
+      # user follows the README's instructions on the strength of it.
+      - name: Does macOS tar propagate com.apple.quarantine?
+        run: |
+          set -x
+          sw_vers
+          cd "$RUNNER_TEMP"; rm -rf qt; mkdir qt; cd qt
+          # 1. attribute on the ARCHIVE, set after it was built (a browser
+          #    download): does extracting carry it onto the member?
+          echo hi > payload
+          tar czf a.tar.gz payload
+          xattr -w com.apple.quarantine "0083;00000000;Safari;" a.tar.gz
+          rm -f payload
+          tar xzf a.tar.gz
+          echo "== case 1, attribute on the archive =="
+          xattr -l payload || true
+          [ -z "$(xattr payload 2>/dev/null)" ] && echo "RESULT1: extracted file is CLEAN" \
+                                                || echo "RESULT1: extracted file is TAGGED"
+          # 2. attribute on the MEMBER when the archive was built: libarchive
+          #    stores and restores xattrs, so this one may well survive.
+          echo hi > payload2
+          xattr -w com.apple.quarantine "0083;00000000;Safari;" payload2
+          tar czf b.tar.gz payload2
+          rm -f payload2
+          tar xzf b.tar.gz
+          echo "== case 2, attribute on the member at archive time =="
+          xattr -l payload2 || true
+          [ -z "$(xattr payload2 2>/dev/null)" ] && echo "RESULT2: extracted file is CLEAN" \
+                                                 || echo "RESULT2: extracted file is TAGGED"
+
   windows:
     runs-on: windows-latest
     steps:

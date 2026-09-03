@@ -129,9 +129,17 @@ the attribute removed runs immediately. The line costs nothing when there is
 nothing to remove.
 
 `xattr -l /usr/local/bin/cpmemu` shows whether the attribute is still there; an
-empty answer means it is gone. Notarizing properly needs a Developer ID
-certificate and `notarytool`, and that is an open release item - until it is
-done, the `xattr` line is the whole of the workaround.
+empty answer means it is gone. Downloading with `curl`, as above, avoids the
+whole thing: `curl` sets no quarantine attribute, and the line costs nothing
+when there is nothing to remove.
+
+Notarizing properly needs a Developer ID certificate, which needs a paid Apple
+Developer Program membership that this project does not have. The `notarytool`
+half is written and sits in `.github/workflows/release.yml` behind a check for
+the certificate, so it skips; [`docs/macos-signing.md`](docs/macos-signing.md)
+lists the five secrets that would turn it on, and is honest about the limit -
+a notarization ticket cannot be stapled to a bare executable, so even signed,
+a browser download would still need this line on a machine that is offline.
 
 The archive also carries `libqkz80.a` and the headers, and deliberately no
 dylib. See [The qkz80 library](#the-qkz80-library).
