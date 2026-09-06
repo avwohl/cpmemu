@@ -356,6 +356,7 @@ echo "$ports" | while IFS='|' read -r port file pat kind; do
         [ "$TREE_ONLY" = "1" ] && continue
         artifacts_for "$port" "$dir" 2>/dev/null | while read -r a; do
             [ -f "$a" ] || continue
+            echo x >> "$tmp/scanned"
             if scan_artifact_for "$a" 'index-v0\.json'; then
                 printf '%-10s   artifact %s names the v0 index, agrees with the tree\n' \
                        "" "$(basename "$a")"
@@ -406,6 +407,7 @@ echo "$ports" | while IFS='|' read -r port file pat kind; do
     [ "$TREE_ONLY" = "1" ] && continue
     artifacts_for "$port" "$dir" 2>/dev/null | while read -r a; do
         [ -f "$a" ] || continue
+        echo x >> "$tmp/scanned"
         found=$(scan_artifact "$a" | sort -u | tr '\n' ' ')
         case " $found " in
             *" $pin "*)
@@ -432,6 +434,34 @@ if [ -f "$tmp/fail" ]; then
     exit 1
 fi
 
-echo "Every port serves the current hd1k_combo.img, and every artifact found"
-echo "agrees with its own tree."
+# FOUND NOTHING AND CHECKED NOTHING MUST NOT READ THE SAME.  The whole stated
+# reason this script exists is checking the built artifact, and artifacts_for()
+# globs local build paths only - dist/, bin/Release/, app/build/outputs, build/,
+# DerivedData.  On a machine that cannot build a given port, and that is every
+# machine for at least two of the three, those paths are simply absent: the loop
+# runs zero times, prints nothing, and the run used to end on "every artifact
+# found agrees with its own tree".  True, and it reads as though the packages
+# were inspected and passed.  The count below is what tells the two apart.
+scanned=0
+[ -f "$tmp/scanned" ] && scanned=$(wc -l < "$tmp/scanned" | tr -d ' ')
+
+echo "Every port's tree names the current catalog."
+if [ "$TREE_ONLY" = "1" ]; then
+    echo
+    echo "NO PACKAGE WAS INSPECTED: --tree-only was given, so the half of this"
+    echo "check that looks at what users actually got did not run.  The trees"
+    echo "being right is not the same as the artifacts being right - that is the"
+    echo "gap z80cpmw 1.0.23 went out through."
+elif [ "$scanned" -gt 0 ]; then
+    echo "All $scanned artifact(s) found agree with their own tree."
+else
+    echo
+    echo "NO PACKAGE WAS INSPECTED, and this is NOT a pass of the artifact half."
+    echo "artifacts_for() found nothing under dist/, bin/Release/,"
+    echo "app/build/outputs, build/ or DerivedData in any port, which is the"
+    echo "normal state on a machine that cannot build them - MSVC, the Android"
+    echo "SDK and Xcode are three different machines.  Nothing here has looked"
+    echo "at a byte any user will run.  Re-run this where a package was just"
+    echo "built, or unpack a published one by hand."
+fi
 exit 0
