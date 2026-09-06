@@ -1,5 +1,5 @@
 #!/bin/sh
-# check-disk-pins.sh - does the disk image users actually download carry the
+# check-shipped-disks.sh - does the disk image users actually download carry the
 # current R8/W8?
 #
 # WHY THIS EXISTS.  On 2026-09-03 the R8 wildcard-erasure bug was fixed in
@@ -20,8 +20,8 @@
 # just the one it is sitting in, so no repository can report "fixed" while its
 # neighbour's users are on an old pin.  Edit one, copy to the rest.
 #
-#   sh check-disk-pins.sh              tree pins + any artifacts found
-#   sh check-disk-pins.sh --tree-only  skip artifact scanning
+#   sh check-shipped-disks.sh              tree pins + any artifacts found
+#   sh check-shipped-disks.sh --tree-only  skip artifact scanning
 #
 # Exit 0 = every port's pin names the newest published release, and every
 #          artifact found agrees with its own tree.
