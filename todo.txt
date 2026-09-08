@@ -1,6 +1,57 @@
 Todo list.  Open items only.
 
-There are none.
+- [ANY] tools/check-shipped-disks.sh EXITS 1 ON A FAMILY THAT IS CORRECT, and
+the cause is one missing test.  Measured 2026-09-08 by running all five copies:
+cpmdroid and ioscpm exit 0; this one, z80cpmw's and romwbw_emu's exit 1.  This
+copy prints
+
+    ioscpm     CANNOT READ the RomWBW release out of .../iOSCPM/Resources/emu_avw.rom
+    cpmdroid   CANNOT READ the RomWBW release out of .../app/src/main/assets/emu_avw.rom
+    z80cpmw    CANNOT READ the RomWBW release out of .../roms/emu_avw.rom
+
+for three files that were DELETED on purpose - every GUI port removed its
+bundled ROM during the romwbw_disks migration, so git ls-files matches no .rom
+in any of them and every ROM now comes from the catalog, verified against its
+size and sha256 on every use.  This copy is the furthest behind of the five: it
+is the only one still asking the pre-migration question of all three ports.
+  DO NOT FIX THIS BY GUARDING THE ARM.  The obvious repair is to gate on
+`[ -f "$rom" ]` as well as `[ -n "$rom" ]`, and ioscpm's copy did exactly that
+for a while.  It only hides the problem: the arm reads a bundled ROM's HBIOS
+Configuration Block and asks whether the v0 index still publishes that release,
+and it is fed by a `bundled_rom_of()` table of three paths that were deleted on
+purpose.  That table carried its own justification - "keeping the path listed
+rather than deleting the line is deliberate: it means a ROM that reappears at
+that path gets checked again" - and the rule is now the other way round: no
+repository but romwbw_disks may carry a ROM at all, so a ROM that reappears is
+not a case to check, it is the violation.
+  ioscpm inverted the arm on 2026-09-08.  `bundled_rom_of()` and
+`rom_release_of()` are gone; `roms_in_tree()` asks
+`git ls-files --cached --others --exclude-standard` for any `*.rom` in the whole
+checkout and fails the port if there is one, naming it.  That enforces the rule
+instead of policing three paths, catches an untracked ROM one `git add` from
+being committed, and ignores gitignored build output where a downloaded ROM
+legitimately lives.  Verified by planting a 512 KB file: exit 1 with the path
+named, exit 0 once removed.
+  NOTE for this repository in particular: tests/ tracks about fifty .com/.bin
+files - zexall, zexdoc, 8080exm and the small flag cases.  Those are Z80/8080
+instruction-set vectors, not ROMs and not disk images, and the check looks only
+for *.rom, so they are untouched by any of this.
+  Nothing is red: no repository runs this in CI.  What it costs is the gate, and
+this script's own header names that cost - "a gate that cries wolf is a gate that
+stops being read, which is the exact failure this script was written after".
+  The header also promises "this script is identical in cpmemu, romwbw_emu,
+cpmdroid, ioscpm and z80cpmw ... Edit one, copy to the rest", and that has not
+held: the five copies have five md5s - ioscpm ba456daf, cpmemu 2dd4a7f6,
+romwbw_emu 29fd68a7, cpmdroid 9a703420, z80cpmw 7e6a2c90.  This repository's is
+the only one still matching the hash romwbw_emu/todo.txt calls canonical for all
+five, which is how far that claim has drifted.  ioscpm's is furthest ahead: it
+alone has *.app arms in scan_artifact() and scan_artifact_for(), so running THIS
+copy on a Mac silently skips the iOS .app.  Taking ioscpm's copy wholesale fixes
+both halves.
+  Raised from ioscpm on 2026-09-08, whose copy carries "THIS COPY HAS DIVERGED
+and the other four need the same edit" - an instruction about other
+repositories, which belongs in those repositories' lists.  romwbw_emu/todo.txt
+owns this script family-wide and carries the same measurement.
 
 The rules that used to be in this header - what belongs here, what a tag means,
 where finished work goes - are in CLAUDE.md now.  They were rules rather than
