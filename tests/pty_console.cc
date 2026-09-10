@@ -838,8 +838,9 @@ static const Case cases[] = {
 
     // ---- input that ends -------------------------------------------------
     // Not terminal cases, but nothing else on POSIX covers them without an
-    // assembler: tests/con_eof.asm and tests/con_spin.asm need pasmo, which is
-    // not on every machine, and the whole group skips when it is missing.
+    // assembler: tests/con_eof.asm and tests/con_spin.asm need um80,
+    // which is not on every machine, and the whole group skips when it is
+    // missing.
 
     { "an empty file is end of input: CR once, then ^Z", PROG(coneof_com),
       NULL, "", "", "0D 1A ", "", 15000, StdinFile, "", false, 0, NULL },

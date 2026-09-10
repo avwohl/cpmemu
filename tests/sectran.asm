@@ -20,7 +20,7 @@
 ; touch it and the version that shared the stub group overwrote it with the
 ; group's status byte - the one part of that bug no HL check can see.
 ; Assembled at test time by tests/run_tests.sh; no .com is committed.
-        org     0100h
+	.z80
         ld      a,(0082h)       ; first character of the command tail
         cp      'T'
         jr      z,dotable

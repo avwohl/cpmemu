@@ -18,6 +18,35 @@ by ioscpm's. The script is deleted instead. Nothing here ships in a package, so
 there is no release to put it under yet; `CLAUDE.md` asks for the entry either
 way.
 
+### Changed
+
+- **One assembler, `um80`, instead of whichever of two was installed.**
+  `tests/run_tests.sh` took `pasmo` if it was on `PATH` and `z80asm` otherwise,
+  and skipped 42 checks - about two fifths of the suite - when neither was.
+  It now takes `um80` and `ul80`, this project's own assembler and linker, and
+  nothing else. Nothing was wrong with the old tools' output: this file already
+  records `tests/sectran.asm` assembling byte-identical under each. The problem
+  is that two tools for one job means the program that assembled the 13 guests
+  depended on the machine, and the third outcome - neither installed - was a
+  green tick over a suite that had not run. On the machine this was written on
+  it was the third outcome: the drive mapping group had been skipping here, and
+  now reports 101 passed, 0 failed.
+
+  The 13 sources needed two changes each, both of which `CLAUDE.md` now states
+  as rules. Each gained a `.z80` directive, without which `um80` is an 8080
+  assembler and the first `LD` fails the file. Each lost its `org 0100h`:
+  `ul80` bases a relocatable code segment at 0100h already, so the ORG stacked
+  on top of that base and put the code at 0200h. Measured on `tests/drv_read.asm`
+  - 128 bytes without the ORG, 384 with it, of which the first 256 are zero.
+  It ran anyway, because CP/M loads the whole file at 0100h and the Z80 slides
+  through 256 NOPs into the code, which is why nobody had noticed.
+
+  `.github/workflows/ci.yml` installs it with `pip install um80` on both
+  runners, through `actions/setup-python` rather than the runner's own
+  interpreter: ubuntu-24.04's system Python is PEP 668 externally-managed and
+  refuses a plain `pip install`. Both `--require` jobs were re-run locally in
+  their CI configuration before this landed.
+
 ### Removed
 
 - **`tools/check-shipped-disks.sh` asked a question this repository has no part

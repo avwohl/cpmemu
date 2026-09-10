@@ -5,7 +5,7 @@
 ; flag wrote nothing for a program that ended through BDOS 0 - which is how
 ; most CP/M programs end.
 ; Assembled at test time by tests/run_tests.sh; no .com is committed.
-        org     0100h
+	.z80
         ld      hl,0200h
         ld      (hl),0A5h
         inc     hl

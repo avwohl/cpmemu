@@ -1,6 +1,6 @@
 ; Make and close the default FCB. Prints MADE or ERR.
 ; Assembled at test time by tests/run_tests.sh; no .com is committed.
-        org     0100h
+	.z80
         ld      de,005Ch
         ld      c,22            ; make file
         call    0005h

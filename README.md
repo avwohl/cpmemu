@@ -691,7 +691,7 @@ finished one unless something checks for the "Tests complete" line.
 Two parts of the suite need more than a compiler. The drive, mapping, config,
 CLI, ADM-3A, save-memory, BIOS disk and SECTRAN guests are assembled at test
 time, so 42 checks skip unless
-`pasmo` or `z80asm` is on `PATH`. With `x86_64-w64-mingw32-g++` on `PATH` the
+`um80` and `ul80` are on `PATH` (`pip install um80`). With `x86_64-w64-mingw32-g++` on `PATH` the
 suite also cross-compiles the Windows half of the platform layer and fails on
 any warning; without it, that step skips.
 

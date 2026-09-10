@@ -9,7 +9,7 @@
 ; The bytes below go out through BDOS 2 one at a time.  BDOS 9 would reach the
 ; same translator, but a $ terminator cannot carry an arbitrary byte string.
 ; Assembled at test time by tests/run_tests.sh; no .com is committed.
-        org     0100h
+	.z80
         ld      hl,seq
         ld      b,36            ; seq is 36 bytes; keep this in step with it
 loop:   ld      a,(hl)

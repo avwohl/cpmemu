@@ -5,7 +5,7 @@
 ; Before 4.7.1 both printed 00: the fail branch set A to 0, the same byte the
 ; ok branch sets, so the mode was invisible to the guest.
 ; Assembled at test time by tests/run_tests.sh; no .com is committed.
-        org     0100h
+	.z80
         ld      a,(0082h)       ; first character of the command tail
         cp      'W'
         jr      z,dowrite

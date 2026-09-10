@@ -1,6 +1,6 @@
 ; Select drive B via BDOS 14, then open a dr=0 HELLO.TXT and print three bytes.
 ; Assembled at test time by tests/run_tests.sh; no .com is committed.
-        org     0100h
+	.z80
         ld      e,1             ; BDOS 14: select drive B (0-based)
         ld      c,14
         call    0005h

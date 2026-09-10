@@ -1,6 +1,6 @@
 ; Read BDOS 1 and print each byte as hex until ^Z arrives.
 ; Assembled at test time by tests/run_tests.sh; no .com is committed.
-        org     0100h
+	.z80
 main:   ld      c,1
         call    0005h
         ld      b,a

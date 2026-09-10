@@ -1,6 +1,6 @@
 ; Open the default FCB, read one record, print the first three bytes. Prints NF if the open fails.
 ; Assembled at test time by tests/run_tests.sh; no .com is committed.
-        org     0100h
+	.z80
         ld      de,005Ch
         ld      c,15            ; open
         call    0005h

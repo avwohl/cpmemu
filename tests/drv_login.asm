@@ -1,6 +1,6 @@
 ; Print the BDOS 24 login vector as four hex digits.
 ; Assembled at test time by tests/run_tests.sh; no .com is committed.
-        org     0100h
+	.z80
         ld      c,24            ; get login vector -> HL
         call    0005h
         ld      a,h

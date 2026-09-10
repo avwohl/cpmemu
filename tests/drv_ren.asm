@@ -1,6 +1,6 @@
 ; Rename the FCB at 005Ch to the name at 006Ch. Prints REN or ERR.
 ; Assembled at test time by tests/run_tests.sh; no .com is committed.
-        org     0100h
+	.z80
         ld      de,005Ch        ; 005C holds old name, 006C holds new name
         ld      c,23
         call    0005h

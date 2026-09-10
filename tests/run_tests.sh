@@ -254,8 +254,9 @@ check "flag comparison (tflags)"  tests/tflags.com      '94\r\n51\r\n10\r\n3E\r\
 # Drive mapping (BDOS 14/15/17/18/22/24 against drive_X directories).
 #
 # These need an assembler, because committing a .com for each would put five
-# more opaque binaries in the tree.  pasmo is what tests/README.md names; if
-# it is missing the whole group skips rather than failing.
+# more opaque binaries in the tree.  um80 is the one - see the note above the
+# assemble() definition - and if it is missing the whole group skips rather than
+# failing.
 # ---------------------------------------------------------------------------
 
 drive_sandbox() {
@@ -301,29 +302,46 @@ check_drive() {
 
 # Assembling the drive mapping sources.
 #
-# pasmo is what tests/README.md names, but it is packaged almost nowhere - it is
-# not in Homebrew, so this whole group used to skip on any Mac.  z80asm (Bas
-# Wijnen's, which is in Homebrew and in Debian) takes these sources unchanged
-# and assembles every one of them, so either will do.  No count here: it was
-# wrong the last two times a guest was added.  A dialect that produced different
-# bytes could not pass quietly: every check below compares the guest's output
-# against an exact string, so a mis-assembled program fails rather than drifts.
-if command -v pasmo >/dev/null 2>&1; then
-    assembler=pasmo
-    assemble() { pasmo "$1" "$2"; }
-elif command -v z80asm >/dev/null 2>&1; then
-    assembler=z80asm
-    assemble() { z80asm -o "$2" "$1"; }
+# No count here: it was wrong the last two times a guest was added.  A dialect
+# that produced different bytes could not pass quietly either: every check below
+# compares the guest's output against an exact string, so a mis-assembled program
+# fails rather than drifts.
+# um80 and ul80, and nothing else.  They are this project's own assembler and
+# linker, written for its Z80/8080 work, and they are what every .asm in this
+# family is assembled with - romwbw_emu says so in as many words.  The sources
+# below carry `.z80` for that reason: without it um80 reads LD and JR as 8080
+# mnemonics and rejects them.
+#
+# pasmo and z80asm were both accepted here until 2026-09-10 and are not any
+# more.  Nothing was wrong with their output - the changelog records
+# tests/sectran.asm assembling byte-identical under each - the problem is two
+# tools for one job: a suite whose result depends on which assembler a machine
+# happens to have is a suite that can pass here and fail there for a reason
+# nobody records.  One assembler, and it is the one this project maintains.
+#
+# NO `org 0100h` IN THESE SOURCES.  ul80 bases a relocatable code segment at
+# 0100h by itself, so an ORG is applied on top of that base and puts the code at
+# 0200h behind 256 zero bytes.  Measured on tests/drv_read.asm: 384 bytes with
+# 256 leading zeros against 128 bytes of code.  It still RUNS - CP/M loads the
+# whole file at 0100h and the Z80 slides through 256 NOPs into the code - which
+# is exactly why it goes unnoticed, and it is the bug romwbw_emu found sitting in
+# src/w8.asm for a long time.
+if command -v um80 >/dev/null 2>&1 && command -v ul80 >/dev/null 2>&1; then
+    assembler=um80
+    assemble() {
+        _rel=${2%.com}.rel
+        um80 -o "$_rel" "$1" && ul80 -o "$2" "$_rel"
+    }
 else
     assembler=
 fi
 
 if [ -z "$assembler" ]; then
     echo
-    echo "SKIP  drive mapping tests (no assembler: install pasmo or z80asm)"
+    echo "SKIP  drive mapping tests (no assembler: pip install um80)"
     # 42 checks live behind this gate, not the 6 an earlier version counted
     skipped=$((skipped + 42))
-    soft_skip assembler "drive mapping tests: 42 checks, no assembler (pasmo or z80asm)"
+    soft_skip assembler "drive mapping tests: 42 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1

@@ -1,6 +1,6 @@
 ; Print the CP/M command tail at 0080h, or (empty).
 ; Assembled at test time by tests/run_tests.sh; no .com is committed.
-        org     0100h
+	.z80
         ld      a,(0080h)       ; command tail length
         or      a
         jr      z,empty

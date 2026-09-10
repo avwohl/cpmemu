@@ -1,6 +1,6 @@
 ; Search First/Next over ????????.??? and print each 11-byte directory name.
 ; Assembled at test time by tests/run_tests.sh; no .com is committed.
-        org     0100h
+	.z80
         ld      hl,005Dh        ; FCB name+ext = '???????????'
         ld      b,11
 fillq:  ld      (hl),'?'

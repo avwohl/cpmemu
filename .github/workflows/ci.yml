@@ -15,6 +15,11 @@
 # ubuntu because z80asm was not installed, and reporting success.  The tools are
 # installed below AND the suites are told to fail on a skip, because installing
 # a tool can quietly stop working and a skip would absorb it again.
+#
+# The assembler is um80, this project's own, installed from PyPI.  Until
+# 2026-09-10 it was z80asm from apt and from Homebrew; nothing was wrong with
+# z80asm's output, the problem was that the suite accepted either it or pasmo,
+# so which program assembled the 13 guests depended on the machine.
 name: Tests
 
 # Every branch, not a named list.  This used to say [main, drain-todo], which
@@ -34,13 +39,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # z80asm assembles 13 guests at test time; without it 42 checks - about
+      # um80 assembles 13 guests at test time; without it 42 checks - about
       # two fifths of the suite - skip.  g++-mingw-w64 is for the cross-compile
       # of src/os/windows/platform.cc, which fails on any warning.
-      - name: Install z80asm and the mingw cross-compiler
+      #
+      # setup-python and not the runner's own python3: ubuntu-24.04's system
+      # interpreter is PEP 668 externally-managed, so a plain `pip install`
+      # against it exits 1 with "externally-managed-environment".  setup-python
+      # provides an interpreter that is not, and prepends its bin directory -
+      # where the um80 and ul80 console scripts land - to PATH.  The macos job
+      # installs it the same way for the same reason, so both runners assemble
+      # the guests with one program from one source.
+      - name: Install the mingw cross-compiler
         run: |
           sudo apt-get update || (sleep 30 && sudo apt-get update)
-          sudo apt-get install -y z80asm g++-mingw-w64-x86-64
+          sudo apt-get install -y g++-mingw-w64-x86-64
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install the um80 assembler
+        run: python3 -m pip install um80
 
       - name: Build
         run: make -C src
@@ -53,10 +73,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The same assembler as the linux job: z80asm 1.8 in both Homebrew and
-      # Debian, so the 13 guests are assembled by the same program on both.
-      - name: Install z80asm
-        run: brew install z80asm
+      # The same assembler as the linux job, from the same place, so the 13
+      # guests are assembled by the same program on both.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install the um80 assembler
+        run: python3 -m pip install um80
 
       # No STATIC=1: the macOS SDK ships no crt0.o and src/makefile refuses the
       # flag outright.  release.yml's build-macos job says the same at length.
@@ -68,7 +92,7 @@ jobs:
       # file both POSIX platforms share.  It had been run on macOS by hand and
       # by no machine.
       #
-      # --require here too, so a brew install that stops working cannot hide 42
+      # --require here too, so an install that stops working cannot hide 42
       # checks behind a green tick - the hole this job had until the ubuntu one
       # demonstrated it.  CPMEMU_SKIP_OK allows exactly one skip through:
       # installing a Windows cross-compiler on a Mac to repeat a check the
@@ -116,10 +140,15 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - name: Install z80asm and the mingw cross-compiler
+      - name: Install the mingw cross-compiler
         run: |
           sudo apt-get update || (sleep 30 && sudo apt-get update)
-          sudo apt-get install -y z80asm g++-mingw-w64-x86-64
+          sudo apt-get install -y g++-mingw-w64-x86-64
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install the um80 assembler
+        run: python3 -m pip install um80
       - name: Build
         run: make -C src
       # CPMEMU_ZEX_TIMEOUT so the suite's own overrun message can fire.  Left

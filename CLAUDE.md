@@ -25,6 +25,42 @@ Do not pass `STATIC=1` on macOS. The SDK ships no `crt0.o` and no static libc or
 libc++, and `src/makefile` refuses the flag rather than letting it become a link
 error.
 
+## The assembler is um80, and there is no second one
+
+`um80` and `ul80` - this project's own assembler and linker, from
+[avwohl/um80_and_friends](https://github.com/avwohl/um80_and_friends), installed
+with `pip install um80` - assemble every Z80 and 8080 source in this repository
+and in the sibling projects. **Do not install pasmo. Do not install z80asm. Do
+not add a fallback to either, or to z88dk, and do not add a branch that tries
+one and then the other.** If `um80` is missing, the answer is to install it.
+
+The suite accepted `pasmo` if it was on `PATH` and `z80asm` otherwise until
+2026-09-10. Nothing was wrong with either one's output - the changelog records
+`tests/sectran.asm` assembling byte-identical under each. The problem is that
+two tools for one job means the program that assembled the guests depended on
+the machine, and a third outcome, *neither installed*, skipped 42 checks and
+exited 0. A fallback is not robustness here; it is three behaviours where one
+belongs.
+
+Two things about the dialect, both of which have already cost time:
+
+- **`.z80` on the first line, always.** Without it `um80` is an 8080 assembler
+  and the first `LD` fails the file - `Unknown instruction or directive: LD`.
+  All 13 sources the suite assembles needed this line added when they were
+  converted; every one of them failed on `LD` until it was there.
+- **Never write `org 0100h` in a `.COM` source.** `ul80` bases a relocatable
+  code segment at 0100h by itself, so an ORG is applied *on top of* that base
+  and puts the code at 0200h. Measured on `tests/drv_read.asm`: with the ORG it
+  links to 384 bytes, of which the first 256 are zero and only 128 are code.
+  It still runs, because CP/M loads the whole file at 0100h and the Z80 slides
+  through 256 NOPs into the code, which is exactly why the bug survives review.
+  The correct build is two commands with no origin flag:
+
+      um80 -o drv_read.rel drv_read.asm && ul80 -o drv_read.com drv_read.rel
+
+  (`-p` does not help: it names where the image is *loaded*, not where the
+  segment starts. `-p 0000` is for a ROM image, which does start at zero.)
+
 ## The rule that is easy to miss
 
 `src/qkz80*.{cc,h}` is the CPU core, and three sibling projects — ioscpm,

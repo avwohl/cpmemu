@@ -398,21 +398,34 @@ All simple flag tests match tnylpo exactly:
 
 ## Assembler
 
-The committed `.com` files under `tests/` were assembled with z88dk:
+**`um80` is the assembler for this project.** Do not install, reach for, or add
+a fallback to any other one - see the rule in `CLAUDE.md`.
+
+The committed `.com` files under `tests/` predate that rule; they were assembled
+with z88dk, and this is the recipe that produced the bytes in the tree:
 ```bash
-z88dk.z88dk-z80asm -b test.asm
+z88dk.z88dk-z80asm -b test.asm      # historical - do not use for new work
 cp test.bin test.com
 ```
+Whether `um80` reproduces those particular bytes has not been measured. If one
+of them ever needs rebuilding, assemble it with `um80` and compare, rather than
+reaching for z88dk again.
 
 The drive mapping sources, the two console end-of-input programs, `cli_tail.asm`,
 `adm3a.asm`, `savemem.asm`, `bios_disk.asm` and `sectran.asm` are assembled at
-test time instead, so no binary for them is committed. `tests/run_tests.sh` uses
-`pasmo` if it is on `PATH` and `z80asm` otherwise, and skips the whole group - 42
-checks - when neither is:
+test time instead, so no binary for them is committed. `tests/run_tests.sh` assembles them with
+**`um80` and `ul80`**, this project's own assembler and linker, and skips the
+whole group - 42 checks - when they are not on `PATH`:
 ```bash
-brew install z80asm        # macOS; pasmo is not in Homebrew
-apt install z80asm         # or pasmo
+pip install um80           # any platform; provides um80 and ul80
 ```
+`pasmo` and `z80asm` were both accepted until 2026-09-10 and are not any more.
+Nothing was wrong with their output; the problem was two tools for one job, so a
+run could pass on one machine and skip on another for a reason nobody recorded.
+These sources carry `.z80` because um80 otherwise reads `LD` and `JR` as 8080
+mnemonics, and they carry **no `org 0100h`** because `ul80` bases a relocatable
+code segment at 0100h already - an ORG on top of that puts the code at 0200h
+behind 256 zero bytes, which still runs and is still wrong.
 
 ## Known Issues
 
@@ -470,13 +483,12 @@ What is left is coverage of everything they do not reach:
    keys; both have a `--manual` mode for that and nobody has run either. The
    four terminal programs to try, and the bytes each key should print, are in
    `MANUAL_CHECKS.md` in the repo root.
-2. The drive mapping group needs an assembler. It takes `pasmo` or `z80asm`,
-   which covers Homebrew and Debian, but on a machine with neither it still
-   skips 42 checks, about two fifths of the suite. CI installs `z80asm` and
-   runs with `--require`, so the gate can no longer hide there; a local run on
-   a machine with neither assembler still skips them, and committing those
-   thirteen `.com` files as byte arrays the way `tests/con_guests.h` does would
-   de-gate it entirely.
+2. The drive mapping group needs an assembler. It takes `um80` and nothing
+   else, so on a machine without it 42 checks skip - about two fifths of the
+   suite. CI installs it with `pip install um80` on both runners and runs with
+   `--require`, so the gate can no longer hide there; a local run on a machine
+   without it still skips them, and committing those thirteen `.com` files as
+   byte arrays the way `tests/con_guests.h` does would de-gate it entirely.
 3. `.github/workflows/ci.yml` now runs this suite on `ubuntu-latest` and
    `macos-latest` and `tests\win_console.bat` on `windows-latest`, on every
    push. The Windows console cases ran there for the first time and report 28
