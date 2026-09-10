@@ -928,9 +928,21 @@ class ComboDisk:
     PREFIX_SIZE = 1048576  # 1MB
     SLICE_SIZE = 8388608   # 8MB
 
+    # Where slice 0's data area begins: past the 1MB MBR prefix AND past the
+    # slice's own boot area.  CP/M block numbers are relative to this point,
+    # exactly as Hd1kDisk.DIR_START is for a plain image - the directory is
+    # block 0.  Named DIR_START to match Hd1kDisk, because verify_disk() and
+    # anything else handed a disk object reads that attribute by name.
+    DIR_START = PREFIX_SIZE + (BOOT_TRACKS * TRACK_SIZE)
+
+    # Blocks that fit in the data area: 0..MAX_BLOCK.  Block MAX_BLOCK ends
+    # exactly on the slice boundary, so nothing addressable here reaches
+    # slice 1.
+    MAX_BLOCK = (SLICE_SIZE - (BOOT_TRACKS * TRACK_SIZE)) // BLOCK_SIZE - 1
+
     def __init__(self, disk_data):
         self.data = disk_data
-        self.dir_offset = self.PREFIX_SIZE + (self.BOOT_TRACKS * self.TRACK_SIZE)
+        self.dir_offset = self.DIR_START
 
     def find_free_dir_entry(self):
         """Find first free directory entry (starts with 0xE5)."""
@@ -956,7 +968,7 @@ class ComboDisk:
 
     def find_free_block(self, used_blocks):
         """Find first free block (skip blocks 0-7 used by directory)."""
-        for block in range(8, 2048):
+        for block in range(8, self.MAX_BLOCK + 1):
             if block not in used_blocks:
                 return block
         return -1
@@ -990,7 +1002,7 @@ class ComboDisk:
 
         # Write file data to blocks
         for i, block in enumerate(allocated_blocks):
-            block_offset = self.PREFIX_SIZE + (block * BLOCK_SIZE)
+            block_offset = self.DIR_START + (block * BLOCK_SIZE)
             start = i * BLOCK_SIZE
             end = min(start + BLOCK_SIZE, len(file_data))
             chunk = file_data[start:end]
@@ -1147,7 +1159,7 @@ class ComboDisk:
         for ext_num in sorted(extents.keys()):
             records, blocks = extents[ext_num]
             for block in blocks:
-                block_offset = self.PREFIX_SIZE + (block * BLOCK_SIZE)
+                block_offset = self.DIR_START + (block * BLOCK_SIZE)
                 file_data.extend(self.data[block_offset:block_offset + BLOCK_SIZE])
 
         # Trim to actual size based on last extent's record count
