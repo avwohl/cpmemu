@@ -10,6 +10,47 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
+## [Unreleased]
+
+`todo.txt` is back to "There are none", one item after it stopped being empty.
+That item asked for this repository's copy of a script to be replaced wholesale
+by ioscpm's. The script is deleted instead. Nothing here ships in a package, so
+there is no release to put it under yet; `CLAUDE.md` asks for the entry either
+way.
+
+### Removed
+
+- **`tools/check-shipped-disks.sh` asked a question this repository has no part
+  in.** It checks whether the disk image a user downloads carries the current
+  R8/W8, by reading three GUI ports' catalog pins. Its `ports` table is exactly
+  `ioscpm`, `cpmdroid` and `z80cpmw`, and cpmemu is not in it; the only
+  occurrence of the string `cpmemu` in its 467 lines is the header comment
+  naming the five repositories that carry a copy. This repository tracks no
+  `.img` or `.dsk` file, nothing under `src/` names RomWBW or a disk catalog,
+  and no package it publishes contains a disk image or a ROM. Run from here it
+  reads three sibling working trees and reports on them — which it can only do
+  at all on a machine that happens to have them checked out alongside this one.
+  No CI job ran it, and no document in this tree told anyone to.
+
+  The copy existed for the reason its own header gives: "this script is
+  identical in cpmemu, romwbw_emu, cpmdroid, ioscpm and z80cpmw ... Edit one,
+  copy to the rest." That is a propagation rule, not a reason this repository
+  needed the check, and `todo.txt` had been carrying what it cost — cpmemu's
+  copy was the furthest behind of the five, it exited 1 for ports that were all
+  correct, and the repair on offer was to copy ioscpm's over it. That would have
+  made this copy accurate and left it exactly as unused, so the item is answered
+  by deleting the file rather than by syncing it, and `todo.txt` ends shorter
+  than it started rather than longer.
+
+  What this does not do. The four sibling copies are untouched, and the question
+  the script exists for is unchanged: the ports that actually ship disks still
+  carry it, and `romwbw_emu/todo.txt` still owns it family-wide. Two documents
+  outside this tree — `romwbw_disks/docs/FINDINGS.md` and
+  `romwbw_disks/docs/CLIENT_MIGRATION.md` — describe the script as living in
+  five repositories and now describe four; correcting them belongs in those
+  repositories. `tools/` was this file and nothing else, so the directory goes
+  with it.
+
 ## [4.8.1] - 2026-09-10
 
 The emulator is not touched. Nothing under `src/` moved between v4.8.0 and this
