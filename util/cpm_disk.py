@@ -296,6 +296,11 @@ class SssdDisk:
     BLOCKS_PER_EXTENT = 16
     RECORDS_PER_BLOCK = BLOCK_SIZE // 128  # 8 records per 1KB block
 
+    # Blocks that fit in the data area: 0..MAX_BLOCK.  Same reason Hd1kDisk has
+    # one - without it add_file walks off the end of the image and grows the
+    # file rather than reporting a full disk.
+    MAX_BLOCK = (SSSD_SIZE - SSSD_DIR_START) // SSSD_BLOCK_SIZE - 1
+
     def __init__(self, disk_data, use_skew=True):
         self.data = disk_data
         self.use_skew = use_skew
@@ -432,6 +437,12 @@ class SssdDisk:
         blocks_needed = (num_records + self.RECORDS_PER_BLOCK - 1) // self.RECORDS_PER_BLOCK
 
         next_block = self.find_max_block() + 1
+        if next_block + blocks_needed - 1 > self.MAX_BLOCK:
+            free = self.MAX_BLOCK - next_block + 1
+            print(f"Error: {filename} needs {blocks_needed} blocks and only "
+                  f"{max(free, 0)} are left before the end of the disk")
+            return False
+
 
         sys_flag = " [SYS]" if sys_attr else ""
         user_flag = f" [U{user}]" if user != 0 else ""
@@ -612,7 +623,7 @@ class SssdDisk:
         return bytes(file_data[:actual_size])
 
     def read_boot_area(self):
-        """Read the boot area (first 2 tracks) from the disk.
+        """Read the boot area (first 2 tracks) of this image or slice.
 
         Boot tracks have no sector skew applied - they are read sequentially.
         Returns 6656 bytes (2 tracks × 26 sectors × 128 bytes).
@@ -625,7 +636,7 @@ class SssdDisk:
         return bytes(result)
 
     def write_boot_area(self, data):
-        """Write data to the boot area (first 2 tracks) of the disk.
+        """Write the boot area (first 2 tracks) of this image or slice.
 
         Boot tracks have no sector skew applied - they are written sequentially.
         Data is padded or truncated to exactly 6656 bytes.
@@ -646,16 +657,38 @@ class SssdDisk:
 
 
 class Hd1kDisk:
-    """Standard hd1k disk format (RomWBW compatible)."""
+    """Standard hd1k disk format (RomWBW compatible).
+
+    Addressed from `base`, which is 0 for a plain image and the top of a slice
+    for a combo (see ComboDisk).  A combo slice IS a plain hd1k image that
+    happens to start further into the file, so one implementation serves both:
+    every offset below is relative to `base` and nothing else differs.
+    """
 
     SECTOR_SIZE = SECTOR_SIZE_HD  # 512 bytes
     SECTORS_PER_TRACK = 16
+    TRACK_SIZE = SECTORS_PER_TRACK * SECTOR_SIZE_HD          # 8 KB
     DIR_ENTRIES = 1024
     BOOT_TRACKS = 2
-    DIR_START = BOOT_TRACKS * SECTORS_PER_TRACK * SECTOR_SIZE_HD  # 0x4000 (16KB)
+    BOOT_SIZE = BOOT_TRACKS * TRACK_SIZE                     # 0x4000 (16 KB)
+    SLICE_SIZE = HD1K_SINGLE_SIZE                            # 8 MB
 
-    def __init__(self, disk_data):
+    # Blocks that fit in the data area: 0..MAX_BLOCK.  Block MAX_BLOCK ends
+    # exactly on the slice boundary, so nothing addressable here runs past the
+    # end of a plain image or into the next slice of a combo.
+    MAX_BLOCK = (SLICE_SIZE - BOOT_SIZE) // BLOCK_SIZE - 1    # 2043
+
+    # The directory of a plain image, for callers that want the constant
+    # without an instance.  An instance shadows it with its own base.
+    DIR_START = BOOT_SIZE
+
+    def __init__(self, disk_data, base=0):
         self.data = disk_data
+        self.base = base
+        self.DIR_START = base + self.BOOT_SIZE
+        # Same value under the name ComboDisk used, so callers of either keep
+        # working.
+        self.dir_offset = self.DIR_START
 
     def find_free_dir_entry(self):
         """Find first free directory entry (starts with 0xE5)."""
@@ -664,6 +697,27 @@ class Hd1kDisk:
             if self.data[offset] == 0xE5:
                 return offset
         return None
+
+    def get_used_blocks(self):
+        """Every block number the directory currently points at."""
+        used = set(range(8))          # 0-7 are the directory itself
+        for i in range(self.DIR_ENTRIES):
+            entry_offset = self.DIR_START + (i * 32)
+            if self.data[entry_offset] == 0xE5:
+                continue
+            for j in range(8):
+                ptr_offset = entry_offset + 16 + (j * 2)
+                block = struct.unpack('<H', self.data[ptr_offset:ptr_offset + 2])[0]
+                if block:
+                    used.add(block)
+        return used
+
+    def find_free_block(self, used_blocks):
+        """First free block, or -1.  Bounded by the disk, not by a constant."""
+        for block in range(8, self.MAX_BLOCK + 1):
+            if block not in used_blocks:
+                return block
+        return -1
 
     def find_max_block(self):
         """Find highest used block number in directory.
@@ -707,6 +761,18 @@ class Hd1kDisk:
         blocks_needed = (num_records + records_per_block - 1) // records_per_block
 
         next_block = self.find_max_block() + 1
+
+        # Refuse rather than run off the end.  There was no bound here at all:
+        # `cpm_disk.py add hd.img <9MB file>` on an 8 MB image printed
+        # "Successfully updated" and left the file 9,486,336 bytes - a grown
+        # image whose directory points past where the geometry says the disk
+        # ends.  Slice-aware, so on a combo it stops at the slice boundary
+        # rather than writing into the next slice.
+        if next_block + blocks_needed - 1 > self.MAX_BLOCK:
+            free = self.MAX_BLOCK - next_block + 1
+            print(f"Error: {filename} needs {blocks_needed} blocks and only "
+                  f"{max(free, 0)} are left before the end of the disk")
+            return False
 
         sys_flag = " [SYS]" if sys_attr else ""
         user_flag = f" [U{user}]" if user != 0 else ""
@@ -904,8 +970,8 @@ class Hd1kDisk:
         Returns 16384 bytes (2 tracks × 16 sectors × 512 bytes).
         No skew is applied to hard disk formats.
         """
-        boot_size = self.BOOT_TRACKS * self.SECTORS_PER_TRACK * SECTOR_SIZE_HD
-        return bytes(self.data[:boot_size])
+        boot_size = self.BOOT_SIZE
+        return bytes(self.data[self.base:self.base + boot_size])
 
     def write_boot_area(self, data):
         """Write data to the boot area (first 2 tracks) of the disk.
@@ -913,13 +979,13 @@ class Hd1kDisk:
         Data is padded or truncated to exactly 16384 bytes.
         No skew is applied to hard disk formats.
         """
-        boot_size = self.BOOT_TRACKS * self.SECTORS_PER_TRACK * SECTOR_SIZE_HD
+        boot_size = self.BOOT_SIZE
         # Pad or truncate to boot area size
         if len(data) < boot_size:
             data = data + bytes(boot_size - len(data))
         elif len(data) > boot_size:
             data = data[:boot_size]
-        self.data[:boot_size] = data
+        self.data[self.base:self.base + boot_size] = data
 
 
 class SliceError(ValueError):
@@ -931,45 +997,40 @@ class SliceError(ValueError):
     """
 
 
-class ComboDisk:
-    """Combo disk with 1MB prefix."""
+class ComboDisk(Hd1kDisk):
+    """One slice of a combo image.
 
-    SECTOR_SIZE = SECTOR_SIZE_HD  # 512 bytes
-    SECTORS_PER_TRACK = 16
-    TRACK_SIZE = SECTOR_SIZE_HD * SECTORS_PER_TRACK
-    DIR_ENTRIES = 1024
-    BOOT_TRACKS = 2
-    PREFIX_SIZE = 1048576  # 1MB
-    SLICE_SIZE = 8388608   # 8MB
+    A combo is a 1 MB MBR prefix followed by six 8 MB hd1k slices, so slice N
+    IS a plain hd1k image that starts at PREFIX_SIZE + N*SLICE_SIZE.  That is
+    the whole of the difference, and it is now the whole of this class.
 
-    # Where slice 0's data area begins: past the 1MB MBR prefix AND past the
-    # slice's own boot area.  CP/M block numbers are relative to this point,
-    # exactly as Hd1kDisk.DIR_START is for a plain image - the directory is
-    # block 0.  Named DIR_START to match Hd1kDisk, because verify_disk() and
-    # anything else handed a disk object reads that attribute by name.
-    #
-    # This is the class-level default, for slice 0.  __init__ shadows it with
-    # the instance's own slice.
-    DIR_START = PREFIX_SIZE + (BOOT_TRACKS * TRACK_SIZE)
+    It used to be a second implementation of Hd1kDisk - directory scan, block
+    allocation, extents, boot area, all written again - and the copy was worse
+    than the original in three ways that took a while to find:
 
-    # Blocks that fit in one slice's data area: 0..MAX_BLOCK.  Block MAX_BLOCK
-    # ends exactly on the slice boundary, so nothing addressable here reaches
-    # the next slice.
-    MAX_BLOCK = (SLICE_SIZE - (BOOT_TRACKS * TRACK_SIZE)) // BLOCK_SIZE - 1
+      - It addressed file data from PREFIX_SIZE and the directory from
+        PREFIX_SIZE + the boot area, so every block was read and written 16384
+        bytes early.  A listing looked perfect and `extract` returned a
+        neighbouring file's bytes.
+      - Its add_file wrote a single logical extent with RC capped at 128
+        records, so any file over 16384 bytes was silently truncated.  The
+        original handles multi-extent files correctly.
+      - It exposed dir_offset but not DIR_START, so verify_disk() - which reads
+        DIR_START by name off whatever it is handed - died with AttributeError
+        on every combo.
 
-    SLICES = HD1K_COMBO_SLICES
+    None of those were possible to have in one implementation, which is the
+    argument for not having two.
+    """
+
+    PREFIX_SIZE = 1048576                 # 1 MB MBR prefix
+    SLICES = HD1K_COMBO_SLICES            # 6
+
+    # Slice 0's directory, for callers that want the constant without an
+    # instance.  Every instance shadows it with its own slice.
+    DIR_START = PREFIX_SIZE + Hd1kDisk.BOOT_SIZE
 
     def __init__(self, disk_data, slice_num=0):
-        """A combo image, addressed one slice at a time.
-
-        Every offset in this class is relative to the chosen slice, so slice N
-        behaves exactly like a plain hd1k image that happens to live at
-        PREFIX_SIZE + N*SLICE_SIZE inside a larger file.  Nothing here has an
-        8 MB reach limit - the image is a bytearray and slices are indexed into
-        it - which is the difference from cpmtools, whose libdsk backend cannot
-        address past 8 MB from the start of the file and so cannot open slices
-        1 and up at all.
-        """
         if not isinstance(slice_num, int) or isinstance(slice_num, bool):
             raise SliceError("slice must be an integer")
         if not 0 <= slice_num < self.SLICES:
@@ -981,287 +1042,12 @@ class ComboDisk:
             raise SliceError(
                 "slice %d needs a %d byte image; this one is %d bytes"
                 % (slice_num, need, len(disk_data)))
-        self.data = disk_data
+
+        super().__init__(disk_data,
+                         base=self.PREFIX_SIZE + (slice_num * self.SLICE_SIZE))
         self.slice_num = slice_num
-        self.slice_start = self.PREFIX_SIZE + (slice_num * self.SLICE_SIZE)
-        self.DIR_START = self.slice_start + (self.BOOT_TRACKS * self.TRACK_SIZE)
-        self.dir_offset = self.DIR_START
-
-    def find_free_dir_entry(self):
-        """Find first free directory entry (starts with 0xE5)."""
-        for i in range(self.DIR_ENTRIES):
-            entry_offset = self.dir_offset + (i * 32)
-            if self.data[entry_offset] == 0xE5:
-                return i
-        return -1
-
-    def get_used_blocks(self):
-        """Scan directory to find all used blocks."""
-        used = set(range(8))  # Directory blocks are always used
-        for i in range(self.DIR_ENTRIES):
-            entry_offset = self.dir_offset + (i * 32)
-            user = self.data[entry_offset]
-            if user != 0xE5 and user < 32:
-                for j in range(8):
-                    ptr_offset = entry_offset + 16 + (j * 2)
-                    block = struct.unpack('<H', self.data[ptr_offset:ptr_offset+2])[0]
-                    if block != 0:
-                        used.add(block)
-        return used
-
-    def find_free_block(self, used_blocks):
-        """Find first free block (skip blocks 0-7 used by directory)."""
-        for block in range(8, self.MAX_BLOCK + 1):
-            if block not in used_blocks:
-                return block
-        return -1
-
-    def add_file(self, filename, file_data, user=0, sys_attr=False):
-        """Add a file to the disk image.
-
-        Args:
-            filename: Name of the file to add
-            file_data: File contents as bytes
-            user: User number (0-15)
-            sys_attr: If True, set the SYS attribute (makes file visible from any user area)
-        """
-        name, ext = os.path.splitext(filename.upper())
-        name = name[:8].ljust(8)
-        ext = ext[1:4].ljust(3) if ext else '   '
-
-        num_records = (len(file_data) + 127) // 128
-        num_blocks = (len(file_data) + BLOCK_SIZE - 1) // BLOCK_SIZE
-
-        # REFUSED, not truncated.  The directory-entry loop below writes RC
-        # (entry[15]) capped at 128 records and advances the extent number once
-        # per entry, which is the EXM=0 shape - so anything over one logical
-        # extent was recorded as 128 records and read back at 16384 bytes, with
-        # "Added BIG.DAT: 24576 bytes" printed and exit 0.  Hd1kDisk.add_file
-        # gets this right (records_in_last_logical, two logical extents per
-        # physical entry); this class is a second, older implementation of the
-        # same thing and does not.
-        #
-        # Until the two are reconciled, refusing is the only honest answer:
-        # this path was unreachable before ComboDisk grew a working add - it
-        # died in verify_disk with AttributeError - so refusing loses nothing
-        # that ever worked, and silently truncating a file would be worse than
-        # the crash it replaced.
-        if num_records > 128:
-            print("Error: %s is %d bytes; this tool can only add files up to "
-                  "%d bytes to a combo slice.\n"
-                  "       Extract the slice with dd and use the plain hd1k "
-                  "path, which handles multi-extent files:\n"
-                  "         dd if=<combo> of=slice.img bs=1048576 skip=%d "
-                  "count=8"
-                  % (filename, len(file_data), 128 * 128,
-                     1 + 8 * getattr(self, 'slice_num', 0)))
-            return False
-
-        used_blocks = self.get_used_blocks()
-
-        allocated_blocks = []
-        for _ in range(num_blocks):
-            block = self.find_free_block(used_blocks)
-            if block < 0:
-                print(f"Error: No free blocks for {filename}")
-                return False
-            allocated_blocks.append(block)
-            used_blocks.add(block)
-
-        # Write file data to blocks
-        for i, block in enumerate(allocated_blocks):
-            block_offset = self.DIR_START + (block * BLOCK_SIZE)
-            start = i * BLOCK_SIZE
-            end = min(start + BLOCK_SIZE, len(file_data))
-            chunk = file_data[start:end]
-            if len(chunk) < BLOCK_SIZE:
-                chunk = chunk + bytes([0x1A] * (BLOCK_SIZE - len(chunk)))
-            self.data[block_offset:block_offset+BLOCK_SIZE] = chunk
-
-        # Create directory entries
-        blocks_per_extent = 8
-        extent_num = 0
-        block_idx = 0
-
-        # Prepare extension bytes with optional SYS attribute
-        ext_bytes = ext.encode('ascii')
-        if sys_attr:
-            ext_bytes = bytes([ext_bytes[0] | 0x80]) + ext_bytes[1:]
-
-        while block_idx < len(allocated_blocks):
-            dir_idx = self.find_free_dir_entry()
-            if dir_idx < 0:
-                print(f"Error: No free directory entry for {filename}")
-                return False
-
-            entry_offset = self.dir_offset + (dir_idx * 32)
-
-            entry = bytearray(32)
-            entry[0] = user
-            entry[1:9] = name.encode('ascii')
-            entry[9:12] = ext_bytes
-            entry[12] = extent_num & 0x1F
-            entry[13] = 0
-            entry[14] = (extent_num >> 5) & 0x3F
-
-            extent_blocks = allocated_blocks[block_idx:block_idx+blocks_per_extent]
-            if block_idx + blocks_per_extent >= len(allocated_blocks):
-                remaining = len(file_data) - (block_idx * BLOCK_SIZE)
-                extent_records = (remaining + 127) // 128
-            else:
-                extent_records = 128
-            entry[15] = min(extent_records, 128)
-
-            for i, block in enumerate(extent_blocks):
-                struct.pack_into('<H', entry, 16 + i*2, block)
-
-            self.data[entry_offset:entry_offset+32] = entry
-
-            block_idx += blocks_per_extent
-            extent_num += 1
-
-        sys_flag = " [SYS]" if sys_attr else ""
-        print(f"Added {filename}{sys_flag}: {len(file_data)} bytes, {num_blocks} blocks")
-        return True
-
-    def list_files(self):
-        """List all files in the directory."""
-        files = {}
-        for i in range(self.DIR_ENTRIES):
-            offset = self.dir_offset + (i * 32)
-            user = self.data[offset]
-            if user != 0xE5 and user < 32:
-                # Validate filename - must be printable ASCII (0x20-0x7E)
-                # Mask off attribute bits (high bit) from extension bytes
-                name_bytes = self.data[offset+1:offset+9]
-                ext_bytes = bytes([b & 0x7F for b in self.data[offset+9:offset+12]])
-                if not all(0x20 <= b <= 0x7E for b in name_bytes):
-                    continue
-                if not all(0x20 <= b <= 0x7E for b in ext_bytes):
-                    continue
-
-                name = name_bytes.decode('ascii').rstrip()
-                ext = ext_bytes.decode('ascii').rstrip()
-                extent_lo = self.data[offset+12]
-                extent_hi = self.data[offset+14]
-                extent = extent_lo + (extent_hi << 5)
-                records = self.data[offset+15]
-
-                fullname = f"{name}.{ext}" if ext else name
-                key = (user, fullname)
-
-                if key not in files:
-                    files[key] = {'extents': 0, 'records': 0, 'blocks': []}
-
-                files[key]['extents'] = max(files[key]['extents'], extent + 1)
-                if extent == files[key]['extents'] - 1:
-                    files[key]['records'] = extent * 128 + records
-
-                for j in range(8):
-                    block = struct.unpack('<H', self.data[offset+16+j*2:offset+18+j*2])[0]
-                    if block > 0:
-                        files[key]['blocks'].append(block)
-
-        return files
-
-    def delete_file(self, filename, user=0):
-        """Delete a file from the disk image by marking its directory entries as empty."""
-        # Parse filename (8.3 format)
-        name, ext = os.path.splitext(filename.upper())
-        name = name[:8].ljust(8)
-        ext = ext[1:4].ljust(3) if ext else '   '
-
-        deleted_count = 0
-        for i in range(self.DIR_ENTRIES):
-            offset = self.dir_offset + (i * 32)
-            entry_user = self.data[offset]
-            if entry_user == user:
-                entry_name = bytes(self.data[offset+1:offset+9]).decode('ascii')
-                # Mask off attribute bits (high bit) from extension bytes
-                entry_ext_bytes = bytes([b & 0x7F for b in self.data[offset+9:offset+12]])
-                entry_ext = entry_ext_bytes.decode('ascii')
-                if entry_name == name and entry_ext == ext:
-                    # Mark entry as deleted
-                    self.data[offset] = 0xE5
-                    deleted_count += 1
-
-        return deleted_count
-
-    def extract_file(self, filename, user=0):
-        """Extract a file from the disk image.
-
-        Returns the file data as bytes, or None if not found.
-        """
-        # Parse filename (8.3 format)
-        name, ext = os.path.splitext(filename.upper())
-        name = name[:8].ljust(8)
-        ext = ext[1:4].ljust(3) if ext else '   '
-
-        # Collect all extents for this file
-        extents = {}  # extent_num -> (records, blocks)
-        for i in range(self.DIR_ENTRIES):
-            offset = self.dir_offset + (i * 32)
-            entry_user = self.data[offset]
-            if entry_user == user:
-                entry_name = bytes(self.data[offset+1:offset+9]).decode('ascii')
-                # Mask off attribute bits (high bit) from extension bytes
-                entry_ext_bytes = bytes([b & 0x7F for b in self.data[offset+9:offset+12]])
-                entry_ext = entry_ext_bytes.decode('ascii')
-                if entry_name == name and entry_ext == ext:
-                    extent_lo = self.data[offset+12]
-                    extent_hi = self.data[offset+14]
-                    extent_num = extent_lo + (extent_hi << 5)
-                    records = self.data[offset+15]
-                    blocks = []
-                    for j in range(8):
-                        block = struct.unpack('<H', self.data[offset+16+j*2:offset+18+j*2])[0]
-                        if block > 0:
-                            blocks.append(block)
-                    extents[extent_num] = (records, blocks)
-
-        if not extents:
-            return None
-
-        # Read data from blocks in extent order
-        file_data = bytearray()
-        for ext_num in sorted(extents.keys()):
-            records, blocks = extents[ext_num]
-            for block in blocks:
-                block_offset = self.DIR_START + (block * BLOCK_SIZE)
-                file_data.extend(self.data[block_offset:block_offset + BLOCK_SIZE])
-
-        # Trim to actual size based on last extent's record count
-        last_ext = max(extents.keys())
-        total_records = last_ext * 128 + extents[last_ext][0]
-        actual_size = total_records * 128
-        return bytes(file_data[:actual_size])
-
-    def read_boot_area(self):
-        """Read the boot area (first 2 tracks) of the selected slice.
-
-        Returns 16384 bytes (2 tracks × 16 sectors × 512 bytes).
-        Boot area starts at the top of the slice.
-        No skew is applied to hard disk formats.
-        """
-        boot_size = self.BOOT_TRACKS * self.TRACK_SIZE
-        start = self.slice_start
-        return bytes(self.data[start:start + boot_size])
-
-    def write_boot_area(self, data):
-        """Write data to the boot area (first 2 tracks) of the selected slice.
-
-        Data is padded or truncated to exactly 16384 bytes.
-        Boot area starts at the top of the slice.
-        No skew is applied to hard disk formats.
-        """
-        boot_size = self.BOOT_TRACKS * self.TRACK_SIZE
-        # Pad or truncate to boot area size
-        if len(data) < boot_size:
-            data = data + bytes(boot_size - len(data))
-        elif len(data) > boot_size:
-            data = data[:boot_size]
-        start = self.slice_start
-        self.data[start:start + boot_size] = data
+        # An alias for `base` under the name that says what it is here.
+        self.slice_start = self.base
 
 
 def cmd_create(args):

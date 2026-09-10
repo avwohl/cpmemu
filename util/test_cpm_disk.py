@@ -295,22 +295,56 @@ class TestComboGuards(unittest.TestCase):
         errors, _ = verify_disk(disk, data, 'combo')
         self.assertTrue(errors, "a block past the slice must be an error")
 
-    def test_a_file_too_big_for_one_extent_is_refused_not_truncated(self):
-        """ComboDisk writes a single logical extent, RC capped at 128 records.
+    def test_a_multi_extent_file_round_trips_on_a_combo(self):
+        """The limit that is gone.
 
-        It used to record a 24576-byte file as 128 records and read it back at
-        16384 bytes, printing "Added" and succeeding.  Silent truncation is
-        worse than the AttributeError this path used to raise.
+        ComboDisk used to write a single logical extent with RC capped at 128
+        records, so a 24576-byte file was recorded as 16384 and read back
+        truncated - with "Added BIG.DAT: 24576 bytes" printed and exit 0.  It
+        was refused rather than truncated for one commit, and now it simply
+        works: ComboDisk is Hd1kDisk with a base offset, and Hd1kDisk always
+        handled multi-extent files.
         """
         data = bytearray(create_hd1k_disk(combo=True))
-        disk = ComboDisk(data, slice_num=0)
-        self.assertFalse(disk.add_file("BIG.DAT", b"B" * (128 * 128 + 1)))
-        self.assertNotIn((0, "BIG.DAT"), disk.list_files())
+        for n, size in ((0, 128 * 128 + 128),      # just over one extent
+                        (2, 24576),                # six blocks
+                        (5, 102400)):              # twenty-five, several extents
+            with self.subTest(slice_num=n, size=size):
+                payload = (bytes(range(256)) * (size // 256 + 1))[:size]
+                self.assertTrue(
+                    ComboDisk(data, slice_num=n).add_file("BIG.DAT", payload))
+                back = ComboDisk(data, slice_num=n).extract_file("BIG.DAT")
+                self.assertEqual(bytes(back), payload)
 
-        # The largest file it does accept must round-trip exactly.
-        payload = bytes(range(256)) * 64          # 16384 bytes
-        self.assertTrue(disk.add_file("EXACT.DAT", payload))
-        self.assertEqual(bytes(disk.extract_file("EXACT.DAT")), payload)
+    def test_a_file_larger_than_the_slice_is_refused(self):
+        """...but the disk still ends where it ends."""
+        data = bytearray(create_hd1k_disk(combo=True))
+        disk = ComboDisk(data, slice_num=1)
+        before = len(data)
+        self.assertFalse(disk.add_file("HUGE.DAT", b"H" * (9 * 1024 * 1024)))
+        self.assertNotIn((0, "HUGE.DAT"), disk.list_files())
+        self.assertEqual(len(data), before, "the image must not have grown")
+
+    def test_a_plain_image_is_bounded_too(self):
+        """Hd1kDisk had no bound at all.
+
+        `add hd.img <9MB file>` on an 8 MB image printed "Successfully updated"
+        and left the file 9,486,336 bytes: a grown image whose directory points
+        past where the geometry says the disk ends.
+        """
+        data = bytearray(create_hd1k_disk(combo=False))
+        before = len(data)
+        self.assertFalse(Hd1kDisk(data).add_file("HUGE.DAT", b"H" * (9 * 1024 * 1024)))
+        self.assertEqual(len(data), before)
+
+    def test_a_slice_is_an_hd1k_image_at_an_offset(self):
+        """The claim the refactor rests on, asserted rather than assumed."""
+        self.assertTrue(issubclass(ComboDisk, Hd1kDisk))
+        for n in range(ComboDisk.SLICES):
+            disk = ComboDisk(bytearray(create_hd1k_disk(combo=True)), slice_num=n)
+            self.assertEqual(disk.base, disk.slice_start)
+            self.assertEqual(disk.DIR_START, disk.base + Hd1kDisk.BOOT_SIZE)
+            self.assertEqual(disk.MAX_BLOCK, Hd1kDisk.MAX_BLOCK)
 
     def test_slice_is_refused_on_every_single_slice_format(self):
         """The guard used to sit in the hd1k branch, so SSSD fell past it."""
