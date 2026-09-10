@@ -8,6 +8,10 @@ from cpm_disk import (
     Hd1kDisk,
     ComboDisk,
     create_hd1k_disk,
+    create_sssd_disk,
+    detect_disk_format,
+    get_disk_object,
+    SliceError,
     verify_disk,
     BLOCK_SIZE,
 )
@@ -199,6 +203,132 @@ class TestComboDataOffsets(unittest.TestCase):
         disk.add_file("CANARY.DAT", self.PAYLOAD)
         errors, warnings = verify_disk(disk, disk_data, 'combo')
         self.assertEqual(errors, [])
+
+
+class TestComboSlices(unittest.TestCase):
+    """--slice N: every slice of a combo, not just the first.
+
+    A combo is six 8 MB hd1k images behind a 1 MB MBR prefix.  ComboDisk could
+    only ever see the first, so slices 1-5 needed a dd cut to reach - the same
+    thing cpmtools needs, though for a different reason (its libdsk backend
+    cannot address past 8 MB from the start of a file at all).  Nothing here
+    has that limit: the image is a bytearray and a slice is an index into it.
+    """
+
+    PAYLOAD = b"SLICE-CANARY-0123456789A" * 16   # 384 bytes = 3 records
+
+    def test_each_slice_starts_where_the_layout_says(self):
+        for n in range(ComboDisk.SLICES):
+            disk = ComboDisk(bytearray(create_hd1k_disk(combo=True)), slice_num=n)
+            self.assertEqual(disk.slice_start,
+                             ComboDisk.PREFIX_SIZE + n * ComboDisk.SLICE_SIZE)
+            self.assertEqual(disk.DIR_START,
+                             disk.slice_start
+                             + ComboDisk.BOOT_TRACKS * ComboDisk.TRACK_SIZE)
+
+    def test_a_write_to_one_slice_is_invisible_in_the_others(self):
+        """The property that matters: slices must not bleed into each other."""
+        data = bytearray(create_hd1k_disk(combo=True))
+        ComboDisk(data, slice_num=3).add_file("CANARY.DAT", self.PAYLOAD)
+
+        self.assertIn((0, "CANARY.DAT"),
+                      ComboDisk(data, slice_num=3).list_files())
+        for n in range(ComboDisk.SLICES):
+            if n == 3:
+                continue
+            self.assertNotIn((0, "CANARY.DAT"),
+                             ComboDisk(data, slice_num=n).list_files(),
+                             "slice %d saw slice 3's file" % n)
+
+    def test_a_slice_reads_the_same_as_that_slice_cut_out_with_dd(self):
+        data = bytearray(create_hd1k_disk(combo=True))
+        ComboDisk(data, slice_num=5).add_file("CANARY.DAT", self.PAYLOAD)
+
+        start = ComboDisk.PREFIX_SIZE + 5 * ComboDisk.SLICE_SIZE
+        cut = bytearray(data[start:start + ComboDisk.SLICE_SIZE])
+        plain = Hd1kDisk(cut)
+        self.assertEqual(bytes(plain.extract_file("CANARY.DAT")), self.PAYLOAD)
+
+    def test_boot_area_belongs_to_the_slice(self):
+        data = bytearray(create_hd1k_disk(combo=True))
+        ComboDisk(data, slice_num=2).write_boot_area(b"\xC3" + b"\x5A" * 99)
+        self.assertEqual(ComboDisk(data, slice_num=2).read_boot_area()[:2],
+                         b"\xC3\x5A")
+        # ...and not to slice 0, which was where it always used to go.
+        self.assertNotEqual(ComboDisk(data, slice_num=0).read_boot_area()[:2],
+                            b"\xC3\x5A")
+
+    def test_a_slice_outside_the_image_is_refused(self):
+        data = bytearray(create_hd1k_disk(combo=True))
+        for bad in (-1, ComboDisk.SLICES, 99):
+            with self.assertRaises(ValueError):
+                ComboDisk(data, slice_num=bad)
+
+    def test_slice_on_a_non_combo_image_is_refused(self):
+        plain = create_hd1k_disk(combo=False)
+        with self.assertRaises(ValueError):
+            get_disk_object(plain, slice_num=2)
+        # slice 0 is the default and means "the only slice there is"
+        self.assertIsInstance(get_disk_object(plain, slice_num=0), Hd1kDisk)
+
+
+class TestComboGuards(unittest.TestCase):
+    """The bounds and refusals, each of which a mutation test showed uncovered."""
+
+    def test_verify_accepts_the_last_block_of_a_slice(self):
+        """verify_disk uses max_block as a COUNT (block >= max_block).
+
+        MAX_BLOCK is the last valid INDEX, so handing it over unadjusted
+        condemned block 2043 - the very block find_free_block gives out on a
+        full slice.  The tool's allocator and its verifier have to agree.
+        """
+        data = bytearray(create_hd1k_disk(combo=True))
+        disk = ComboDisk(data, slice_num=1)
+        disk.add_file("EDGE.DAT", b"E" * 128)
+        # Point it at the last legal block of the slice.
+        struct.pack_into('<H', data, disk.DIR_START + 16, ComboDisk.MAX_BLOCK)
+        errors, _ = verify_disk(disk, data, 'combo')
+        self.assertEqual(errors, [], "the last block of a slice must be legal")
+
+        # ...and one past it must still be caught.
+        struct.pack_into('<H', data, disk.DIR_START + 16, ComboDisk.MAX_BLOCK + 1)
+        errors, _ = verify_disk(disk, data, 'combo')
+        self.assertTrue(errors, "a block past the slice must be an error")
+
+    def test_a_file_too_big_for_one_extent_is_refused_not_truncated(self):
+        """ComboDisk writes a single logical extent, RC capped at 128 records.
+
+        It used to record a 24576-byte file as 128 records and read it back at
+        16384 bytes, printing "Added" and succeeding.  Silent truncation is
+        worse than the AttributeError this path used to raise.
+        """
+        data = bytearray(create_hd1k_disk(combo=True))
+        disk = ComboDisk(data, slice_num=0)
+        self.assertFalse(disk.add_file("BIG.DAT", b"B" * (128 * 128 + 1)))
+        self.assertNotIn((0, "BIG.DAT"), disk.list_files())
+
+        # The largest file it does accept must round-trip exactly.
+        payload = bytes(range(256)) * 64          # 16384 bytes
+        self.assertTrue(disk.add_file("EXACT.DAT", payload))
+        self.assertEqual(bytes(disk.extract_file("EXACT.DAT")), payload)
+
+    def test_slice_is_refused_on_every_single_slice_format(self):
+        """The guard used to sit in the hd1k branch, so SSSD fell past it."""
+        for make in (lambda: create_hd1k_disk(combo=False), create_sssd_disk):
+            data = make()
+            with self.subTest(fmt=detect_disk_format(data)):
+                with self.assertRaises(SliceError):
+                    get_disk_object(data, slice_num=2)
+                self.assertIsNotNone(get_disk_object(data, slice_num=0))
+
+    def test_slice_errors_do_not_hide_decode_errors(self):
+        """main() catches the slice error only.
+
+        UnicodeDecodeError is a subclass of ValueError, so a blanket catch
+        would have reported a corrupt directory as a bad flag.
+        """
+        self.assertTrue(issubclass(SliceError, ValueError))
+        self.assertFalse(issubclass(UnicodeDecodeError, SliceError))
 
 
 if __name__ == '__main__':

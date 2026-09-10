@@ -5,6 +5,9 @@ Supported formats:
   - sssd:  8" SSSD floppy (ibm-3740 compatible, 250KB)
   - hd1k:  Standard RomWBW hd1k format (8MB single slice)
   - combo: Combo disk with 1MB MBR prefix + 6x8MB slices (51MB total)
+           Every subcommand takes --slice N to pick one; slice N behaves
+           exactly like a plain hd1k image.  There is no 8MB reach limit, so
+           slices 1-5 are as accessible as slice 0.
 
 Usage:
   cpm_disk.py create <disk.img>                    # Create 8MB hd1k disk
@@ -14,6 +17,8 @@ Usage:
   cpm_disk.py list <disk.img>                      # List files in disk
   cpm_disk.py delete <disk.img> <file1.com> [...]  # Delete files from disk
   cpm_disk.py extract <disk.img> <file1.com> [...] # Extract files from disk
+  cpm_disk.py list --slice 3 <combo.img>           # A combo slice (0-5)
+  cpm_disk.py add  --slice 3 <combo.img> <f.com>   # ...any subcommand takes it
   cpm_disk.py read-boot <disk.img> <output.bin>       # Read boot area to file
   cpm_disk.py write-boot <disk.img> <input.bin>       # Write to sector 0
   cpm_disk.py write-boot <disk.img> <input.bin> 4     # Write starting at sector 4
@@ -917,6 +922,15 @@ class Hd1kDisk:
         self.data[:boot_size] = data
 
 
+class SliceError(ValueError):
+    """A bad --slice argument.
+
+    Its own class because UnicodeDecodeError is a subclass of ValueError, and
+    a blanket `except ValueError` in main() would have dressed a corrupt
+    directory up as a bad flag.
+    """
+
+
 class ComboDisk:
     """Combo disk with 1MB prefix."""
 
@@ -933,15 +947,44 @@ class ComboDisk:
     # exactly as Hd1kDisk.DIR_START is for a plain image - the directory is
     # block 0.  Named DIR_START to match Hd1kDisk, because verify_disk() and
     # anything else handed a disk object reads that attribute by name.
+    #
+    # This is the class-level default, for slice 0.  __init__ shadows it with
+    # the instance's own slice.
     DIR_START = PREFIX_SIZE + (BOOT_TRACKS * TRACK_SIZE)
 
-    # Blocks that fit in the data area: 0..MAX_BLOCK.  Block MAX_BLOCK ends
-    # exactly on the slice boundary, so nothing addressable here reaches
-    # slice 1.
+    # Blocks that fit in one slice's data area: 0..MAX_BLOCK.  Block MAX_BLOCK
+    # ends exactly on the slice boundary, so nothing addressable here reaches
+    # the next slice.
     MAX_BLOCK = (SLICE_SIZE - (BOOT_TRACKS * TRACK_SIZE)) // BLOCK_SIZE - 1
 
-    def __init__(self, disk_data):
+    SLICES = HD1K_COMBO_SLICES
+
+    def __init__(self, disk_data, slice_num=0):
+        """A combo image, addressed one slice at a time.
+
+        Every offset in this class is relative to the chosen slice, so slice N
+        behaves exactly like a plain hd1k image that happens to live at
+        PREFIX_SIZE + N*SLICE_SIZE inside a larger file.  Nothing here has an
+        8 MB reach limit - the image is a bytearray and slices are indexed into
+        it - which is the difference from cpmtools, whose libdsk backend cannot
+        address past 8 MB from the start of the file and so cannot open slices
+        1 and up at all.
+        """
+        if not isinstance(slice_num, int) or isinstance(slice_num, bool):
+            raise SliceError("slice must be an integer")
+        if not 0 <= slice_num < self.SLICES:
+            raise SliceError(
+                "slice %d is out of range: a combo image has slices 0-%d"
+                % (slice_num, self.SLICES - 1))
+        need = self.PREFIX_SIZE + (slice_num + 1) * self.SLICE_SIZE
+        if len(disk_data) < need:
+            raise SliceError(
+                "slice %d needs a %d byte image; this one is %d bytes"
+                % (slice_num, need, len(disk_data)))
         self.data = disk_data
+        self.slice_num = slice_num
+        self.slice_start = self.PREFIX_SIZE + (slice_num * self.SLICE_SIZE)
+        self.DIR_START = self.slice_start + (self.BOOT_TRACKS * self.TRACK_SIZE)
         self.dir_offset = self.DIR_START
 
     def find_free_dir_entry(self):
@@ -988,6 +1031,31 @@ class ComboDisk:
 
         num_records = (len(file_data) + 127) // 128
         num_blocks = (len(file_data) + BLOCK_SIZE - 1) // BLOCK_SIZE
+
+        # REFUSED, not truncated.  The directory-entry loop below writes RC
+        # (entry[15]) capped at 128 records and advances the extent number once
+        # per entry, which is the EXM=0 shape - so anything over one logical
+        # extent was recorded as 128 records and read back at 16384 bytes, with
+        # "Added BIG.DAT: 24576 bytes" printed and exit 0.  Hd1kDisk.add_file
+        # gets this right (records_in_last_logical, two logical extents per
+        # physical entry); this class is a second, older implementation of the
+        # same thing and does not.
+        #
+        # Until the two are reconciled, refusing is the only honest answer:
+        # this path was unreachable before ComboDisk grew a working add - it
+        # died in verify_disk with AttributeError - so refusing loses nothing
+        # that ever worked, and silently truncating a file would be worse than
+        # the crash it replaced.
+        if num_records > 128:
+            print("Error: %s is %d bytes; this tool can only add files up to "
+                  "%d bytes to a combo slice.\n"
+                  "       Extract the slice with dd and use the plain hd1k "
+                  "path, which handles multi-extent files:\n"
+                  "         dd if=<combo> of=slice.img bs=1048576 skip=%d "
+                  "count=8"
+                  % (filename, len(file_data), 128 * 128,
+                     1 + 8 * getattr(self, 'slice_num', 0)))
+            return False
 
         used_blocks = self.get_used_blocks()
 
@@ -1169,21 +1237,21 @@ class ComboDisk:
         return bytes(file_data[:actual_size])
 
     def read_boot_area(self):
-        """Read the boot area (first 2 tracks) from the first slice.
+        """Read the boot area (first 2 tracks) of the selected slice.
 
         Returns 16384 bytes (2 tracks × 16 sectors × 512 bytes).
-        Boot area starts after the 1MB MBR prefix.
+        Boot area starts at the top of the slice.
         No skew is applied to hard disk formats.
         """
         boot_size = self.BOOT_TRACKS * self.TRACK_SIZE
-        start = self.PREFIX_SIZE
+        start = self.slice_start
         return bytes(self.data[start:start + boot_size])
 
     def write_boot_area(self, data):
-        """Write data to the boot area (first 2 tracks) of the first slice.
+        """Write data to the boot area (first 2 tracks) of the selected slice.
 
         Data is padded or truncated to exactly 16384 bytes.
-        Boot area starts after the 1MB MBR prefix.
+        Boot area starts at the top of the slice.
         No skew is applied to hard disk formats.
         """
         boot_size = self.BOOT_TRACKS * self.TRACK_SIZE
@@ -1192,7 +1260,7 @@ class ComboDisk:
             data = data + bytes(boot_size - len(data))
         elif len(data) > boot_size:
             data = data[:boot_size]
-        start = self.PREFIX_SIZE
+        start = self.slice_start
         self.data[start:start + boot_size] = data
 
 
@@ -1263,7 +1331,7 @@ def detect_disk_format(disk_data):
         return 'sssd'
 
 
-def get_disk_object(disk_data, format_hint=None):
+def get_disk_object(disk_data, format_hint=None, slice_num=0):
     """Get appropriate disk object for the format.
 
     Args:
@@ -1273,6 +1341,8 @@ def get_disk_object(disk_data, format_hint=None):
             'sssd-noskew' - ibm-3740 without skew
             'hd1k' - standard hd1k format
             'combo' - combo disk with MBR
+        slice_num: Which slice of a combo image to address (0-5).  A non-zero
+            slice on any single-slice format is an error, not a no-op.
 
     Returns:
         Disk object (SssdDisk, Hd1kDisk, or ComboDisk)
@@ -1282,12 +1352,19 @@ def get_disk_object(disk_data, format_hint=None):
     else:
         fmt = detect_disk_format(disk_data)
 
+    if slice_num and fmt != 'combo':
+        # Above the dispatch, so it covers the SSSD branches as well - they
+        # used to return before ever reaching the check.
+        raise SliceError(
+            "--slice %d: only a combo image has slices; this one is %s"
+            % (slice_num, fmt))
+
     if fmt == 'sssd':
         return SssdDisk(disk_data, use_skew=True)
     elif fmt == 'sssd-noskew':
         return SssdDisk(disk_data, use_skew=False)
     elif fmt == 'combo':
-        return ComboDisk(disk_data)
+        return ComboDisk(disk_data, slice_num=slice_num)
     else:
         return Hd1kDisk(disk_data)
 
@@ -1310,13 +1387,19 @@ def get_format_hint(args, disk_data):
     return None
 
 
+def get_slice(args):
+    """Which slice of a combo image the command should act on (default 0)."""
+    return getattr(args, 'slice', 0) or 0
+
+
 def cmd_add(args):
     """Add files to a disk image."""
     with open(args.disk, 'rb') as f:
         disk_data = bytearray(f.read())
 
     fmt = detect_disk_format(disk_data)
-    disk = get_disk_object(disk_data, get_format_hint(args, disk_data))
+    disk = get_disk_object(disk_data, get_format_hint(args, disk_data),
+                            slice_num=get_slice(args))
 
     sys_attr = getattr(args, 'sys', False)
     user = getattr(args, 'user', 0)
@@ -1348,7 +1431,8 @@ def cmd_list(args):
     with open(args.disk, 'rb') as f:
         disk_data = bytearray(f.read())
 
-    disk = get_disk_object(disk_data, get_format_hint(args, disk_data))
+    disk = get_disk_object(disk_data, get_format_hint(args, disk_data),
+                            slice_num=get_slice(args))
     files = disk.list_files()
 
     if not files:
@@ -1372,7 +1456,8 @@ def cmd_delete(args):
         disk_data = bytearray(f.read())
 
     fmt = detect_disk_format(disk_data)
-    disk = get_disk_object(disk_data, get_format_hint(args, disk_data))
+    disk = get_disk_object(disk_data, get_format_hint(args, disk_data),
+                            slice_num=get_slice(args))
 
     # Get list of all files
     files = disk.list_files()
@@ -1422,7 +1507,8 @@ def cmd_extract(args):
     with open(args.disk, 'rb') as f:
         disk_data = bytearray(f.read())
 
-    disk = get_disk_object(disk_data, get_format_hint(args, disk_data))
+    disk = get_disk_object(disk_data, get_format_hint(args, disk_data),
+                            slice_num=get_slice(args))
 
     user = getattr(args, 'user', 0)
     output_dir = getattr(args, 'output', '.')
@@ -1449,7 +1535,8 @@ def cmd_read_boot(args):
     with open(args.disk, 'rb') as f:
         disk_data = bytearray(f.read())
 
-    disk = get_disk_object(disk_data, get_format_hint(args, disk_data))
+    disk = get_disk_object(disk_data, get_format_hint(args, disk_data),
+                            slice_num=get_slice(args))
     boot_data = disk.read_boot_area()
 
     with open(args.output, 'wb') as f:
@@ -1465,7 +1552,8 @@ def cmd_write_boot(args):
     with open(args.disk, 'rb') as f:
         disk_data = bytearray(f.read())
 
-    disk = get_disk_object(disk_data, get_format_hint(args, disk_data))
+    disk = get_disk_object(disk_data, get_format_hint(args, disk_data),
+                            slice_num=get_slice(args))
     fmt = detect_disk_format(disk_data)
 
     with open(args.input, 'rb') as f:
@@ -1550,7 +1638,19 @@ def verify_disk(disk, disk_data, fmt):
         block_size = BLOCK_SIZE
         blocks_per_extent = 8  # 16-bit pointers
         pointer_size = 2
-        max_block = (len(disk_data) - 16384) // block_size  # After boot tracks
+        if fmt == 'combo':
+            # A combo is ~51 MB but a block pointer only ever addresses one
+            # 8 MB slice, so bounding by the whole file would let a pointer
+            # that runs off the end of the slice pass as in range.
+            #
+            # +1 because max_block is used as a COUNT below - the test is
+            # `block >= max_block` - while MAX_BLOCK is the last valid index.
+            # The hd1k arm computes a count too.  Without this the last block
+            # of every slice, which is exactly the one find_free_block hands
+            # out on a full slice, is condemned by the tool's own verifier.
+            max_block = ComboDisk.MAX_BLOCK + 1
+        else:
+            max_block = (len(disk_data) - 16384) // block_size  # After boot tracks
         dir_blocks = 8  # 1024 entries * 32 bytes = 32KB = 8 blocks
 
     # Collect all directory entries by file
@@ -1682,7 +1782,8 @@ def cmd_verify(args):
         disk_data = bytearray(f.read())
 
     fmt = detect_disk_format(disk_data)
-    disk = get_disk_object(disk_data, get_format_hint(args, disk_data))
+    disk = get_disk_object(disk_data, get_format_hint(args, disk_data),
+                            slice_num=get_slice(args))
 
     print(f"Verifying {args.disk} ({fmt} format, {len(disk_data)} bytes)")
 
@@ -1742,6 +1843,8 @@ def main():
                             help='Disk is combo format (1MB prefix)')
     add_parser.add_argument('--no-skew', action='store_true',
                            help='Disable sector skew (SSSD only)')
+    add_parser.add_argument('--slice', type=int, default=0, metavar='N',
+                            help='Slice of a combo image to act on (0-5, default 0)')
     add_parser.add_argument('--sys', '-s', action='store_true',
                            help='Set SYS attribute on files (makes visible from any user area)')
     add_parser.add_argument('--user', '-u', type=int, default=0,
@@ -1759,6 +1862,8 @@ def main():
                              help='Disk is combo format (1MB prefix)')
     list_parser.add_argument('--no-skew', action='store_true',
                              help='Disable sector skew (SSSD only)')
+    list_parser.add_argument('--slice', type=int, default=0, metavar='N',
+                             help='Slice of a combo image to act on (0-5, default 0)')
     list_parser.add_argument('disk', help='Disk image file')
     list_parser.set_defaults(func=cmd_list)
 
@@ -1771,6 +1876,8 @@ def main():
                                help='Disk is combo format (1MB prefix)')
     delete_parser.add_argument('--no-skew', action='store_true',
                                help='Disable sector skew (SSSD only)')
+    delete_parser.add_argument('--slice', type=int, default=0, metavar='N',
+                               help='Slice of a combo image to act on (0-5, default 0)')
     delete_parser.add_argument('disk', help='Disk image file')
     delete_parser.add_argument('files', nargs='+', help='Files to delete')
     delete_parser.set_defaults(func=cmd_delete)
@@ -1784,6 +1891,8 @@ def main():
                                 help='Disk is combo format (1MB prefix)')
     extract_parser.add_argument('--no-skew', action='store_true',
                                 help='Disable sector skew (SSSD only)')
+    extract_parser.add_argument('--slice', type=int, default=0, metavar='N',
+                                help='Slice of a combo image to act on (0-5, default 0)')
     extract_parser.add_argument('--user', '-u', type=int, default=0,
                                 help='User number to extract from (0-15, default 0)')
     extract_parser.add_argument('--output', '-o', default='.',
@@ -1801,6 +1910,8 @@ def main():
                                   help='Disk is combo format (1MB prefix)')
     read_boot_parser.add_argument('--no-skew', action='store_true',
                                   help='Disable sector skew (SSSD only)')
+    read_boot_parser.add_argument('--slice', type=int, default=0, metavar='N',
+                                  help='Slice of a combo image to act on (0-5, default 0)')
     read_boot_parser.add_argument('disk', help='Disk image file')
     read_boot_parser.add_argument('output', help='Output file for boot area')
     read_boot_parser.set_defaults(func=cmd_read_boot)
@@ -1814,6 +1925,8 @@ def main():
                                    help='Disk is combo format (1MB prefix)')
     write_boot_parser.add_argument('--no-skew', action='store_true',
                                    help='Disable sector skew (SSSD only)')
+    write_boot_parser.add_argument('--slice', type=int, default=0, metavar='N',
+                                   help='Slice of a combo image to act on (0-5, default 0)')
     write_boot_parser.add_argument('disk', help='Disk image file')
     write_boot_parser.add_argument('input', help='Input file containing boot area data')
     write_boot_parser.add_argument('sector', nargs='?', type=int, default=0,
@@ -1831,6 +1944,8 @@ def main():
                                help='Disk is combo format (1MB prefix)')
     verify_parser.add_argument('--no-skew', action='store_true',
                                help='Disable sector skew (SSSD only)')
+    verify_parser.add_argument('--slice', type=int, default=0, metavar='N',
+                               help='Slice of a combo image to act on (0-5, default 0)')
     verify_parser.add_argument('disk', help='Disk image file')
     verify_parser.set_defaults(func=cmd_verify)
 
@@ -1839,7 +1954,13 @@ def main():
         return 0
 
     args = parser.parse_args()
-    return args.func(args)
+    try:
+        return args.func(args)
+    except SliceError as e:
+        # Narrow on purpose: UnicodeDecodeError is a ValueError, so catching
+        # ValueError here would report a corrupt directory as a bad flag.
+        print("cpm_disk.py: error: %s" % e, file=sys.stderr)
+        return 2
 
 
 if __name__ == '__main__':
