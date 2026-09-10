@@ -41,13 +41,21 @@ this script's own header names that cost - "a gate that cries wolf is a gate tha
 stops being read, which is the exact failure this script was written after".
   The header also promises "this script is identical in cpmemu, romwbw_emu,
 cpmdroid, ioscpm and z80cpmw ... Edit one, copy to the rest", and that has not
-held: the five copies have five md5s - ioscpm ba456daf, cpmemu 2dd4a7f6,
+held: the five copies have five md5s - ioscpm a955cb24, cpmemu 2dd4a7f6,
 romwbw_emu 29fd68a7, cpmdroid 9a703420, z80cpmw 7e6a2c90.  This repository's is
 the only one still matching the hash romwbw_emu/todo.txt calls canonical for all
 five, which is how far that claim has drifted.  ioscpm's is furthest ahead: it
 alone has *.app arms in scan_artifact() and scan_artifact_for(), so running THIS
 copy on a Mac silently skips the iOS .app.  Taking ioscpm's copy wholesale fixes
 both halves.
+  RE-MEASURED 2026-09-10, cutting v4.8.1.  The transcript above is no longer
+what this copy prints.  `--tree-only` now gives two NO v0 INDEX URL lines, for
+ioscpm and cpmdroid, and one CANNOT READ, for z80cpmw, and still exits 1 - so
+the exit status and the prescribed fix re-measure true and the three-line
+diagnosis above does not.  ioscpm's md5 above was ba456daf when this was
+written and is a955cb24 now, corrected in place; the other four still match.
+Re-run the script and re-read ioscpm's copy before acting on the paragraphs
+above.
   Raised from ioscpm on 2026-09-08, whose copy carries "THIS COPY HAS DIVERGED
 and the other four need the same edit" - an instruction about other
 repositories, which belongs in those repositories' lists.  romwbw_emu/todo.txt

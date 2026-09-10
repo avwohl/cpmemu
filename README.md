@@ -831,15 +831,20 @@ three on their next build, with no notification:
   qkz80-source` prints which of the four a tree would take, without building
   anything. Builds with `-std=c++11 -Wall`.
 
-Only romwbw_emu has a version gate, and only in CI: `release.yml` and `test.yml`
-clone `avwohl/cpmemu` and check out a pinned `CPMEMU_REF`, `9a94e8d` at the
-v4.7.0 tag. The pin is behind this tree, but nothing in `src/qkz80*.{cc,h}` has
-changed since it, so the core its CI compiles is the one this release ships.
+None of the three has a version gate. romwbw_emu had the only one: its
+`release.yml` and `test.yml` cloned `avwohl/cpmemu` and checked out a pinned
+`CPMEMU_REF`. It was removed in `d18e374` on 2026-09-01 — two days before
+v4.8.0 was tagged — and that commit's own header says what replaced it: "this
+workflow pins none of what it installs - not fpm, not emscripten, not the cpmemu
+clone that supplies the Z80 core. That is a decision, not an oversight." Both
+workflows now run a bare `git clone https://github.com/avwohl/cpmemu.git` and
+build whatever the default branch holds. ioscpm and z80cpmw have none.
 
-ioscpm and z80cpmw have no gate at all. Neither does a local romwbw_emu build,
-but it need not reach this working tree to get there: a `qkz80.pc` left by
-`make install-lib` here wins over the sibling directory, and a `local.mk` wins
-over both.
+So all three follow this repository's `main` rather than any tag, and no
+release of this project gates any of them: a commit pushed here is what their
+next CI run compiles. A local romwbw_emu build does not even have to reach the
+network to get there — a `qkz80.pc` left by `make install-lib` here wins over
+the sibling directory, and a `local.mk` wins over both.
 
 06262ff is the mechanism working quietly in the good direction: it added
 `QKZ80_NO_TRACE` and all three picked it up on their next build without being

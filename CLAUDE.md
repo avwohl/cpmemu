@@ -29,9 +29,10 @@ error.
 
 `src/qkz80*.{cc,h}` is the CPU core, and three sibling projects — ioscpm,
 z80cpmw and romwbw_emu — compile those files directly out of a neighbouring
-working tree rather than depending on a cpmemu release. Two of the three have no
-version gate at all, so an edit to `qkz80.cc` lands in all of them on their next
-build with no notification. Read
+working tree rather than depending on a cpmemu release. None of the three has a
+version gate: romwbw_emu had the only one and removed it on 2026-09-01, so all
+three now build whatever this repository's default branch holds and an edit to
+`qkz80.cc` lands in all of them on their next build with no notification. Read
 [Who else compiles qkz80](README.md#who-else-compiles-qkz80) before changing
 qkz80's public surface: it names the compiler, language standard and warning set
 each one uses, and they are not this repo's.

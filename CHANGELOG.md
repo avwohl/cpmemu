@@ -10,6 +10,98 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
+## [4.8.1] - 2026-09-10
+
+The emulator is not touched. Nothing under `src/` moved between v4.8.0 and this
+release except the two version constants, so the program, `libqkz80.a` and
+`libqkz80.so` in the 4.8.1 packages are built from the sources 4.8.0 shipped.
+That is measured rather than assumed: the `.deb` CI built from `4753e51` and the
+published `cpmemu_4.8.0_amd64.deb` have byte-identical payloads on both amd64
+and arm64 — the binary, the `.so`, the `.a`, all seven headers, `README.md`,
+`LICENSE` and `qkz80.pc` alike — and they stayed identical across an
+`ubuntu-24.04` runner image change, 20260823.283.1 to 20260907.300.1. Four
+things do differ in 4.8.1: `README.md`, for the reason this release exists;
+`qkz80.pc`, now that `LIB_VERSION` reads 4.8.1; the `control` version field; and
+fpm's generated `changelog.gz`, which carries the version and the build time and
+so differs on every build. The suite on `4753e51` is 102 passed, 0 failed, 4
+skipped on Linux, 101/0/5 on macOS and 28/0 for the Windows console cases —
+CI run 34281968231, the first release-time figures that come from a machine
+other than the one they were written on.
+
+`todo.txt` went the wrong way, in the release after the one whose entry opened
+`todo.txt` is empty: 24 lines and no items at v4.8.0, 75 lines and one item now,
+52 lines added and 1 removed. That item is a ticket rather than a fix, which is
+what `CLAUDE.md` calls moving work rather than doing it. It is tagged `[ANY]`
+and nothing blocks it; the repair it prescribes — taking `ioscpm`'s copy of the
+script whole — is an edit in five repositories and is not done here. Two of its
+measurements had already rotted and are corrected in the item rather than
+restated here.
+
+### Fixed
+
+- **The gate exited 1 for three ports that were all correct.** The v0 migration
+  deleted the `RELEASE_TAG` constants and put a compiled-in index URL in their
+  place, so `pin_of` — which strips comment lines, and so could not even find
+  the prose explaining what had replaced them — found no quoted `vX.Y.Z` in
+  `ioscpm`, `cpmdroid` or `z80cpmw` and reported `NO PIN FOUND` for all three.
+  The whole family was failing a gate for having done the right thing, which is
+  worse than no gate. The repair already existed in `cpmdroid`'s copy and had
+  never been carried across: an `index-v0` port kind that asks a migrated port
+  an answerable question instead — does the source still name the v0 index, is
+  the legacy pin really gone, and does that index still publish the RomWBW
+  release this build's bundled ROM declares, read out of the ROM binary at
+  `0x103` rather than out of any constant. One table entry was also pointing at
+  `z80cpmw/DiskCatalog.cpp`, where the old pin used to live, instead of
+  `z80cpmw/CatalogV0.cpp`, where the index URL is, and would have failed even
+  after the kind was corrected. Both failure paths were driven rather than
+  argued, by injecting them into that file and restoring it.
+
+- **A run that inspected no package ended on a sentence that read as a pass.**
+  Every run closed with "every artifact found agrees with its own tree", which
+  is still true after inspecting zero packages and reads as a verdict on the
+  half that never ran. Nothing was wrong with the scan: `artifacts_for()` globs
+  local build paths — `dist/`, `bin/Release/`, `app/build/outputs`, `build/`,
+  `DerivedData` — and MSVC, the Android SDK and Xcode are three different
+  machines, so no one machine has all three packages and most have none. Found
+  nothing and checked nothing simply read the same. There are three endings now,
+  and for zero packages it says in as many words that this is not a pass of the
+  artifact half, and names the paths it looked under. Verified four ways: no
+  artifact present, `--tree-only`, a planted artifact naming the v0 index
+  (counted, exit 0), and a planted artifact that does not (`ARTIFACT PREDATES
+  THE MIGRATION`, exit 1).
+
+- **`tools/check-disk-pins.sh` was named for something the script cannot do.**
+  It pins nothing: it opens a built package, reads a version string whoever
+  built the package had already compiled into it, and says whether that string
+  names the newest published disk images. The only thing it writes is one
+  `mktemp` scratch directory — no `sed -i`, no edit of any source. The name cost
+  a real conversation: asked to add the script to a release workflow, the
+  reasonable reading was "you want to freeze a version", and freezing a
+  dependency is a thing this family has already decided against. It is
+  `tools/check-shipped-disks.sh` now, moved with `git mv` so history follows,
+  with every live pointer moved with it and dated entries in this file
+  deliberately left alone. Behaviour is unchanged, checked rather than assumed:
+  the committed pre-rename script and the renamed one were run from the same
+  directory and their output is identical once the script's own name is masked.
+
+### Documentation
+
+- **`README.md` told users that romwbw_emu pins the qkz80 core it compiles. It
+  has not since 2026-09-01, two days before v4.8.0 was tagged.** "Who else
+  compiles qkz80" said romwbw_emu's `release.yml` and `test.yml` check out a
+  pinned `CPMEMU_REF`, `9a94e8d` at the v4.7.0 tag, and concluded that the core
+  its CI compiles is the one this release ships. `d18e374` removed every pin in
+  that repository — "this workflow pins none of what it installs - not fpm, not
+  emscripten, not the cpmemu clone that supplies the Z80 core. That is a
+  decision, not an oversight" — and both workflows now run a bare `git clone
+  https://github.com/avwohl/cpmemu.git`. So it is not two of the three siblings
+  that have no version gate, it is all three, and none of them follows a tag:
+  what they compile is whatever `main` holds when their CI next runs. The true
+  statement is the more alarming one, which is why it is worth a release —
+  `README.md` ships inside the `.deb` and the `.rpm`, so the correction reaches
+  a user only in a package. `CLAUDE.md` carried the same claim in "The rule that
+  is easy to miss", where being out of date is worse, and is corrected with it.
+
 ## [4.8.0] - 2026-09-03
 
 `todo.txt` is empty. It had three items; two are answered here and the third —
