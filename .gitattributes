@@ -1,0 +1,36 @@
+# Line endings: LF, everywhere, in the repository and in the working tree.
+#
+# Same policy and same spelling as z80fpga, which has had this file for a while:
+# `text=auto eol=lf`.  Git stores LF and checks out LF, so there is one answer on
+# every platform and no tool can disagree with another about what a line ends
+# with.
+#
+# WHY IT IS HERE.  Nothing declared line endings in any of these repositories,
+# and a number of tracked files were CRLF by accident of having been written on
+# Windows years ago.  A script that writes '\n' - which is what Python's
+# open(p, "w") does - then rewrites every line in such a file.  That happened
+# four times in one day in romwbw_emu, each time producing a commit whose
+# diffstat claimed hundreds of insertions for an edit of a dozen lines.  It is
+# not cosmetic: a diff like that cannot be reviewed, and `git blame` afterwards
+# points at the line-ending change rather than at whoever wrote the line.
+#
+# Declaring the files `-text` would have documented the hazard and prevented
+# nothing, because git would still commit the flattened bytes.  Storing LF is
+# what makes the failure impossible: a tool that writes LF now changes nothing.
+#
+# To find CRLF files again if this is ever undone:
+#   git ls-files | while read -r f; do
+#       n=$(tr -cd '\r' < "$f" | wc -c); [ "$n" -gt 0 ] && echo "$f $n"; done
+* text=auto eol=lf
+
+# tests/8080/ is left exactly as it is.  The .mac and .prn files there are
+# Frank Cringle's 8080/Z80 exerciser as converted by Ian Bartholomew - a
+# third-party artifact kept beside the .com the suite actually runs, for
+# provenance.  Their CRLF is how they were published, and run_tests.sh reads
+# none of them.
+tests/8080/** -text
+
+# Binaries, declared rather than left to git's NUL-byte guess.
+*.com        binary
+*.bin        binary
+*.png        binary
