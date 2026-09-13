@@ -119,3 +119,14 @@ project's real history and are written to be read years later.
 State what was measured rather than what ought to be true. "Never executed
 anywhere" and "measured on macOS 27 arm64" are the register this tree is written
 in; a claim that a thing works is expected to name the run that showed it.
+
+## What is finished but not shipped
+
+`sh util/unreleased.sh` reports the gap between the newest GitHub release and
+this tree, and separates the half that does not travel by release at all:
+z80cpmw's vcxproj compiles `src/` in place from a sibling checkout, and every
+repository in the family calls `util/cpm_disk.py` out of this one, so a commit
+to either reaches its readers on their next build with no release involved.
+
+**It is not a gate and must not become one.** No exit 1: 0 even when the answer
+is "six commits unreleased", 2 only when it could not measure.
