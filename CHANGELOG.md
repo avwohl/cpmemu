@@ -18,6 +18,27 @@ by ioscpm's. The script is deleted instead. Nothing here ships in a package, so
 there is no release to put it under yet; `CLAUDE.md` asks for the entry either
 way.
 
+### Fixed
+
+- **`ComboDisk` read and wrote file data 16,384 bytes before the block numbers
+  said.** The directory was found correctly, so `list` looked right while
+  `extract` returned the wrong bytes and `add` wrote over a neighbouring file.
+  Covered by 84 new checks in `util/test_cpm_disk.py`.
+
+- **`add` on a combo refused any file over 16,384 bytes.** `ComboDisk` wrote a
+  single logical extent where `Hd1kDisk` already handled multi-extent files
+  correctly. `ComboDisk` is a subclass of `Hd1kDisk` at an offset now, so there
+  is one implementation: files of any size that fit the slice round-trip, and
+  both classes refuse one that would run past the end of the disk rather than
+  growing the image.
+
+### Added
+
+- **`--slice N` reaches every slice of a combo**, 0 through 5, where only the
+  first was addressable before. `romwbw_emu`'s CLAUDE.md documents this as the
+  reason `cpm_disk.py` replaces cpmtools, whose libdsk cannot address past 8 MB
+  from the start of a file.
+
 ### Changed
 
 - **One assembler, `um80`, instead of whichever of two was installed.**

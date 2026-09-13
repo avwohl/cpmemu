@@ -1,6 +1,6 @@
 Todo list.  Open items only.
 
-- 6 commits since v4.8.1, two of them ComboDisk fixes - cut a release.
+- cpm_disk.py's two ComboDisk fixes are unreleased and unreleasable: no package ships that file.
 
 The rules that used to be in this header - what belongs here, what a tag means,
 where finished work goes - are in CLAUDE.md now.  They were rules rather than
