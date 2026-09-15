@@ -26,17 +26,22 @@ sudo make install
 ### Build Options
 
 ```bash
-# Static build (for maximum portability)
+# Static build (for maximum portability).  Refused on macOS, which has no
+# static libc to link against.
 make STATIC=1
 
-# Build only the qkz80 library
+# qkz80: static only, shared only, or both
 make lib
-
-# Build shared library
 make shared
+make libs
 
-# Run quick tests
-make test
+# Install and remove the library, headers and qkz80.pc (see below)
+sudo make install-lib
+sudo make uninstall-lib
+
+# Tests
+make unit          # 8080-mode CPU unit tests, under a second
+make test          # three quick tests, eyeball only, never fails
 
 # Clean build artifacts
 make clean
@@ -44,9 +49,25 @@ make clean
 
 ### Install Locations
 
-- Binary: `/usr/local/bin/cpmemu`
-- Library: `/usr/local/lib/libqkz80.a`
-- Headers: `/usr/local/include/qkz80/`
+`make install` installs the two programs:
+
+- `/usr/local/bin/cpmemu`
+- `/usr/local/bin/cpm_disk` — the CP/M disk-image tool, installed from
+  `util/cpm_disk.py`
+
+The library is a **separate target**, `make install-lib`:
+
+- `/usr/local/lib/libqkz80.a`, `libqkz80.so`
+- `/usr/local/include/qkz80/` — seven headers
+- `/usr/local/lib/pkgconfig/qkz80.pc`
+
+`PREFIX` (default `/usr/local`), `BINDIR`, `LIBDIR`, `INCLUDEDIR`,
+`PKGCONFIGDIR` and `DESTDIR` are honoured, and `qkz80.pc` is generated from
+whichever of them the install used. `make uninstall` and `make uninstall-lib`
+remove them again.
+
+The `.deb` and the `.rpm` carry the emulator and the library together, and no
+`cpm_disk`; there is no separate `-dev` package.
 
 ## Windows
 
@@ -286,11 +307,17 @@ override it with `CPMEMU_ZEX_TIMEOUT` if a slower machine needs longer.
 
 ### 8080 Tests
 
+The exercisers in `tests/8080/` run under `--8080`:
+
 ```bash
 cd src
-./cpmemu ../tests/8080/TEST.COM
-./cpmemu ../tests/8080/CPUTEST.COM
+./cpmemu --8080 ../tests/8080/8080pre.com    # preliminary test, seconds
+./cpmemu --8080 ../tests/8080/8080exm.com    # 25 instruction groups, ~4 minutes
 ```
+
+`tests/run_tests.sh` runs `8080pre.com` as part of the quick suite and
+`8080exm.com` under `--zex`. `tests/8080/README.md` lists the files and where
+they came from.
 
 ## Troubleshooting
 
@@ -302,10 +329,11 @@ chmod +x src/cpmemu
 
 ### Windows: "not recognized as internal or external command"
 
-Make sure you're running from a Developer Command Prompt, or that the Visual Studio environment is set up:
-```cmd
-"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x64
-```
+Run from a Developer Command Prompt, or let `src/do_build.bat` set the
+environment up: it asks `vswhere.exe` where Visual Studio is rather than naming
+a version or an edition, and only falls back to a hardcoded path if the
+installer is gone. To do it by hand, call `vcvarsall.bat x64` from your own
+installation.
 
 ### Windows MSIX: "Publisher mismatch"
 

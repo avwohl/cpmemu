@@ -32,6 +32,29 @@ what runs the suite the same README relies on; and `util/` was described as the
 disk utility alone when it also holds `unreleased.sh`, which CLAUDE.md tells
 every session to run.
 
+**`docs/BUILDING.md` corrected, now that the README points at it.** Its
+"Install Locations" listed the library and headers under `sudo make install`;
+they come from the separate `make install-lib`, and `make install` installs
+`cpmemu` and `cpm_disk`. Staged both to a DESTDIR to check. Its "8080 Tests"
+ran `tests/8080/TEST.COM` and `CPUTEST.COM`, neither of which exists — the
+files are `8080pre.com`, `8080exer.com` and `8080exm.com`, and they need
+`--8080`. Build Options gained `libs`, `install-lib`, `uninstall-lib` and
+`unit`, and the STATIC=1 line now says it is refused on macOS. The Windows
+troubleshooting entry named a `Visual Studio\2022\Community` vcvarsall path
+where `src/do_build.bat` deliberately asks `vswhere.exe` instead.
+
+`make lib` and `make shared` were *not* wrong and are unchanged: both are real
+targets alongside `libs` (`src/makefile:134-136`).
+
+**`docs/8kbasic.md` moved to `docs/archive/`.** It documents `altair_emu`,
+which does not exist in this repository or in any of the four siblings, loading
+a `~/mbasic2025/4k8k/8kbas.bin` that is in no checkout, through options
+(`--tape-in`, `--tape-out`, `--mem`) that nothing implements. cpmemu has no I/O
+ports at all, so its 88-2SIO/88-ACR port map describes hardware this emulator
+does not emulate. Nothing linked to it. It keeps the Altair BASIC startup
+questions and the cassette format, under a header saying none of it runs here —
+`docs/archive/` already holds the Altair-era `BOOT_TRACK_ANALYSIS.md`.
+
 `todo.txt` is back to "There are none", one item after it stopped being empty.
 That item asked for this repository's copy of a script to be replaced wholesale
 by ioscpm's. The script is deleted instead. Nothing here ships in a package, so

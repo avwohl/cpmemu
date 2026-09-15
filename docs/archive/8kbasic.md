@@ -1,3 +1,16 @@
+> **Historical, and none of it is runnable here.** This describes `altair_emu`,
+> a hardware-level Altair emulator that does not exist in this repository and
+> never has — no file matching `altair_emu*` is tracked in cpmemu, romwbw_emu,
+> z80cpmw, ioscpm or cpmdroid. The binary it loads, `~/mbasic2025/4k8k/8kbas.bin`,
+> is a personal path that is not in any checkout either, and the options below
+> (`--tape-in`, `--tape-out`, `--mem`) are implemented by nothing in this family.
+>
+> cpmemu is a BDOS-level emulator: it has no I/O ports, so the port map and the
+> 88-2SIO/88-ACR register detail here describe hardware it does not emulate. The
+> file is kept for the Altair BASIC startup questions, the cassette tokenised
+> format and the reference links, which are about MITS BASIC rather than about
+> any program here.
+
 # Altair 8K BASIC on altair_emu
 
 This document describes running MITS Altair 8K BASIC (Rev 4.0) on the `altair_emu` hardware-level emulator.
