@@ -12,6 +12,37 @@ summarises and points; `git log` is the detail. Open work is in
 
 ## [Unreleased]
 
+**`tests/test_results_final.txt` claimed the 8080 core fails its own
+exerciser, and it has been wrong for the life of the repository.** Five lines,
+in with the initial commit of 2025-12-12, recording a truncated run:
+
+```
+aluop nn......................  ERROR **** crc expected:9e922f9e found:08689e01
+aluop <b,c,d,e,h,l,m,a>.......  ERROR **** crc expected:cf762c86 found:f7a4fa68
+```
+
+Nothing reads it. `tests/8080EXM.COM`, the file it names, is not in the tree —
+`tests/8080/README.md` records removing that byte-identical duplicate. It stops
+mid-group, after two ERRORs and before any result for `<daa,cma,stc,cmc>`, so
+what it most resembles is a run that was interrupted. What it reads as, to
+anyone who opens `tests/` and sees a file called *final*, is the current
+verdict on the CPU.
+
+Measured rather than assumed before deleting it. `tests/run_tests.sh --zex` on
+this machine:
+
+```
+PASS  zexdoc (documented instructions) (groups complete: 67, no CRC mismatches)
+PASS  zexall (all instructions)        (groups complete: 67, no CRC mismatches)
+PASS  8080exm (8080 mode)              (groups complete: 25, no CRC mismatches)
+104 passed, 0 failed, 2 skipped
+```
+
+Both skips are the platform pair the suite documents as unreachable here
+(`x86_64-w64-mingw32-g++` not installed, and the Windows console harness needing
+a real Windows console). The two groups the file reports as failing are among
+the 25 that pass.
+
 **`README.md` cut from 886 lines to 487, and two references split out of it.**
 The habits removed were history (what a build from 2025-12-30 did, what an
 earlier version of the Testing section said), justification (a 17-line argument
