@@ -85,14 +85,16 @@ build, build from source with `src/do_build.bat` (MSVC) or package one with
 make -C src
 ```
 
-Needs a C++11 compiler. [docs/BUILDING.md](docs/BUILDING.md) covers every
-platform, CMake, MinGW and cross-compiling. `STATIC=1` is refused on macOS,
-which has no static libc to link against.
+Needs a C++11 compiler. This leaves the binary at `src/cpmemu`; `sudo make -C
+src install` puts it on `PATH` (with `cpm_disk` beside it).
+[docs/BUILDING.md](docs/BUILDING.md) covers every platform, CMake, MinGW and
+cross-compiling. `STATIC=1` is refused on macOS, which has no static libc to
+link against.
 
 Then:
 
 ```bash
-cpmemu program.com
+cpmemu program.com          # or ./src/cpmemu program.com, uninstalled
 ```
 
 ## Usage
@@ -169,29 +171,31 @@ not byte-exact for eight-bit data.
 ## Configuration Files
 
 A config file describes a whole run - the program, its file mappings, the
-drives and the devices:
+drives and the devices. It is a flat list of `key = value` lines: **there are no
+`[section]` headers**, and a line without an `=` is reported as
+`Config line N: invalid format (missing =)`.
 
-```ini
-[system]
+```
+# The program to run, and the directory to run it in.
 program = mbasic.com
 cd = /path/to/tests
 
-[files]
-TEST.BAS = my long test program.bas
-OUT.DAT  = results.dat, binary
-
-[drives]
+# A drive letter is a host directory, and a configured drive is confined to it.
 drive_A = /path/to/a
 drive_B = /path/to/b
 
-[devices]
+# Devices.
 printer = out.prn
+
+# Anything the loader does not recognise as a directive is a file mapping.
+# A trailing `text` or `binary` sets the mode, separated by a SPACE.
+TEST.BAS = my long test program.bas
+OUT.DAT  = results.dat binary
 ```
 
-`$VAR` is expanded in values, and an unknown key inside `[files]` becomes a file
-mapping rather than an error. Every directive the parser accepts, the mapping
-forms that do and do not work, and the drive rules are in
-[examples/README.md](examples/README.md).
+`$VAR` and `${VAR}` are expanded in values. Every directive the parser accepts,
+the mapping forms that do and do not work, and the drive rules are in
+[examples/README.md](examples/README.md); `examples/` carries working files.
 
 ## Console and Keyboard
 
@@ -290,8 +294,10 @@ arrow keys there has to decode the sequence itself.
 
 ## Known Limitations
 
-**Console input is seven bits.** All six console read sites mask with `& 0x7F`,
-so no byte at or above 0x80 reaches the guest intact. This is deliberate and is
+**Console input is seven bits.** The four console read sites - BDOS 1, the
+BDOS 10 buffer store, BDOS 6 and BIOS CONIN - mask with `& 0x7F`, so no byte at
+or above 0x80 reaches the guest intact. BDOS 3 and BIOS READER mask the same
+way, which makes six read sites in all; those two are the Reader device. This is deliberate and is
 not going to change: CP/M software expects seven bits, and BDOS 6 spells "no
 character" as 0, so a byte that masks to 0x00 is dropped outright.
 [docs/console_seven_bit.md](docs/console_seven_bit.md) has the measurements and
@@ -317,7 +323,8 @@ deliberate selection still shadows ^C until Esc clears it.
 
 ## CP/M Support
 
-BDOS functions 0-48 are implemented, with 28-30, 38 and 39 as stubs. File I/O is
+BDOS functions 0-40 and 48 are implemented, with 28-30, 38 and 39 as stubs;
+41-47 are not implemented and return 0xFF with a message on stderr. File I/O is
 handled at the BDOS level, so the BIOS disk calls (HOME, SETTRK, SETSEC, SETDMA,
 READ, WRITE) are stubs and a program that drives the disk through the BIOS will
 not work. There is no CCP: nothing runs above the TPA, and a program that
@@ -453,7 +460,7 @@ and `.rpm` do not carry it.
 - [MANUAL_CHECKS.md](MANUAL_CHECKS.md) - what needs a person at a keyboard
 - [docs/qkz80_interrupts.md](docs/qkz80_interrupts.md) - interrupts in the CPU core
 - [docs/cpm_disk_formats.md](docs/cpm_disk_formats.md) - CP/M on-disk structures
-- [docs/file_handling_notes.md](docs/file_handling_notes.md) - file mapping and mode detection
+- [docs/file_handling_notes.md](docs/file_handling_notes.md) - mode detection and file search order (its mapping section is older than [examples/README.md](examples/README.md), which is the reference)
 - [docs/macos-signing.md](docs/macos-signing.md) - signing and notarizing the macOS release
 - `todo.txt` - open work
 

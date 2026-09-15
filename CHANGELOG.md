@@ -55,6 +55,22 @@ does not emulate. Nothing linked to it. It keeps the Altair BASIC startup
 questions and the cassette format, under a header saying none of it runs here —
 `docs/archive/` already holds the Altair-era `BOOT_TRACK_ANALYSIS.md`.
 
+**The rewritten README was audited, and it had invented a config file format.**
+The `## Configuration Files` example was an INI file with `[system]`, `[files]`,
+`[drives]` and `[devices]` headers. There are no sections: `load_config_file`
+wants an `=` on every non-comment line and answers a `[...]` line with
+`Config line N: invalid format (missing =)`. Run as printed, four of its
+thirteen lines were errors. The mode token is also space-separated, so
+`results.dat, binary` registered a host path with a comma on the end. Replaced
+with the flat form `examples/*.cfg` actually use, and run to confirm it parses.
+
+Also from that audit: `make -C src` leaves the binary at `src/cpmemu` and the
+README then said to type `cpmemu program.com`; BDOS 41-47 are not implemented,
+where the text said "0-48 ... with 28-30, 38 and 39 as stubs"; two of the six
+seven-bit read sites are the Reader device rather than the console; and
+`docs/console_seven_bit.md` printed one paragraph twice, the second copy under a
+heading presenting it as new.
+
 `todo.txt` is back to "There are none", one item after it stopped being empty.
 That item asked for this repository's copy of a script to be replaced wholesale
 by ioscpm's. The script is deleted instead. Nothing here ships in a package, so

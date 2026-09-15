@@ -37,11 +37,6 @@ masked bytes.
   stored as 0x7F rather than acting as rubout, and five raw 0x83 reach the guest
   as five `03` without tripping the five-^C exit.
 
-The seven-bit cases in `tests/pty_console.cc` pin the console sites, over a pty
-and - for the blocking read, where it separates this mask from a line discipline
-that strips the bit - over a pipe as well, so the answer cannot change by
-accident. The two Reader sites are documented here but asserted by nothing.
-
 ## Where it is pinned
 
 The seven-bit cases in `tests/pty_console.cc` pin the console sites, over a pty
