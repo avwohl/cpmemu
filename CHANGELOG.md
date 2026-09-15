@@ -12,6 +12,26 @@ summarises and points; `git log` is the detail. Open work is in
 
 ## [Unreleased]
 
+**`README.md` cut from 886 lines to 487, and two references split out of it.**
+The habits removed were history (what a build from 2025-12-30 did, what an
+earlier version of the Testing section said), justification (a 17-line argument
+against tnylpo above the first instruction; 28 lines defending the `xattr` step
+against Apple's published statement), and duplication — `## From Source`
+re-argued what `docs/BUILDING.md` owns, `## Configuration Files` re-documented
+what `examples/README.md` owns, and the Linux and macOS quick-start blocks were
+byte-identical to each other. The BDOS/BIOS conformance tables and the memory
+map are now `docs/CPM_SUPPORT.md`; the seven-bit console measurements are
+`docs/console_seven_bit.md`. Both are linked from the README, which CLAUDE.md
+designates the reference.
+
+Four things the README asserted that the tree does not: `docs/cpm_disk_formats.md`
+was cited as documenting the `cpm_disk` tool and contains no mention of it;
+ioscpm's symlinks point at `../../../cpmemu/src/qkz80*`, three levels up, not
+one; `.github/workflows/` was described as release.yml alone when `ci.yml` is
+what runs the suite the same README relies on; and `util/` was described as the
+disk utility alone when it also holds `unreleased.sh`, which CLAUDE.md tells
+every session to run.
+
 `todo.txt` is back to "There are none", one item after it stopped being empty.
 That item asked for this repository's copy of a script to be replaced wholesale
 by ioscpm's. The script is deleted instead. Nothing here ships in a package, so
