@@ -44,10 +44,11 @@ belongs.
 
 Two things about the dialect, both of which have already cost time:
 
-- **`.z80` on the first line, always.** Without it `um80` is an 8080 assembler
-  and the first `LD` fails the file - `Unknown instruction or directive: LD`.
-  All 13 sources the suite assembles needed this line added when they were
-  converted; every one of them failed on `LD` until it was there.
+- **`.z80` before the first Z80 instruction, always.** Without it `um80` is an
+  8080 assembler and the first `LD` fails the file - `Unknown instruction or
+  directive: LD`. All 13 sources the suite assembles carry it; in every one it
+  sits after the comment header and is tab-indented, not on line 1 - the
+  requirement is that it precede the first `LD`, not that it open the file.
 - **Never write `org 0100h` in a `.COM` source.** `ul80` bases a relocatable
   code segment at 0100h by itself, so an ORG is applied *on top of* that base
   and puts the code at 0200h. Measured on `tests/drv_read.asm`: with the ORG it
@@ -63,12 +64,15 @@ Two things about the dialect, both of which have already cost time:
 
 ## The rule that is easy to miss
 
-`src/qkz80*.{cc,h}` is the CPU core, and three sibling projects — ioscpm,
-z80cpmw and romwbw_emu — compile those files directly out of a neighbouring
-working tree rather than depending on a cpmemu release. None of the three has a
-version gate: romwbw_emu had the only one and removed it on 2026-09-01, so all
-three now build whatever this repository's default branch holds and an edit to
-`qkz80.cc` lands in all of them on their next build with no notification. Read
+`src/qkz80*.{cc,h}` is the CPU core, and four sibling projects consume it out of
+a neighbouring working tree rather than depending on a cpmemu release — **three
+compile the sources** (ioscpm, z80cpmw and cpmdroid, whose
+`app/src/main/cpp/CMakeLists.txt` names the same four `.cc` files) and
+**romwbw_emu links `libqkz80.a`** instead, so an edit reaches it only once that
+archive is rebuilt. None of the four has a version gate: romwbw_emu had the only
+one and removed it on 2026-09-01, so they all build whatever this repository's
+default branch holds and an edit to `qkz80.cc` lands in them on their next build
+with no notification. Read
 [Who else compiles qkz80](README.md#who-else-compiles-qkz80) before changing
 qkz80's public surface: it names the compiler, language standard and warning set
 each one uses, and they are not this repo's.
@@ -124,9 +128,11 @@ in; a claim that a thing works is expected to name the run that showed it.
 
 `sh util/unreleased.sh` reports the gap between the newest GitHub release and
 this tree, and separates the half that does not travel by release at all:
-z80cpmw's vcxproj compiles `src/` in place from a sibling checkout, and every
-repository in the family calls `util/cpm_disk.py` out of this one, so a commit
-to either reaches its readers on their next build with no release involved.
+z80cpmw's vcxproj compiles four files out of `src/` in place from a sibling
+checkout — the qkz80 core, not the emulator — and romwbw_emu calls
+`util/cpm_disk.py` out of this one. (Only romwbw_emu does: romwbw_disks
+deliberately does not, and the three GUI clients read images in-app.) A commit
+to either reaches its reader on the next build with no release involved.
 
 **It is not a gate and must not become one.** No exit 1: 0 even when the answer
 is "six commits unreleased", 2 only when it could not measure.

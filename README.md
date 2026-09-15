@@ -413,10 +413,11 @@ in.
 
 ## Who else compiles qkz80
 
-`src/qkz80*.{cc,h}` is the CPU core, and three sibling projects compile those
-source files directly out of a neighbouring working tree rather than depending
-on a cpmemu *release*. An edit to `qkz80.cc` lands in all three on their next
-build, with no notification and no version gate:
+`src/qkz80*.{cc,h}` is the CPU core, and four sibling projects consume it out of
+a neighbouring working tree rather than depending on a cpmemu *release* - three
+by compiling the sources, one by linking the archive. An edit to `qkz80.cc`
+lands in all four on their next build, with no notification and no version
+gate:
 
 - **ioscpm** - 11 symlinks in `iOSCPM/Core/` pointing at
   `../../../cpmemu/src/qkz80*`. Built as Objective-C++ for iOS at
@@ -425,12 +426,15 @@ build, with no notification and no version gate:
 - **z80cpmw** - `z80cpmw/z80cpmw.vcxproj` compiles the four
   `$(SolutionDir)..\cpmemu\src\qkz80*.cc` in place, MSVC at `/W3` and
   `/std:c++17`, with C4244 disabled on those files.
-- **romwbw_emu** - `src/makefile` resolves qkz80 four ways, the sibling
-  `../cpmemu` among them; `make qkz80-source` prints which it would take.
-  Builds with `-std=c++11 -Wall`.
+- **cpmdroid** - `app/src/main/cpp/CMakeLists.txt` compiles the same four
+  `${CPMEMU_SRC}/qkz80*.cc` in place, under the Android NDK.
+- **romwbw_emu** - the odd one out: it does not compile the sources, it links
+  `libqkz80.a`. `src/makefile` resolves it four ways, the sibling `../cpmemu`
+  among them, and `make qkz80-source` prints which it would take - so an edit
+  here reaches it only once that archive is rebuilt.
 
-All three follow this repository's `main` rather than any tag, so a commit
-pushed here is what their next build compiles. **Check the three before changing
+All four follow this repository's `main` rather than any tag, so a commit
+pushed here is what their next build takes. **Check them before changing
 qkz80's public surface.**
 
 ## Repository Layout
