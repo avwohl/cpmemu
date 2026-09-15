@@ -2,6 +2,17 @@ Todo list.  Open items only.
 
 - cpm_disk.py's two ComboDisk fixes are unreleased and unreleasable: no package ships that file.
 
+- qkz80_MK_INT16 in src/qkz80_types.h builds an int and hands it to a
+  qkz80_uint16 parameter, so qkz80_reg_pair.h:32 and :35 are reported twice by
+  every object file that calls set_low()/set_high().  The fix is a
+  qkz80_uint16() around the macro body.  Refiled from romwbw_emu 2026-09-15,
+  where it had sat since before v1.37 as "not this repository's to fix": the
+  warnings land in romwbw_emu's build (8 from `make -C src all`, 12 with the
+  test programs) and in every other consumer, but the one-line edit is here.
+  Measured there against v4.7.2 (91151f1) and again against v4.8.0 (ed778f7);
+  `git diff 91151f1 ed778f7 -- 'src/qkz80*.h' 'src/qkz80*.cc'` is empty, so no
+  cpmemu release has touched it.
+
 The rules that used to be in this header - what belongs here, what a tag means,
 where finished work goes - are in CLAUDE.md now.  They were rules rather than
 work, and keeping them here made the file look like it had contents when it did
