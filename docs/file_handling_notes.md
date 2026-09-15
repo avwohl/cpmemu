@@ -63,17 +63,22 @@ File mappings specify how CP/M filenames map to Unix files and set their mode.
 
 **Syntax:** `CPM_PATTERN = unix_path [text|binary]`
 
-#### Directory Mappings
+#### Pattern Mappings
 
-Look for files matching the pattern in a specific directory:
+A `*` on the host side stands in for what the CP/M pattern matched:
 
-```ini
-# Find .BAS files in this directory
-*.BAS = /home/user/basic text
-
-# Find any matching file in a specific location
-*.MAC = /home/user/asm text
 ```
+# PRINTSEP.BAS opens /home/user/basic/printsep.bas
+*.BAS = /home/user/basic/*.bas text
+*.MAC = /home/user/asm/*.mac text
+```
+
+**A host path with no `*` is used exactly as written** (`expand_unix_pattern`
+returns it untouched), so `*.BAS = /home/user/basic` maps every `.BAS` to the
+directory itself rather than to a file in it. There is no directory-mapping
+form; to expose a directory, give it a drive letter or `cd` into it.
+[examples/README.md](../examples/README.md) is the reference for mapping
+forms, including the ones that look right and do nothing.
 
 #### Exact File Mappings
 
@@ -118,7 +123,7 @@ directory, which is what every drive letter was before this existed. See
 program = /path/to/mbasic.com
 
 # Map BASIC files to test directory
-*.BAS = /home/user/mbasic/tests text
+*.BAS = /home/user/mbasic/tests/*.bas text
 
 # Map specific games
 STARTREK.BAS = /home/user/mbasic/superstartrek.bas text
@@ -152,10 +157,10 @@ cd = /tmp/build
 
 ```bash
 # Run with config file
-./cpmemu config.cfg
+./src/cpmemu config.cfg
 
 # Config with CPU mode option
-./cpmemu --8080 config.cfg
+./src/cpmemu --8080 config.cfg
 ```
 
 ## File Mode Detection
@@ -172,12 +177,15 @@ Files with unrecognized extensions default to binary.
 When a CP/M program opens a file (e.g., `TEST.BAS`):
 
 1. Check file mappings (pattern and exact matches from config)
-2. Search in current directory (lowercase, then as-is)
+2. If the drive is configured (`drive_A`..`drive_P`), look in that directory
+   **and stop there** - a configured drive is confined, and never falls back to
+   the working directory
+3. Otherwise search the working directory (lowercase, then as-is)
 
 ## Notes
 
 - Pattern matching is case-insensitive
-- Only `*.EXT` patterns are supported (not `TE*.BAS`)
+- `*.EXT`, `*` and `*.*` are supported; partial stems such as `TE*.BAS` are not. For `*` and `*.*` the whole name, extension included, stands in for a `*` on the host side
 - Environment variables are expanded in all path values
 - Lines starting with `#` are comments
 - Blank lines are ignored

@@ -1,8 +1,6 @@
 # CP/M support
 
 What this emulator implements of CP/M 2.2, and the memory map a guest sees.
-File I/O is handled at the BDOS level, so the BIOS disk calls are stubs and a
-program that drives the disk through the BIOS will not work.
 
 ## BDOS functions
 

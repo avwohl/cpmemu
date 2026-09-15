@@ -392,7 +392,7 @@ All simple flag tests match tnylpo exactly:
 - `.asm` - Assembly source code
 - `.bin` - Raw binary output from assembler
 - `.com` - CP/M executable (same as .bin for these tests)
-- `.o` - Object file from z88dk assembler
+- `.o` - Object file from z88dk assembler (historical; um80 is the assembler for this project)
 - `.mac` - Macro-80 source, in `tests/8080/` only
 - `.prn` - Macro-80 listing, in `tests/8080/` only
 

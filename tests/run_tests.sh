@@ -27,9 +27,9 @@
 #   --require
 #           a skip for want of a tool is a failure.  Same as
 #           CPMEMU_REQUIRE_ALL=1.  A skip exits 0, so on a machine missing an
-#           assembler this suite reports "60 passed, 0 failed, 46 skipped" and
-#           a green tick - which is what the first CI job to run it did, having
-#           executed three fifths of it.  Under this flag the three skips a
+#           assembler this suite still reports 0 failed and a green tick while
+#           roughly two fifths of its checks never ran - which is what the
+#           first CI job to run it did.  Under this flag the three skips a
 #           machine can fix by installing something - no assembler, no mingw,
 #           a .com that has gone missing - fail instead.  The two platform
 #           skips do not: the pty harness cannot run on Windows and the console

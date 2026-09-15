@@ -40,7 +40,7 @@ download is, not a change to make quietly inside a release job.
 
 ## The secrets
 
-Create these five under Settings → Secrets and variables → Actions. There are
+Create these six under Settings → Secrets and variables → Actions. There are
 two independent gates: the certificate pair turns on signing, and the three
 notary values turn on notarization. A certificate with no notary credentials
 signs and does not notarize, rather than failing, so they can be added in two

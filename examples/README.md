@@ -40,7 +40,9 @@ cd = /tmp
 program = tests/simple_con.com     # looked for in /tmp, not where you started
 ```
 
-Use an absolute path for `program`, or put `cd` after it.
+Use an absolute path for `program` (`${HOME}/...` is expanded). Moving `cd`
+below it does **not** help: `program` is resolved in `main()` after the whole
+file has been read, so a `cd` anywhere in the file has already taken effect.
 
 ### Settings are captured when a mapping is read
 
@@ -159,7 +161,7 @@ against files this repo does have.
 | --- | --- |
 | `example.cfg` | Every directive, with comments. Start here. |
 | `simple_test.cfg` | MBASIC against this repo's `tests/*.bas`. |
-| `mbasic_tests.cfg` | MBASIC with a directory of programs reached by `cd`. |
+| `mbasic_tests.cfg` | MBASIC with a directory of programs reached by a drive letter (`drive_B`). |
 | `assembler.cfg` | M80/L80 assembly workflow. |
 | `compiler.cfg` | Hi-Tech C workflow. |
 | `test.cfg`, `test2.cfg` | Minimal configs for checking env expansion and `cd`. |

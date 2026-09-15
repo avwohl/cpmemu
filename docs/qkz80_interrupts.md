@@ -150,13 +150,17 @@ The cpmemu program supports cycle-based interrupts via command-line options:
 
 ```
 --int-cycles=N      Enable timer interrupt every N cycles (e.g., 50000)
---int-rst=N         RST number for interrupt (0-7, default 7 = RST 38H)
+--int-rst=N         RST number for interrupt (0-7, default 7 = RST 38H).
+                    --int-cycles also puts the CPU in IM 1, where every
+                    interrupt vectors to 0038h whatever N says, so N takes
+                    effect only for a guest that switches itself to IM 0.
+                    N is masked to three bits, so --int-rst=9 is RST 1.
 ```
 
 Example:
 ```bash
 # Run with 60Hz-ish interrupts (assuming ~4MHz = 4M cycles/sec, 60Hz = 66666 cycles)
-./cpmemu --int-cycles=66666 --int-rst=7 tasking_test.com
+./src/cpmemu --int-cycles=66666 --int-rst=7 your_guest.com
 ```
 
 ## Downstream Projects

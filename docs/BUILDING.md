@@ -231,6 +231,11 @@ The abstraction provides:
 
 ### Linux (DEB/RPM)
 
+The recipe below packages the emulator alone. The **released** `.deb` and
+`.rpm` also carry the qkz80 library and headers - see
+[Install Locations](#install-locations) - so a package built this way is not
+the package users get; `.github/workflows/release.yml` is what builds those.
+
 The GitHub Actions workflow automatically builds packages on release. To build locally:
 
 ```bash

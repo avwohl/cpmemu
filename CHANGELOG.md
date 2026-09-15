@@ -71,6 +71,38 @@ seven-bit read sites are the Reader device rather than the console; and
 `docs/console_seven_bit.md` printed one paragraph twice, the second copy under a
 heading presenting it as new.
 
+**The docs the README now delegates to were audited too**, and two taught
+recipes that do not work.
+
+`docs/file_handling_notes.md` had a "Directory Mappings" section teaching
+`*.BAS = /home/user/basic text` as a way to find files in a directory. A host
+path with no `*` is used verbatim (`expand_unix_pattern`), so every `.BAS`
+resolved to the directory itself. `examples/README.md` - the reference the
+README designates - lists that shape under "Forms that do not work". Measured:
+the mapping registers as `'*.BAS' -> '/tmp/dm/basic'`. Rewritten as pattern
+mappings, with the no-`*` rule stated. Its search order also omitted the
+configured-drive step, which is the one that changes the answer because a
+configured drive is confined and never falls back.
+
+`examples/README.md` said to fix a relative `program` path by putting `cd`
+after it. `program` is resolved in `main()` after the whole file is read, so a
+`cd` anywhere has already taken effect - which the same section says correctly
+two paragraphs earlier. Absolute path only.
+
+`docs/cpm_disk_formats.md` opened "the disk image formats ... used by the
+emulator" above 77 lines of IMD and SIMH parsing; cpmemu reads no disk image at
+all. It also credited BIOS-level emulation to an `altair_emu`, the same
+phantom program `docs/8kbasic.md` was archived for, and carried a table of
+files under `~/in/cpm2/` that exist on no machine here. Reframed as background,
+phantom removed, personal section deleted. Its CP/M memory map now says it is
+standard CP/M rather than this emulator, whose map is `docs/CPM_SUPPORT.md`.
+
+Smaller: `docs/macos-signing.md` said "these five" over a list of six secrets;
+`docs/qkz80_interrupts.md` documented `--int-rst=N` without saying `--int-cycles`
+forces IM 1, where it does nothing; `docs/BUILDING.md`'s local fpm recipe
+packages less than the released one; and `tests/run_tests.sh --help` quoted two
+absolute pass/skip counts that were each off by one.
+
 `todo.txt` is back to "There are none", one item after it stopped being empty.
 That item asked for this repository's copy of a script to be replaced wholesale
 by ioscpm's. The script is deleted instead. Nothing here ships in a package, so

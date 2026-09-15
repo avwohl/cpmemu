@@ -1,6 +1,13 @@
 # CP/M Disk Formats and BIOS Implementation
 
-This document describes the disk image formats and CP/M BIOS interface used by the emulator.
+Background reference on CP/M disk image formats and the CP/M BIOS interface.
+
+**cpmemu reads no disk image of any kind.** File I/O is answered against host
+files at the BDOS level, so nothing here parses IMD or SIMH `.dsk`. The format
+material below is for understanding images produced elsewhere; the tool that
+reads and writes the formats this family actually uses is `util/cpm_disk.py`
+(sssd, hd1k and combo). For what this emulator implements, see
+[CPM_SUPPORT.md](CPM_SUPPORT.md).
 
 ## References
 
@@ -131,7 +138,14 @@ Track 76, Sector 26 (128 bytes)
 
 ---
 
-## CP/M Memory Map
+## CP/M Memory Map (standard CP/M, not this emulator)
+
+This is the layout of a real CP/M 2.2 system. **cpmemu's own map is different** -
+BDOS is a single trap address at 0xFD00 with no code in memory, and the BIOS
+jump table is at 0xFE00. See [CPM_SUPPORT.md](CPM_SUPPORT.md), which the README
+designates as the map for this emulator.
+
+### The standard layout
 
 For a 64K system:
 ```
@@ -258,11 +272,16 @@ OFF = 2         ; 2 reserved tracks
 - Simpler, good for running programs
 - Cannot boot real CP/M
 
-**BIOS-Level Emulation (new altair_emu approach):**
+**BIOS-Level Emulation (the alternative, which cpmemu does not do):**
 - Trap BIOS calls
 - Implement disk I/O using disk image files
 - Can boot real CP/M from disk images
 - More complex but more authentic
+
+This is what the RomWBW-based siblings do - see
+[romwbw_emu](https://github.com/avwohl/romwbw_emu). An earlier version of this
+section credited it to an `altair_emu`, which does not exist in this repository
+or any sibling.
 
 ### Trapping BIOS Calls
 
@@ -288,24 +307,3 @@ For reading raw .dsk files:
 
 ---
 
-## Files in ~/in/cpm2/
-
-| File | Size | Description |
-|------|------|-------------|
-| cpm2.dsk | 1,113,536 | CP/M 2.2 boot disk (SIMH format) |
-| app.dsk | 1,113,536 | Application disk |
-| i.dsk | 8,388,608 | Large hard disk image |
-| appleiicpm.dsk | 143,360 | Apple II CP/M disk (140K) |
-| 128sssd.imd | 260,722 | 8" SSSD disk in IMD format |
-
-### CPM22RED.IMD
-
-The file `~/in/CPM22RED.IMD` is a CP/M 2.2 OEM Redistribution disk containing:
-- Boot sector code
-- CP/M BDOS
-- MOVCPM (memory configuration utility)
-- Serialization code
-- System generation tools
-- Source files: BIOS.ASM, BOOT.ASM, etc.
-
-This is an authentic OEM distribution kit that can be used to build a custom CP/M system.

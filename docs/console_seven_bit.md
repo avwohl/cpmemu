@@ -1,7 +1,7 @@
 # Console input is seven bits
 
-All six console read sites mask incoming bytes with `& 0x7F`, so no byte at or
-above 0x80 reaches the guest intact. This is deliberate and permanent; the
+Six read sites mask incoming bytes with `& 0x7F` - four console sites and the
+two Reader sites below - so no byte at or above 0x80 reaches the guest intact. This is deliberate and permanent; the
 README states the rule, and this file records what it costs and why it is not
 going to change.
 
@@ -17,7 +17,7 @@ e-acute, alpha and `A` piped at a hex-echo guest comes back as `43 29 4E 31 41`.
 This is deliberate and it is not going to change. A CP/M program written for
 this hardware expects seven bits, and the two things eight bits would buy —
 accented characters and a byte-exact console — are not what the software in
-this emulator's reach does. Dropping the masks is also not four line deletions:
+this emulator's reach does. Dropping the masks is also not a handful of line deletions:
 BDOS 6 spells "no character" as 0, so it would need another way to say it, and
 the code-page expectations in `tests/win_console.cc` are written against the
 masked bytes.
