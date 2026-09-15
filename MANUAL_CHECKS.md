@@ -116,12 +116,19 @@ The short form:
    request, or it will have no private key.
 3. Mint an App Store Connect API key — a **Team** key, not an Individual one;
    Apple does not let Individual keys use `notarytool` at all.
-4. Set the five repository secrets `docs/macos-signing.md` lists.
+4. Set the **six** repository secrets `docs/macos-signing.md` lists:
+   `MACOS_CERTIFICATE_P12`, `MACOS_CERTIFICATE_PASSWORD`, `MACOS_SIGN_IDENTITY`,
+   `MACOS_NOTARY_KEY`, `MACOS_NOTARY_KEY_ID`, `MACOS_NOTARY_ISSUER_ID`. The
+   certificate pair turns on signing and the three notary values turn on
+   notarization; they are independent gates.
 5. Cut a release and read the log. None of the signing path has ever run, so
    this step is a test, not a formality: the keychain import,
    `security set-key-partition-list`, the per-architecture `CDHash` check after
    `cpack`, and `notarytool --wait` have never been observed working here.
-   Expect `"status":"Accepted"`.
+   Expect `status: Accepted`. Not the JSON form: `release.yml` runs
+   `notarytool submit --wait` with no `--output-format json`, so the log carries
+   the human-readable status and grepping for `"status":"Accepted"` finds
+   nothing on a run that succeeded.
 
 What right looks like afterwards, from a Mac that did not build it:
 
