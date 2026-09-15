@@ -85,3 +85,14 @@ whatever is on the drive. Any other function number prints
 There is no CCP: nothing runs above the TPA, and a program that returns lands
 back in the emulator rather than at a command prompt.
 
+## End of redirected input
+
+When stdin is a file or a pipe and it runs out, the first BDOS 1 read still
+returns CR, so a line the program was part way through submits. Every BDOS 1
+read after that returns `^Z`, CP/M's end-of-input character, which is what BIOS
+CONIN returns from the first read on - a program that checks for it stops on its
+own. Function 10 ends the line it was collecting. BDOS 6 has no way to say `^Z`:
+0 is its answer for both "nothing waiting" and end of input, so a program that
+only polls never sees the end. A program that reads on regardless is stopped
+after 1024 consecutive reads past the end, with a message on stderr, rather than
+being left to loop forever.

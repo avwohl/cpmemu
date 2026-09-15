@@ -330,7 +330,8 @@ READ, WRITE) are stubs and a program that drives the disk through the BIOS will
 not work. There is no CCP: nothing runs above the TPA, and a program that
 returns lands back in the emulator rather than at a command prompt.
 
-The full BDOS and BIOS tables and the emulator's memory map are in
+The full BDOS and BIOS tables, the emulator's memory map, and what happens when
+redirected input runs out, are in
 [docs/CPM_SUPPORT.md](docs/CPM_SUPPORT.md).
 
 ## Testing
