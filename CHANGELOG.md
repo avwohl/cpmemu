@@ -75,7 +75,7 @@ troubleshooting entry named a `Visual Studio\2022\Community` vcvarsall path
 where `src/do_build.bat` deliberately asks `vswhere.exe` instead.
 
 `make lib` and `make shared` were *not* wrong and are unchanged: both are real
-targets alongside `libs` (`src/makefile:134-136`).
+targets alongside `libs` (`src/makefile:136-138`).
 
 **`docs/8kbasic.md` moved to `docs/archive/`.** It documents `altair_emu`,
 which does not exist in this repository or in any of the four siblings, loading
@@ -153,6 +153,37 @@ way.
   is one implementation: files of any size that fit the slice round-trip, and
   both classes refuse one that would run past the end of the disk rather than
   growing the image.
+
+- **`qkz80_MK_INT16` built an `int` and handed it to a `qkz80_uint16`.** Both
+  operands of `qkz80_uint16(...) << 8 | qkz80_uint16(...)` promote to `int`, so
+  the macro's type was `int` and each of the five places that assign the result
+  to a `qkz80_uint16` narrowed. One `qkz80_uint16()` around the body fixes it.
+  There were thirteen warnings rather than the two `todo.txt` named:
+  `qkz80_reg_pair.h:32` and `:35` once per translation unit that *includes*
+  that header, five each - not the same set as "calls `set_low()`" - plus
+  `qkz80.cc:178`, `:312` and `:406`. Measured on macOS 26.6.2 arm64 with Apple
+  clang 21.0.0 at the makefile's flags plus `-Wconversion`, over the six
+  sources `src/makefile` compiles plus `tests/unit_8080.cc`: 145 before, 132
+  after, thirteen removals and no additions. `make -C src` showed none of it
+  and still shows none, because `-Wimplicit-int-conversion` is not in `-Wall
+  -Wextra` - which is why this was loud downstream and silent here. Over the
+  makefile's six sources alone it is 137 before and 126 after, so
+  `src/makefile`'s note that `-Wconversion` "adds 125 more" was already stale
+  by twelve when this fix took eleven off; it now says 126. The value does not
+  move and neither does the emitted code: all six object files and the linked
+  `cpmemu` are byte-identical before and after. `romwbw_emu`, which filed the
+  item, goes from 8 warnings over its `src/` objects and 4 over its test
+  programs - the 8 and 12 `todo.txt` recorded - to none.
+
+- **`README.md` and `CLAUDE.md` were wrong about how an edit here reaches
+  romwbw_emu.** Both said it links `libqkz80.a`, so an edit arrives only once
+  that archive is rebuilt. True of `qkz80.cc`; false of a header, which is what
+  the fix above is. romwbw_emu compiles `qkz80_reg_pair.h`'s inline bodies into
+  every one of its object files, which is where the eight warnings came from
+  and why they go with no archive involved. `CLAUDE.md` tells a session to read
+  that README section before touching qkz80's public surface, so the section
+  that would have been read now also names romwbw_emu's warning set and says
+  which of the four ways it resolves qkz80 reach this working tree at all.
 
 ### Added
 

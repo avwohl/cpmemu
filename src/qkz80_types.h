@@ -11,6 +11,13 @@ typedef unsigned int qkz80_big_uint;
 void qkz80_global_fatal(const char *fmt,...);
 #define qkz80_GET_CLEAN8(xx_a) ((xx_a) & 0x0ff)
 #define qkz80_GET_HIGH8(xx_a) qkz80_GET_CLEAN8((xx_a) >> 8)
-#define qkz80_MK_INT16(xx_low,xx_high) ((qkz80_uint16(qkz80_GET_CLEAN8(xx_high))<<8) | qkz80_uint16(qkz80_GET_CLEAN8(xx_low)))
+// The outer qkz80_uint16() is load-bearing, not decoration: qkz80_uint16
+// promotes to int for the shift and the or, so without it this macro's type is
+// int and each of the five places that hand the result to a qkz80_uint16
+// narrows.  Neither -Wall nor -Wextra reports it, which is why it was silent
+// here and loud downstream; the counts and the flag sets that produce them are
+// in the 2026-09-17 commit and CHANGELOG entry rather than frozen here, for
+// the same reason src/makefile's "125" was stale by twelve when it was found.
+#define qkz80_MK_INT16(xx_low,xx_high) (qkz80_uint16((qkz80_uint16(qkz80_GET_CLEAN8(xx_high))<<8) | qkz80_uint16(qkz80_GET_CLEAN8(xx_low))))
 
 #endif // QKZ80_TYPES_H

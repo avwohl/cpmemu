@@ -415,9 +415,11 @@ in.
 
 `src/qkz80*.{cc,h}` is the CPU core, and four sibling projects consume it out of
 a neighbouring working tree rather than depending on a cpmemu *release* - three
-by compiling the sources, one by linking the archive. An edit to `qkz80.cc`
-lands in all four on their next build, with no notification and no version
-gate:
+by compiling the sources, and one linking the archive for the `.cc` files while
+compiling the headers like everybody else. An edit to `qkz80.cc` lands in three
+of them on their next build and in romwbw_emu once `libqkz80.a` is next built;
+an edit to a header lands in all four on their next compile. No notification,
+and no version gate:
 
 - **ioscpm** - 11 symlinks in `iOSCPM/Core/` pointing at
   `../../../cpmemu/src/qkz80*`. Built as Objective-C++ for iOS at
@@ -428,10 +430,20 @@ gate:
   `/std:c++17`, with C4244 disabled on those files.
 - **cpmdroid** - `app/src/main/cpp/CMakeLists.txt` compiles the same four
   `${CPMEMU_SRC}/qkz80*.cc` in place, under the Android NDK.
-- **romwbw_emu** - the odd one out: it does not compile the sources, it links
-  `libqkz80.a`. `src/makefile` resolves it four ways, the sibling `../cpmemu`
-  among them, and `make qkz80-source` prints which it would take - so an edit
-  here reaches it only once that archive is rebuilt.
+- **romwbw_emu** - the odd one out for the `.cc` files only: it links
+  `libqkz80.a` rather than compiling them, so an edit to `qkz80.cc` reaches it
+  once that archive is rebuilt. A header edit does not wait for the archive.
+  `QKZ80_CFLAGS` puts `-I` on a qkz80 source tree and `qkz80_reg_pair.h`'s
+  inline `set_low()`/`set_high()` bodies compile into every one of its object
+  files, which is why its own build reports `qkz80_reg_pair.h:32` and `:35`. It
+  compiles at `-std=c++11 -Wall`, plus `-Wimplicit-int-conversion` and
+  `-Wshorten-64-to-32` where the compiler accepts them - both probed, because
+  GCC fails on an unknown `-W` rather than ignoring it. `src/makefile` resolves
+  `QKZ80_CFLAGS` and `QKZ80_LIBS` four ways each - the caller, pkg-config, the
+  sibling checkout, `/usr/local` - and `make qkz80-source` prints which it
+  took. Only the caller and the sibling checkout reach this working tree; the
+  other two name an install prefix, and an installed qkz80 - the `.pc` file
+  pkg-config reads included - waits for `make install-lib`.
 
 All four follow this repository's `main` rather than any tag, so a commit
 pushed here is what their next build takes. **Check them before changing

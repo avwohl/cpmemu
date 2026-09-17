@@ -68,11 +68,14 @@ Two things about the dialect, both of which have already cost time:
 a neighbouring working tree rather than depending on a cpmemu release — **three
 compile the sources** (ioscpm, z80cpmw and cpmdroid, whose
 `app/src/main/cpp/CMakeLists.txt` names the same four `.cc` files) and
-**romwbw_emu links `libqkz80.a`** instead, so an edit reaches it only once that
-archive is rebuilt. None of the four has a version gate: romwbw_emu had the only
+**romwbw_emu links `libqkz80.a`** instead — but only for the `.cc` files. An
+edit to `qkz80.cc` reaches it once that archive is rebuilt; an edit to a header
+reaches it on its next compile, because it compiles these headers like the other
+three and `qkz80_reg_pair.h`'s inline bodies land in every one of its object
+files. None of the four has a version gate: romwbw_emu had the only
 one and removed it on 2026-09-01, so they all build whatever this repository's
-default branch holds and an edit to `qkz80.cc` lands in them on their next build
-with no notification. Read
+default branch holds, and they take an edit on the schedule above with no
+notification. Read
 [Who else compiles qkz80](README.md#who-else-compiles-qkz80) before changing
 qkz80's public surface: it names the compiler, language standard and warning set
 each one uses, and they are not this repo's.
