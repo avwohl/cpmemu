@@ -10,7 +10,7 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
-## [Unreleased]
+## [4.9.0] - 2026-09-17
 
 **`tests/test_results_final.txt` claimed the 8080 core fails its own
 exerciser, and it has been wrong for the life of the repository.** Five lines,
