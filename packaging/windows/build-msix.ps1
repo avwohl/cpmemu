@@ -68,7 +68,15 @@ else {
     }
 }
 
-# Copy executable to staging
+# Copy executable to staging.
+#
+# cpmemu.exe and the manifest, and deliberately not cpm_disk.  The .deb, the
+# .rpm and the macOS archive all carry util/cpm_disk.py as `cpm_disk`, because
+# those formats can either find a python3 on the machine or declare a
+# dependency on one.  An MSIX can do neither: it bundles no interpreter and has
+# no way to require a Python the user installs separately.  Symmetry with the
+# other three is not a reason to add it; a Store-installable Python dependency
+# would be.
 Write-Host "`nStaging files..." -ForegroundColor Yellow
 Copy-Item $ExePath $StagingDir
 

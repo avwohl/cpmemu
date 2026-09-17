@@ -134,11 +134,12 @@ forces IM 1, where it does nothing; `docs/BUILDING.md`'s local fpm recipe
 packages less than the released one; and `tests/run_tests.sh --help` quoted two
 absolute pass/skip counts that were each off by one.
 
-`todo.txt` is back to "There are none", one item after it stopped being empty.
-That item asked for this repository's copy of a script to be replaced wholesale
-by ioscpm's. The script is deleted instead. Nothing here ships in a package, so
-there is no release to put it under yet; `CLAUDE.md` asks for the entry either
-way.
+`todo.txt` is back to "There are none", after three items rather than one. The
+first asked for this repository's copy of a script to be replaced wholesale by
+ioscpm's; the script is deleted instead. The other two are below, and they
+travel at different speeds, which is the whole of why `util/unreleased.sh`
+exists: the packaging change reaches nobody until a release is cut, while the
+`qkz80_MK_INT16` edit is in four consumers' next build whether or not one is.
 
 ### Fixed
 
@@ -191,6 +192,56 @@ way.
   first was addressable before. `romwbw_emu`'s CLAUDE.md documents this as the
   reason `cpm_disk.py` replaces cpmtools, whose libdsk cannot address past 8 MB
   from the start of a file.
+
+- **The `.deb`, the `.rpm` and the macOS archive carry `cpm_disk`.**
+  `src/makefile:209` has installed `util/cpm_disk.py` as `$(BINDIR)/cpm_disk`
+  since 8b16142 (2025-12-28), the commit that added the script - sixteen days
+  after the `.deb` and the `.rpm` first shipped, in the initial commit d43afea
+  (2025-12-12) - and no package has ever carried it: `git log -S cpm_disk --
+  .github/workflows/release.yml src/CMakeLists.txt packaging/` is empty. So
+  `make install` and an installed package have put different sets of programs
+  on `PATH` since 2025-12-28 - and the two `ComboDisk` fixes above had no
+  channel to anyone who installs rather than builds. `release.yml`'s staging
+  step copied thirteen files in seven `cp` commands and not that one;
+  `src/CMakeLists.txt`, which `cpack` re-runs to build the macOS archive rather
+  than staging it by hand, installed the binary, `libqkz80.a` and the seven
+  headers. One `install -m 755` line and one `install(PROGRAMS ... RENAME
+  cpm_disk)`. Measured with cpack on macOS 26.6.2 arm64: the archive goes from
+  13 entries to 14, `bin/cpm_disk` is 0755 and byte-identical to
+  `util/cpm_disk.py`, and `cpmemu` comes out of the build byte-identical with
+  the rule and without it, so the release job's check that the archived binary
+  is the signed one has nothing new to catch. Not in the Windows MSIX, which
+  bundles no interpreter and has no way to declare a dependency on one.
+
+  Asserted rather than left to be noticed, which is how it went unnoticed:
+  `release.yml` now greps `dpkg-deb -c`, `rpm -qpl` and the `tar tzf` it
+  already printed for both programs. That job runs on every push to `main`, not
+  only on a release, so a payload that goes missing again is a red push. And
+  `ci.yml` runs `util/test_cpm_disk.py`'s 26 tests, which nothing ran before -
+  not `tests/run_tests.sh`, not `ci.yml` - although they are what covers the
+  two `ComboDisk` fixes.
+
+- **`python3` is a `Recommends:` of the `.deb` and the `.rpm`, not a
+  `Depends:`.** The emulator needs no interpreter and the control file has
+  carried no `Depends:` line at all; `cpm_disk` is an adjunct most users will
+  never run. The deciding fact is `README.md`'s own install instructions, `sudo
+  dpkg -i` and `sudo rpm -i`: neither resolves dependencies, so a hard
+  requirement would make `rpm -i` refuse the emulator outright on a machine
+  with no Python and leave `dpkg -i` with it unpacked and unconfigured. A weak
+  one costs those users nothing, and `apt install ./cpmemu_amd64.deb` and `dnf
+  install ./cpmemu.x86_64.rpm` honour it. The flags are `--deb-recommends
+  python3` and `--rpm-tag 'Recommends: python3'`; fpm has no
+  `--rpm-recommends`. Measured with fpm 1.18.0 here: the generated control file
+  reads `Recommends: python3` and has no `Depends:` line, and fpm writes
+  `AutoReqProv: no` unless `--rpm-autoreqprov` is passed, which this job does
+  not, so the shebang adds no requirement of its own. The `.rpm` half was read
+  out of fpm's `templates/rpm.erb` and not built - there is no `rpmbuild` on
+  this machine - and the next push to `main` is what builds it. What the script
+  wants is Python 3.7: it imports `sys`, `os`, `struct` and `argparse` and
+  nothing else, and the two floors are f-strings and
+  `add_subparsers(required=True)`. Its 26 tests pass under Apple's 3.9.6 and
+  Homebrew 3.14.5. macOS ships no Python of its own and a tarball can declare
+  nothing, so `docs/BUILDING.md` says in prose what a tarball user needs.
 
 ### Changed
 

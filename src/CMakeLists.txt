@@ -55,6 +55,22 @@ install(FILES
     DESTINATION include/qkz80
 )
 
+# cpm_disk, the CP/M disk-image tool.  src/makefile's `install:` target has
+# always installed ../util/cpm_disk.py as $(BINDIR)/cpm_disk; this is the same
+# file under the same name, so the macOS archive - which cpack builds by
+# re-running these rules rather than by staging files by hand - carries the
+# same two programs a build from source installs.
+#
+# PROGRAMS and not FILES, because FILES installs 0644 and this file has a
+# shebang.  Not on Windows, for the same reason packaging/windows does not
+# carry it: there is no interpreter in the package and nothing to declare a
+# dependency on one.
+if(NOT WIN32)
+    install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/../util/cpm_disk.py
+            DESTINATION bin
+            RENAME cpm_disk)
+endif()
+
 # CPack configuration for packaging
 set(CPACK_PACKAGE_NAME "cpmemu")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})

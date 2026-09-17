@@ -66,8 +66,19 @@ The library is a **separate target**, `make install-lib`:
 whichever of them the install used. `make uninstall` and `make uninstall-lib`
 remove them again.
 
-The `.deb` and the `.rpm` carry the emulator and the library together, and no
-`cpm_disk`; there is no separate `-dev` package.
+The `.deb` and the `.rpm` carry the emulator, the library and `cpm_disk`
+together; there is no separate `-dev` package.
+
+`cpm_disk` is a Python 3.7+ script, and the packages declare `python3` as a
+`Recommends:`, not a `Depends:`. `apt install ./cpmemu_amd64.deb` and `dnf
+install ./cpmemu.x86_64.rpm` honour weak dependencies and pull Python in;
+`dpkg -i` and `rpm -i`, which are what the README's install instructions use,
+resolve no dependencies at all and install the emulator whether or not the
+machine has one. A hard dependency would have made `rpm -i` refuse the package
+outright on a machine with no Python, and left `dpkg -i` with cpmemu unpacked
+and unconfigured, over a tool the emulator itself never calls. With no
+`python3` on `PATH`, `cpm_disk` exits with `env: python3: No such file or
+directory` and nothing else is affected.
 
 ## Windows
 
@@ -207,9 +218,21 @@ cmake --build build --parallel
 ```
 
 That writes `cpmemu-<version>-Darwin-arm64-x86_64.tar.gz`, holding the binary,
-`libqkz80.a` and the headers. No dylib goes into it: a dylib's install name is
-an absolute path, so one shipped in a tarball the user unpacks wherever they
-like would be a library dyld cannot find.
+`cpm_disk`, `libqkz80.a` and the headers. No dylib goes into it: a dylib's
+install name is an absolute path, so one shipped in a tarball the user unpacks
+wherever they like would be a library dyld cannot find.
+
+macOS ships no Python of its own, and a tarball has no dependency metadata to
+ask for one. `/usr/bin/python3` is an `xcode-select` stub: with the Command
+Line Tools installed it forwards to their interpreter -
+`/Library/Developer/CommandLineTools/usr/bin/python3`, 3.9.6, measured here -
+and without them it opens the installer dialog rather than running anything.
+So `cpm_disk` works out of the archive for a user who has the Command Line
+Tools, Homebrew or a python.org install, and for a user with none of the three
+the dialog is what the first run produces. Not a "command not found": the stub
+is a real file on every Mac and `/usr/bin` is on `env`'s built-in search path,
+so `env python3` resolves even with the environment cleared - `env -i python3
+--version` prints 3.9.6 here.
 
 ## Platform Abstraction
 
@@ -232,9 +255,10 @@ The abstraction provides:
 ### Linux (DEB/RPM)
 
 The recipe below packages the emulator alone. The **released** `.deb` and
-`.rpm` also carry the qkz80 library and headers - see
-[Install Locations](#install-locations) - so a package built this way is not
-the package users get; `.github/workflows/release.yml` is what builds those.
+`.rpm` also carry the qkz80 library, the headers and `cpm_disk`, and recommend
+`python3` - see [Install Locations](#install-locations) - so a package built
+this way is not the package users get; `.github/workflows/release.yml` is what
+builds those.
 
 The GitHub Actions workflow automatically builds packages on release. To build locally:
 

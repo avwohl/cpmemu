@@ -78,17 +78,42 @@ jobs:
              src/qkz80_types.h staging/usr/include/qkz80/
           cp README.md staging/usr/share/doc/cpmemu/
           cp LICENSE staging/usr/share/doc/cpmemu/
+          # The file src/makefile's `install:` target installs, under the name
+          # it installs it as, so a package and `make install` put the same
+          # command on PATH.  `install -m 755` and not `cp`: the destination
+          # name differs from the source name, and the mode should not depend
+          # on the runner's umask.
+          install -m 755 util/cpm_disk.py staging/usr/bin/cpm_disk
 
+      # python3 is a Recommends and not a Depends, here and in the RPM step
+      # below, and the difference is the documented install path.  README.md
+      # says `sudo dpkg -i` and `sudo rpm -i`, neither of which resolves
+      # dependencies: a hard requirement makes `rpm -i` refuse the package
+      # outright on a machine with no python3 and leaves `dpkg -i` with cpmemu
+      # unpacked and unconfigured.  The emulator needs no interpreter, so that
+      # would stop it installing on exactly the minimal machines that lack one.
+      # A weak dependency costs them nothing and `apt install ./x.deb` and
+      # `dnf install ./x.rpm` pull python3 in for everyone else.
+      #
+      # fpm has no --rpm-recommends; --rpm-tag writes its argument into the
+      # spec header as is (templates/rpm.erb:88, inside the !no_depends? block
+      # - do not add --no-depends to that call).  Measured with fpm 1.18.0 on
+      # macOS: the generated deb control file reads "Recommends: python3" and
+      # carries no Depends line, and fpm emits "AutoReqProv: no" unless
+      # --rpm-autoreqprov is passed, which this job does not, so the shebang
+      # adds no requirement of its own.  cpm_disk wants Python 3.7 (f-strings,
+      # add_subparsers(required=)); its 26 tests pass under 3.9.6.
       - name: Build DEB package
         run: |
           fpm -s dir -t deb \
             -n cpmemu \
             -v ${{ steps.version.outputs.version }} \
             -a ${{ matrix.arch }} \
-            --description "CP/M BDOS emulator - run CP/M .com files on Linux. Includes libqkz80 Z80/8080 emulator library." \
+            --description "CP/M BDOS emulator - run CP/M .com files on Linux. Includes libqkz80 Z80/8080 emulator library and the cpm_disk image tool." \
             --url "https://github.com/${{ github.repository }}" \
             --license "GPL-3.0" \
             --maintainer "Aaron Wohl" \
+            --deb-recommends python3 \
             -C staging \
             .
 
@@ -98,12 +123,46 @@ jobs:
             -n cpmemu \
             -v ${{ steps.version.outputs.version }} \
             -a ${{ matrix.rpm_arch }} \
-            --description "CP/M BDOS emulator - run CP/M .com files on Linux. Includes libqkz80 Z80/8080 emulator library." \
+            --description "CP/M BDOS emulator - run CP/M .com files on Linux. Includes libqkz80 Z80/8080 emulator library and the cpm_disk image tool." \
             --url "https://github.com/${{ github.repository }}" \
             --license "GPL-3.0" \
             --maintainer "Aaron Wohl" \
+            --rpm-tag 'Recommends: python3' \
             -C staging \
             .
+
+      # What this catches is what happened: src/makefile:209 installed cpm_disk
+      # and the staging step above did not, so up to and including v4.8.1 a
+      # package and `make install` put different sets of programs on PATH and
+      # nothing said so.  This job runs on every push to main, not only on a
+      # release, so a payload that goes missing again is a red push rather than
+      # a shipped package.  Globs, not the version expressions: only one .deb
+      # and one .rpm exist at this point, and the version-less copies are made
+      # in the step below.
+      - name: Check both packages carry both programs
+        run: |
+          set -euo pipefail
+          dpkg-deb -c cpmemu_*.deb > deb.list
+          grep -qF ' ./usr/bin/cpmemu' deb.list
+          grep -qF ' ./usr/bin/cpm_disk' deb.list
+          rpm -qpl cpmemu-*.rpm > rpm.list
+          grep -qxF '/usr/bin/cpmemu' rpm.list
+          grep -qxF '/usr/bin/cpm_disk' rpm.list
+          # And executable, which is the half a path check cannot see.  0644 is
+          # the specific regression to fear: `cp` instead of `install -m 755`
+          # in the staging step, or install(FILES) instead of
+          # install(PROGRAMS) in the CMake rules, ships a cpm_disk that is
+          # present in every listing above and answers "Permission denied".
+          # dpkg-deb -c already printed the mode into deb.list.
+          grep -qE '^-rwxr-xr-x .* \./usr/bin/cpm_disk$' deb.list
+          rpm -qp --qf '[%{FILEMODES:perms} %{FILENAMES}\n]' cpmemu-*.rpm \
+            | grep -qE '^-rwxr-xr-x /usr/bin/cpm_disk$'
+          # And the weak dependency, which is the half that cannot be built on
+          # a Mac: --rpm-tag puts its argument in the spec header verbatim, so
+          # this is the first machine that reads the tag back out of an rpm.
+          dpkg-deb -f cpmemu_*.deb Recommends | grep -qx 'python3'
+          rpm -qp --recommends cpmemu-*.rpm | grep -q '^python3'
+          echo "both packages carry cpmemu and cpm_disk, and recommend python3"
 
       - name: Create version-less copies for latest download
         run: |
@@ -213,11 +272,11 @@ jobs:
       # already names the archive for both - cpmemu-<version>-Darwin-arm64-
       # x86_64.tar.gz.
       #
-      # The archive carries the binary, libqkz80.a and the headers, and no
-      # dylib.  A dylib's install name is an absolute path, so shipping one in
-      # a tarball a user unpacks wherever they like would hand them a library
-      # dyld cannot find; that needs an @rpath layout, which is a bigger change
-      # than a release job.
+      # The archive carries the binary, cpm_disk, libqkz80.a and the headers,
+      # and no dylib.  A dylib's install name is an absolute path, so shipping
+      # one in a tarball a user unpacks wherever they like would hand them a
+      # library dyld cannot find; that needs an @rpath layout, which is a
+      # bigger change than a release job.
       - name: Build the universal binary
         run: |
           cmake -S src -B build-mac \
@@ -323,6 +382,7 @@ jobs:
 
       - name: Build the release archive
         run: |
+          set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           NAME="cpmemu-$VERSION-Darwin-arm64-x86_64"
           ( cd build-mac && cpack -D CPACK_PACKAGE_VERSION="$VERSION" \
@@ -331,7 +391,18 @@ jobs:
           # A versionless copy so /releases/latest/download/ URLs work, as the
           # Linux job does for the .deb and the .rpm
           cp "$NAME.tar.gz" cpmemu-macos-universal.tar.gz
-          tar tzf "$NAME.tar.gz"
+          # -v, so the mode is in the listing and not only the path: cpack
+          # preserves what the install rule set, and install(FILES) would ship
+          # a 0644 cpm_disk that the README's `cp bin/* /usr/local/bin/` then
+          # puts on PATH unexecutable.  pipefail so a tar failure is a tar
+          # failure rather than "the archive is missing cpm_disk".
+          tar tzvf "$NAME.tar.gz" | tee archive.list
+          # Asserted rather than printed and scrolled past.  cpack re-runs
+          # src/CMakeLists.txt's install rules, so a rule that stopped
+          # installing cpm_disk would ship an archive one program short with
+          # the listing above looking exactly as it always does.
+          grep -qE " $NAME/bin/cpmemu\$" archive.list
+          grep -qE "^-rwxr-xr-x .* $NAME/bin/cpm_disk\$" archive.list
 
       # cpack does not copy the binary, it re-runs the CMake install rule, and
       # a CMake install may rewrite a Mach-O - an RPATH edit, or a strip under

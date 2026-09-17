@@ -68,6 +68,15 @@ jobs:
       - name: Run the test suite
         run: tests/run_tests.sh --require
 
+      # util/test_cpm_disk.py's 26 tests, which nothing ran until now - not
+      # tests/run_tests.sh, not this file - although they are what covers the
+      # two ComboDisk fixes.  The .deb, the .rpm and the macOS archive ship
+      # that script from the next release on, so it stops being only a
+      # developer's own copy that goes untested.  python3 here is
+      # setup-python's, the same interpreter that installed um80 above.
+      - name: Run the cpm_disk unit tests
+        run: cd util && python3 -m unittest test_cpm_disk
+
   macos:
     runs-on: macos-latest
     steps:

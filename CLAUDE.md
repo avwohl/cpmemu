@@ -132,10 +132,13 @@ in; a claim that a thing works is expected to name the run that showed it.
 `sh util/unreleased.sh` reports the gap between the newest GitHub release and
 this tree, and separates the half that does not travel by release at all:
 z80cpmw's vcxproj compiles four files out of `src/` in place from a sibling
-checkout — the qkz80 core, not the emulator — and romwbw_emu calls
-`util/cpm_disk.py` out of this one. (Only romwbw_emu does: romwbw_disks
-deliberately does not, and the three GUI clients read images in-app.) A commit
-to either reaches its reader on the next build with no release involved.
+checkout — the qkz80 core, not the emulator — and romwbw_emu's CI runs
+`util/cpm_disk.py` out of a clone of this one. (Only romwbw_emu does:
+romwbw_disks deliberately does not, and the three GUI clients read images
+in-app.) A commit to either reaches its reader on the next build with no
+release involved. `util/cpm_disk.py` is the one file on both channels: the
+`.deb`, the `.rpm` and the macOS archive install it as `cpm_disk` as well, and
+that half waits for a tag.
 
 **It is not a gate and must not become one.** No exit 1: 0 even when the answer
 is "six commits unreleased", 2 only when it could not measure.

@@ -3,11 +3,18 @@
 #
 # WHY THIS EXISTS.  This repository has no store.  Its channel is GitHub
 # releases, and its OTHER channel is not a channel at all: z80cpmw's vcxproj
-# compiles sources straight out of a sibling checkout of this tree, and every
-# repository in the family calls util/cpm_disk.py out of this one.  So a commit
-# under src/ or util/ reaches its readers on their next build with no release
-# of anything, while packaging changes reach nobody until a release is cut.
-# Those two travel at different speeds and the difference is what this reports.
+# compiles sources straight out of a sibling checkout of this tree, and
+# romwbw_emu's CI runs util/cpm_disk.py out of a clone of this one - its
+# .github/workflows/test.yml asserts the file is there and runs --help before
+# the image half of its suite.  (Only romwbw_emu runs it from a build;
+# romwbw_disks deliberately does not.)  So a commit under src/ or util/ reaches
+# those readers on their next build with no release of anything, while
+# packaging changes reach nobody until a release is cut.
+#
+# util/cpm_disk.py is on both sides as of 2026-09-17: the sibling checkouts
+# read it in place, and the .deb, the .rpm and the macOS archive install it as
+# cpm_disk, which waits for a tag like any other packaging change.
+# Those speeds are different and the difference is what this reports.
 #
 # THIS IS ONE OF SIX AND THEY ARE DELIBERATELY DIFFERENT.  Every repository in
 # the family ships on its own channel, so each unreleased.sh is written for its
@@ -75,11 +82,12 @@ else
     if [ "${src_n:-0}" != "0" ]; then
         git -C "$root" log --format='      %h  %s' "$published..HEAD" -- src/ util/
         echo
-        echo "  Those do not travel by release.  z80cpmw's vcxproj compiles this"
-        echo "  tree in place from a sibling checkout, and util/cpm_disk.py is"
-        echo "  the family's CP/M image tool that every repository here calls"
-        echo "  out of this one - so they reach their readers on the next build,"
-        echo "  tag or no tag."
+        echo "  Those reach a reader without a release.  z80cpmw's vcxproj"
+        echo "  compiles this tree in place from a sibling checkout, and"
+        echo "  romwbw_emu's CI runs util/cpm_disk.py out of a clone - so they"
+        echo "  land on the next build, tag or no tag.  util/cpm_disk.py also"
+        echo "  ships as cpm_disk in the .deb, the .rpm and the macOS archive,"
+        echo "  and that half does wait for a tag."
     fi
 fi
 echo

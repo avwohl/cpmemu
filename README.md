@@ -44,7 +44,9 @@ sudo rpm -i cpmemu.x86_64.rpm
 ```
 
 Use `cpmemu.aarch64.rpm` on ARM64. Both package families also install the qkz80
-library and headers - see [The qkz80 library](#the-qkz80-library).
+library and headers - see [The qkz80 library](#the-qkz80-library) - and
+`cpm_disk`, the disk-image tool, which is a Python script and which the
+packages name `python3` a `Recommends:` for.
 
 ### macOS
 
@@ -54,8 +56,15 @@ macOS 12 or later.
 curl -LO https://github.com/avwohl/cpmemu/releases/latest/download/cpmemu-macos-universal.tar.gz
 tar xzf cpmemu-macos-universal.tar.gz
 xattr -dr com.apple.quarantine cpmemu-*-Darwin-arm64-x86_64
-sudo cp cpmemu-*-Darwin-arm64-x86_64/bin/cpmemu /usr/local/bin/
+sudo cp cpmemu-*-Darwin-arm64-x86_64/bin/* /usr/local/bin/
 ```
+
+`bin/` holds two programs, `cpmemu` and `cpm_disk`. The second is a Python
+script and macOS ships no Python of its own: `/usr/bin/python3` is an
+`xcode-select` stub, so `cpm_disk` runs for anyone with the Command Line Tools,
+Homebrew or a python.org install, and on a machine with none of the three the
+stub opens the "install the command line developer tools" dialog rather than
+running anything.
 
 The release is not notarized, so the `xattr` line is what stops Gatekeeper
 refusing the binary. [docs/macos-signing.md](docs/macos-signing.md) has the
@@ -464,8 +473,12 @@ docs/               the documents linked from this file
 .github/workflows/  ci.yml (the test suite) and release.yml (deb, rpm, macOS)
 ```
 
-`make install` also installs `cpm_disk`, the CP/M disk-image tool; the `.deb`
-and `.rpm` do not carry it.
+`cpm_disk`, the CP/M disk-image tool, ships wherever it can run: `make install`
+installs it, and so do the `.deb`, the `.rpm` and the macOS archive. It is a
+Python 3.7+ script, and the two Linux packages name `python3` as a
+`Recommends:` rather than a `Depends:` so that installing a C++ emulator does
+not pull Python onto a machine that has none. The Windows MSIX does not carry
+it: an MSIX bundles no interpreter and cannot ask for one.
 
 ## Documentation
 
