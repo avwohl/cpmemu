@@ -214,9 +214,13 @@ exists: the packaging change reaches nobody until a release is cut, while the
   bundles no interpreter and has no way to declare a dependency on one.
 
   Asserted rather than left to be noticed, which is how it went unnoticed:
-  `release.yml` now greps `dpkg-deb -c`, `rpm -qpl` and the `tar tzf` it
-  already printed for both programs. That job runs on every push to `main`, not
-  only on a release, so a payload that goes missing again is a red push. And
+  `release.yml` now checks `dpkg-deb -c`, `rpm -qpl` and the archive listing
+  the macOS job already printed for both programs, and that `cpm_disk` is
+  `-rwxr-xr-x` in all three - a path check cannot see the one property
+  `install -m 755` and `install(PROGRAMS)` exist to set. That job runs on every
+  push to `main`, not only on a release, so a payload that goes missing again
+  is a red push - which is also how the first version of the macOS check was
+  caught building an `-E` pattern out of a version string containing `+`. And
   `ci.yml` runs `util/test_cpm_disk.py`'s 26 tests, which nothing ran before -
   not `tests/run_tests.sh`, not `ci.yml` - although they are what covers the
   two `ComboDisk` fixes.

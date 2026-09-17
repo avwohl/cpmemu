@@ -401,8 +401,18 @@ jobs:
           # src/CMakeLists.txt's install rules, so a rule that stopped
           # installing cpm_disk would ship an archive one program short with
           # the listing above looking exactly as it always does.
-          grep -qE " $NAME/bin/cpmemu\$" archive.list
-          grep -qE "^-rwxr-xr-x .* $NAME/bin/cpm_disk\$" archive.list
+          #
+          # awk comparing $NF as a literal string, NOT grep -E with $NAME in
+          # the pattern.  On a push build VERSION is 0.0.0+<date>.<sha>, and
+          # that + is a regex metacharacter: "0.0.0+2026" reads as "one or
+          # more 0 followed by 2026" and matches nothing, so the step failed
+          # on every push to main while the archive it was reading was
+          # correct.  It would have passed on a release, where VERSION is
+          # 4.9.0 and has no +, which is the worst way for it to be wrong.
+          awk -v p="$NAME/bin/cpmemu" \
+              '$NF==p && $1=="-rwxr-xr-x"{f=1} END{exit !f}' archive.list
+          awk -v p="$NAME/bin/cpm_disk" \
+              '$NF==p && $1=="-rwxr-xr-x"{f=1} END{exit !f}' archive.list
 
       # cpack does not copy the binary, it re-runs the CMake install rule, and
       # a CMake install may rewrite a Mach-O - an RPATH edit, or a strip under
