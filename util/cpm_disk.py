@@ -790,7 +790,18 @@ class Hd1kDisk:
             data_offset = i * BLOCK_SIZE
             chunk = file_data[data_offset:data_offset + BLOCK_SIZE]
             if len(chunk) < BLOCK_SIZE:
-                chunk = chunk + bytes([0x1A] * (BLOCK_SIZE - len(chunk)))
+                # PAD WITH NUL, NOT ^Z.  The bytes past the last record are
+                # undefined in CP/M - the directory entry's record count is
+                # what bounds the file - so both are legal and neither is
+                # visible to a guest. They are not equally useful to US:
+                # cpmtools' cpmcp pads with 0x00, and every hd1k image RomWBW
+                # and romwbw_disks have ever published was written with it.
+                # Padding with 0x1A made a rebuilt image differ from its
+                # published self in exactly those tail bytes - 4608 of them in
+                # hd1k_combo - which turns a byte-for-byte reproducibility
+                # check into a diff nobody can act on, and would have forced a
+                # re-cut of two immutable release tags to adopt this tool.
+                chunk = chunk + bytes([0x00] * (BLOCK_SIZE - len(chunk)))
             self.data[block_offset:block_offset + BLOCK_SIZE] = chunk
 
         # Create directory entries
