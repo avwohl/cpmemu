@@ -10,22 +10,22 @@ tests/text_ops.com under the emulator: each read returns what the same calls
 would read from the file's CP/M image, and the host file ends as that image
 written as host text.
 
-The model is the definition in src/cpmemu.cc's TextImage comment:
+The model is the definition in src/cpmemu.cc's TextImage comment, for a file
+the configuration makes text with eol_convert = true:
 
   - the image is the host text converted - LF with no CR before it to CR LF,
-    ending at the first ^Z - and padded with ^Z to a whole record; a write
-    puts 128 bytes at record * 128, growing the image, a gap as NULs;
-  - the host file is the image up to its first ^Z, CR LF to LF unless the
-    file's first line ended CR LF, then a ^Z if the file had one, padded with
-    ^Z to a record if the file was a whole number of records - except that
-    the lines before the one the first change is in keep the bytes they had;
+    a CR LF already there left as it is, ending at the first ^Z - and padded
+    with ^Z to a whole record; a write puts 128 bytes at record * 128,
+    growing the image, a gap as NULs;
+  - once a write has changed the text, the host file is the image up to its
+    first ^Z with every CR LF made LF, and nothing after it - whatever line
+    ends, ^Z or padding the host file had before.  A write that changes
+    nothing before the first ^Z leaves the host file as it was;
   - a close writes the host file, and an open reads it again.
 
-Every host file made here is already in its own style, so the first write
-back of any case leaves exactly host_text(image).  The exception matters
-after a close and an open: a line the guest wrote as CR CR LF is host text
-CR LF in an LF file, which reads back as CR LF, and is left as it is by a
-later write that does not reach it.
+So a CR LF file comes back all LF, the lines no write reached as well, and
+so does a line the guest wrote as CR CR LF - host text CR LF after a close,
+which reads back as CR LF - once a later write changes the text.
 
 The host files are made so that line ends fall at, before, after and across
 record boundaries - a line of 126, 127 or 128 bytes puts its CR, its LF or
@@ -49,26 +49,14 @@ EOF = 0x1A
 class Image(object):
     def __init__(self, host):
         cpm = bytearray()
-        self.crlf = False
-        self.eof_mark = False
-        self.lines = [(0, 0)]     # where each line starts: (image, host)
-        seen_lf = prev_cr = False
-        for h, c in enumerate(host):
+        prev_cr = False
+        for c in host:
             if c == EOF:
-                self.eof_mark = True
                 break
-            if c == 0x0A:
-                if not seen_lf:
-                    self.crlf = prev_cr
-                seen_lf = True
-                if not prev_cr:
-                    cpm.append(0x0D)
-                cpm.append(0x0A)
-                self.lines.append((len(cpm), h + 1))
-            else:
-                cpm.append(c)
+            if c == 0x0A and not prev_cr:
+                cpm.append(0x0D)
+            cpm.append(c)
             prev_cr = c == 0x0D
-        self.eof_pad = self.eof_mark and len(host) % 128 == 0
         while len(cpm) % 128:
             cpm.append(EOF)
         self.cpm = cpm
@@ -98,28 +86,14 @@ class Image(object):
         self.cpm[at:at + 128] = data
 
     def host(self):
-        """The host file after a write back: the lines before the one the
-        first change is in as they were, then the image to its first ^Z as
-        host text."""
+        """The host file after a write back: the image to its first ^Z, CR LF
+        to LF, if a write has changed that text, and the file as it was if
+        none has."""
         end = self.cpm.find(bytes([EOF]))
         end = len(self.cpm) if end < 0 else end
         if self.changed is None or self.changed > end:
             return self.loaded
-        p, h = [ln for ln in self.lines if ln[0] <= self.changed][-1]
-        text = bytes(self.cpm[p:end])
-        out = bytearray(self.loaded[:h])
-        i = 0
-        while i < len(text):
-            if not self.crlf and text[i] == 0x0D and i + 1 < len(text) and text[i + 1] == 0x0A:
-                i += 1
-                continue
-            out.append(text[i])
-            i += 1
-        if self.eof_mark:
-            out.append(EOF)
-            while self.eof_pad and len(out) % 128:
-                out.append(EOF)
-        return bytes(out)
+        return bytes(self.cpm[:end]).replace(b'\r\n', b'\n')
 
 
 def model(host, ops):

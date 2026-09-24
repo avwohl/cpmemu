@@ -886,23 +886,55 @@ else
         # the old: the classic append - read to the end, back up a record, and
         # write it again from its ^Z - on a CR LF file wrote APPENDED LF, and
         # left the last 4 of the 25 "ab" lines after it (the reviewers' repro,
-        # with append.com; this is the same calls through fcb_io).  The file
-        # keeps its CR LF.
+        # with append.com; this is the same calls through fcb_io).
+        #
+        # How the text reaches the host is the configuration's to say, and
+        # not the host file's: with eol_convert = true, the default, a text
+        # file is written converted - CR LF to LF, ending at the text's ^Z -
+        # whatever line ends, ^Z or padding it had before, so a CR LF file
+        # comes back all LF, the lines the append did not reach as well.  It
+        # kept CR LF, and a ^Z and padding, as "the file's own style", and a
+        # file whose first line ended LF came back half and half.
         c1() { head -c 126 /dev/zero | tr '\0' x; printf '\r\n'
                for i in $(seq 1 25); do printf 'ab\r\n'; done; }
         appendix=ORRRZ1RZ1V100AV101PV102PV103EV104NV105DV106EV107DJ108K109WC
-        fcb_reset; c1 >"$fcbdir/c1.txt"; { c1; printf 'APPENDED\r\n'; } >"$tmp/want"
-        check_fcb "text: the append idiom on a CR LF file leaves nothing stale" \
+        fcb_reset; c1 >"$fcbdir/c1.txt"; { c1 | tr -d '\r'; printf 'APPENDED\n'; } >"$tmp/want"
+        check_fcb "text: the append idiom on a CR LF file leaves it all LF" \
             C1.TXT "$appendix" 'xa=01a' c1.txt "$tmp/want"
-        # The same on the LF copy of it, which ends LF.
+        # The same on the LF copy of it.
         fcb_reset; c1 | tr -d '\r' >"$fcbdir/c1.txt"
         { c1 | tr -d '\r'; printf 'APPENDED\n'; } >"$tmp/want"
         check_fcb "text: the append idiom on an LF file" C1.TXT "$appendix" 'xa=01a' c1.txt "$tmp/want"
-        # And on CP/M's own form, ^Z-padded to a record: it keeps the padding.
+        # And on CP/M's own form, ^Z-padded to a record: the padding goes too.
         fcb_reset; { c1; printf '\032'; head -c 27 /dev/zero | tr '\0' '\032'; } >"$fcbdir/c1.txt"
-        { c1; printf 'APPENDED\r\n\032'; head -c 17 /dev/zero | tr '\0' '\032'; } >"$tmp/want"
-        check_fcb "text: the append idiom on a ^Z-padded CR LF file" \
+        { c1 | tr -d '\r'; printf 'APPENDED\n'; } >"$tmp/want"
+        check_fcb "text: the append idiom on a ^Z-padded CR LF file leaves it all LF" \
             C1.TXT "$appendix" 'xa=01a' c1.txt "$tmp/want"
+        # A record rewritten in place in the middle of a CR LF file: the line
+        # before it, which the write does not reach, is LF on the host too.
+        fcb_reset; c1 >"$fcbdir/c1.txt"
+        { head -c 126 /dev/zero | tr '\0' x; printf '\nQ\n'; } >"$tmp/want"
+        check_fcb "text: a record rewritten in a CR LF file leaves it all LF" \
+            C1.TXT OZ1HQJ1K2U3WC '' c1.txt "$tmp/want"
+        # A file whose first line ends LF and whose later ones end CR LF,
+        # appended to: the write back starts at the first CR LF line, not at
+        # the line the change is in, and leaves no CR LF behind.
+        fcb_reset; printf 'one\ntwo\r\nthree\r\n' >"$fcbdir/m.txt"
+        printf 'one\ntwo\nthree\nX\n' >"$tmp/want"
+        check_fcb "text: an append to a half CR LF file leaves it all LF" \
+            M.TXT ORRZ0RZ0V17XJ18K19WC 'o=01o' m.txt "$tmp/want"
+        # With eol_convert = false nothing is converted, and the records reach
+        # the host as the program wrote them: CR LF, and the ^Z padding of the
+        # record it wrote.
+        { echo "program = $tmp/fcb_io.com"; echo "eol_convert = false"; } >"$tmp/fcbnoeol.cfg"
+        fcb_reset; c1 >"$fcbdir/c1.txt"
+        { c1; printf 'APPENDED\r\n'; head -c 18 /dev/zero | tr '\0' '\032'; } >"$tmp/want"
+        fcb_cfg=$tmp/fcbnoeol.cfg check_fcb "text: under eol_convert = false the append writes the records" \
+            C1.TXT "$appendix" 'xa=01a' c1.txt "$tmp/want"
+        fcb_reset; c1 >"$fcbdir/c1.txt"
+        { c1 | head -c 128; printf 'Q\r\n\032'; head -c 124 /dev/zero | tr '\0' Q; } >"$tmp/want"
+        fcb_cfg=$tmp/fcbnoeol.cfg check_fcb "text: and a record rewritten in place is that record" \
+            C1.TXT OZ1HQJ1K2U3WC '' c1.txt "$tmp/want"
         # A random record of a text file is the record a sequential read
         # reads, and the file size counts those records; both were the host's
         # raw bytes, which is not where the text is once LF has become CR LF.
@@ -1069,6 +1101,32 @@ else
         fcb_cfg=$tmp/fcbbin.cfg check_fcb "files: a mode rule applies to a file named on the command line" \
             T.TXT OL 'a>b>~'
 
+        # The rename converts only if the new name's configuration says so.
+        # eol_convert = false converts nothing: the records stay as written.
+        # It converted: the rename took a text-list name for enough.
+        fcb_reset; { printf 'A\r\nB\r\n\032'; head -c 121 /dev/zero | tr '\0' A; } >"$tmp/want"
+        fcb_cfg=$tmp/fcbnoeol.cfg check_fcb "files: a rename under eol_convert = false is left as written" \
+            'U.$$$' 'MHAJ1K2V3BJ4K5U6WC>U.TXT;' '' u.txt "$tmp/want"
+        # A name the configuration makes text is converted at the rename,
+        # though the X.$$$ was made binary - by default_mode = binary here, or
+        # by a *.$$$ = binary rule under default_mode = text - and whatever
+        # it holds: the SOH would have a guess leave it as written.  Only a
+        # file made under auto was converted, and only if it looked like text.
+        { echo "program = $tmp/fcb_io.com"; echo "default_mode = binary"; echo "*.TXT = text"; } \
+            >"$tmp/fcbdbin.cfg"
+        { echo "program = $tmp/fcb_io.com"; echo "default_mode = text"; echo '*.$$$ = binary'; } \
+            >"$tmp/fcbdtext.cfg"
+        fcb_reset; printf 'A\nB\n' >"$tmp/want"
+        fcb_cfg=$tmp/fcbdbin.cfg check_fcb "files: a rename to a name a mode rule makes text converts" \
+            'U.$$$' 'MHAJ1K2V3BJ4K5U6WC>U.TXT;' '' u.txt "$tmp/want"
+        fcb_reset; printf 'A\nB\n' >"$tmp/want"
+        fcb_cfg=$tmp/fcbdtext.cfg check_fcb "files: a rename to a name default_mode makes text converts" \
+            'U.$$$' 'MHAJ1K2V3BJ4K5U6WC>U.TXT;' '' u.txt "$tmp/want"
+        fcb_reset; printf '\001\n' >"$tmp/want"
+        fcb_cfg=$tmp/fcbdbin.cfg check_fcb "files: and converts what a guess would take for binary" \
+            'U.$$$' $'MH\001J1K2U3WC>U.TXT;' '' u.txt "$tmp/want"
+
+
         # A name on the text list opens as text only if it holds text, and is
         # made as it comes and turned into host text at its close if it is
         # text.  Every name on that list also names binary files.  DRI's LINK
@@ -1106,6 +1164,10 @@ else
         fcb_reset; printf 'A\n' >"$tmp/want"
         check_fcb "files: and at the end of the run when it is never closed" \
             T.PRN MHAJ1K2U3W '' t.prn "$tmp/want"
+        # Not under eol_convert = false, which converts nothing: it was.
+        fcb_reset; { printf 'A\r\n\032'; head -c 124 /dev/zero | tr '\0' A; } >"$tmp/want"
+        fcb_cfg=$tmp/fcbnoeol.cfg check_fcb "files: under eol_convert = false it is kept as written" \
+            T.PRN MHAJ1K2U3WC '' t.prn "$tmp/want"
         # More than a record of NULs after the text is not padding: MBASIC's
         # PUT of an empty record into a random file named R37.TXT made one,
         # and taking it for text dropped the records and changed LOF.

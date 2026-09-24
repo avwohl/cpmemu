@@ -8,7 +8,7 @@ only the things a session working on it has to know that the code does not say.
 ## Build and test
 
     make -C src                 # cpmemu
-    tests/run_tests.sh          # the suite that can fail: 190 checks, about 30s
+    tests/run_tests.sh          # the suite that can fail: 194 checks, about 30s
     tests/run_tests.sh --zex    # and zexdoc, zexall, 8080exm: about 18 minutes
     make -C src unit            # the 8080 unit tests on their own
 

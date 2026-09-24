@@ -30,9 +30,17 @@
 - Uses `\n` (0x0A) only
 
 **Solution:**
-- Convert `\n` -> `\r\n` when reading Unix text files into CP/M
+- Convert `\n` -> `\r\n` when reading Unix text files into CP/M (a `\r\n`
+  already there stays `\r\n`)
 - Convert `\r\n` -> `\n` when writing CP/M text files to Unix
-- Only apply to text files, not binary (controlled by `eol_convert`)
+- Only apply to text files, not binary, and only with `eol_convert = true`
+
+`eol_convert` says whether a text file is converted, and the host file's own
+line ends do not. A text file written with `eol_convert = true` reaches the
+host converted whatever line ends it had there before, so a CR LF host file
+that a program rewrites comes back all LF. With `eol_convert = false`, or a
+binary mode, the records reach the host as the program wrote them, which is
+how to keep CP/M's CR LF on the host.
 
 ### 3. Rewriting text in place
 
@@ -43,14 +51,18 @@ the emulator does not write records into the host file where they fall. A
 text file with conversion is held as the file a CP/M disk would hold - the
 host text converted, padded with `^Z` to a record - and read and written as
 that, sequentially or at random. What changes is written back to the host file
-as text:
+as text, converted as `eol_convert = true` says:
 
-- the lines before the one the first change is in keep their host bytes;
-- the rest, to the first `^Z`, is written in the file's own style: CR LF left
-  as it is if the file's first line ended CR LF, CR LF to LF otherwise (a lone
-  CR or LF is written as it is);
-- a file that had a `^Z` gets one after its text, and one that was a whole
-  number of records gets `^Z` padding to a record, as CP/M writes it.
+- the text to its first `^Z`, CR LF to LF (a lone CR or LF is written as it
+  is), and nothing after it - no `^Z`, no padding;
+- whatever form the host file had: a CR LF file, a `^Z`-padded one, or one
+  whose lines end some CR LF and some LF comes back all LF, the lines no
+  write reached included. Only the lines before both the first change and
+  the first line the host file had in another form keep their host bytes, as
+  they are already what the write back would make of them.
+
+A file a program only reads is never written back, and nor is one whose
+writes changed nothing before the text's `^Z`.
 
 The write happens at once when the text from the start of the changed line to
 the end is 64 KB or less - an append, a new file, any change to a small file -
@@ -88,7 +100,8 @@ cd = /path/to/working/directory
 # Default file mode: auto, text, or binary
 default_mode = auto
 
-# Enable EOL conversion for text files (default: true)
+# Enable EOL conversion for text files (default: true).  false keeps CP/M's
+# CR LF and ^Z on the host.
 eol_convert = true
 
 # Enable debug output
@@ -230,19 +243,20 @@ FFh, and a WordStar document has 8Dh soft returns among CR LF hard ones. A
 CP/M text file that fails the rule for a stray 8-bit byte or text after its
 `^Z` reads the same either way, since its lines already end in CR LF.
 
-A file a program makes under a text extension is written as it comes, like
-one under a name on neither list, and at its last close - or at a disk reset
-or the end of the run, if the program never closes it - becomes host text if
-it is text by the rule above. If the program wrote any of it at random, its
-text must also read back as it was written - every LF after a CR - and must
-not end in NULs, which host text would read back as `^Z`s, since a random
-file's records have to stay what they were; what follows a `^Z` a text open
-drops either way. A file written in sequence is converted as a text file
+Under `auto`, a file a program makes under a text extension is written as it
+comes, like one under a name on neither list, and at its last close - or at a
+disk reset or the end of the run, if the program never closes it - becomes
+host text if it is text by the rule above. If the program wrote any of it at
+random, its text must also read back as it was written - every LF after a CR -
+and must not end in NULs, which host text would read back as `^Z`s, since a
+random file's records have to stay what they were; what follows a `^Z` a text
+open drops either way. A file written in sequence is converted as a text file
 always was, a bare LF becoming a line end like any other. Until something has
 been written in it, it stays undecided: opened again, by the FCB that made it
-or another, it is still written as it comes. So a listing or an ASCII
-`SAVE "X",A` lands as host text, and a tokenized `SAVE "X"` or a library
-written directly under a `.LIB` name keeps its bytes.
+or another, it is still written as it comes. So a listing or an ASCII `SAVE
+"X",A` lands as host text, and a tokenized `SAVE "X"` or a library written
+directly under a `.LIB` name keeps its bytes. With `eol_convert = false`
+nothing is converted, and a made file keeps the bytes it was written with.
 
 Text that fails the rule only for being 8-bit - not UTF-8, its lines ending
 CR LF, as CP/M text with a Latin-1 or code page 437 character in it does - is
@@ -258,10 +272,18 @@ Add a mode rule (`*.HEX = text`) for a name you know is text.
 
 A file a program makes under an unrecognized name and then renames is decided
 by the name it ends up with. PIP, ED and WordStar write `NAME.$$$` and rename
-it when they are done; when the new name is a text one, the host file is
-turned into host text at the rename if it is text and its text reads back as
-it was written. A binary file renamed to a text name - DRI LIB's `X.$$$`
-renamed `X.LIB` - is left as it was written.
+it when they are done; when the new name is a text one by the guess, the host
+file is turned into host text at the rename if it is text and its text reads
+back as it was written. A binary file renamed to a text name - DRI LIB's
+`X.$$$` renamed `X.LIB` - is left as it was written.
+
+With the configuration saying, it decides the rename too, and without a look:
+a file made this run and written as it came - under `auto`, or as `binary`,
+or with `eol_convert = false` - is converted at a rename to a name that is
+text with `eol_convert = true` by a mapping, a mode rule or `default_mode`,
+and is left as written at a rename to a name that is `binary` or has
+`eol_convert = false`. A file that was not made this run keeps its bytes at a
+rename.
 
 A mode rule (`*.LIB = binary`, `*.BAS = text`) decides for the names it
 matches without looking at them, and so does `default_mode = text` or
@@ -269,7 +291,8 @@ matches without looking at them, and so does `default_mode = text` or
 
 ## File Search Order
 
-When a CP/M program opens a file (e.g., `TEST.BAS`):
+When a CP/M program opens a file (e.g., `TEST.BAS`) - the mode it is read in
+is under File Mode Detection, above:
 
 1. Check file mappings (pattern and exact matches from config)
 2. If the drive is configured (`drive_A`..`drive_P`), look in that directory

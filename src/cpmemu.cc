@@ -416,13 +416,15 @@ struct OpenFile {
 // them: a record past the end extends it, the gap as NULs.  Reading and
 // writing are indexing.
 //
-// The host file is that image as text: the bytes up to its first ^Z, in the
-// host file's own line-end style - CR LF kept as it is if the file's lines
-// ended CR LF when it was opened, CR LF to LF otherwise (a lone CR or LF is
-// written as it is) - and a ^Z after them if the file had one, padded to a
-// record if it was a whole number of records.  Only the text from the line
-// the first change is in to the end is written back; the lines before it
-// keep their host bytes.  `lines` maps where each line starts in the image
+// The host file is that image as text, converted as the configuration says a
+// text file with eol_convert is: the bytes up to its first ^Z, CR LF to LF (a
+// lone CR or LF is written as it is), and nothing after them - whatever
+// line ends, ^Z or padding the host file had before.  Only the text from the
+// start of a line to the end is written back, and the lines before it keep
+// their host bytes, so that line is the one the first change is in or, if
+// earlier, the first line the host file had in another form - one ending CR
+// LF (`crlf_from`).  A file written back is all in the converted form, never
+// half CR LF and half LF.  `lines` maps where each line starts in the image
 // to where it starts in the host file, from the load and from each write
 // back, so that point is found without reading the host file again.
 //
@@ -456,21 +458,22 @@ struct OpenFile {
 struct TextImage {
   std::string path;
   std::vector<uint8_t> cpm;
-  bool crlf;         // host lines end CR LF: written back as they are
-  bool eof_mark;     // host text ended at a ^Z: written back with one
-  bool eof_pad;      // ... and a ^Z-padded last record
   bool dirty;        // cpm has changed since the host was written
   bool detached;     // deleted or made over: nothing is written back
   bool by_content;   // text because of what it holds, not by a mode rule
   bool raw;          // the host file is cpm itself, not text: see above
   size_t dirty_from; // the first CP/M byte changed, SIZE_MAX when none
+  size_t crlf_from;  // where the first line the host has CR LF in starts, or SIZE_MAX
   uint64_t host_size;
   std::vector<std::pair<size_t, uint64_t> > lines;  // (image, host) line starts
   size_t zpos;       // the first ^Z in cpm, or SIZE_MAX: kept, not searched for
 
-  TextImage() : crlf(false), eof_mark(false), eof_pad(false), dirty(false),
-    detached(false), by_content(false), raw(false), dirty_from(SIZE_MAX), host_size(0),
-    zpos(SIZE_MAX) {}
+  TextImage() : dirty(false), detached(false), by_content(false), raw(false),
+    dirty_from(SIZE_MAX), crlf_from(SIZE_MAX), host_size(0), zpos(SIZE_MAX) {}
+  // Where a write back has to start: the first change, or the first line
+  // the host file holds in another form than the converted one if that is
+  // before it.
+  size_t write_from() const { return std::min(dirty_from, crlf_from); }
   size_t records() const { return cpm.size() / 128; }
   size_t text_end() const { return zpos < cpm.size() ? zpos : cpm.size(); }
 };
@@ -682,12 +685,14 @@ private:
   void dma_put(const uint8_t* src, size_t n);
   void dma_get(uint8_t* dst, size_t n);
   uint32_t cpm_record_count(const OpenFile& of);
-  // How a file BDOS 22 makes is written.  MAKE_AS_MODE: as *mode says, which
-  // a mode rule, default_mode or the binary list decided.  The other two are
-  // auto with nothing to go on yet, and are written as they come, binary:
-  // MAKE_BY_CONTENT, a name on the text list, becomes host text when it is
-  // closed if what was written is text; MAKE_GUESSED, a name on neither list,
-  // waits for a rename to a name that says, as PIP's X.$$$ does.
+  // How a file BDOS 22 makes is written.  MAKE_AS_MODE: as *mode and *eol
+  // say, which a mode rule, default_mode or the binary list decided, or
+  // eol_convert = false, under which nothing is converted.  The other two
+  // are auto with nothing to go on yet, and are written as they come,
+  // binary: MAKE_BY_CONTENT, a name on the text list, becomes host text when
+  // it is closed if what was written is text; MAKE_GUESSED, a name on
+  // neither list, waits for a rename to a name that says, as PIP's X.$$$
+  // does.
   enum MakeKind { MAKE_AS_MODE, MAKE_BY_CONTENT, MAKE_GUESSED };
   void make_file_mode(const std::string& filename, FileMode* mode, bool* eol,
                       MakeKind* kind = nullptr);
@@ -696,6 +701,10 @@ private:
   // settle_made_file.
   std::set<std::string> made_guessed;
   std::set<std::string> made_by_content;
+  // ... and the ones made under MAKE_AS_MODE with no conversion - binary, or
+  // text with eol_convert false - which a rename to a name the configuration
+  // makes converted text turns into host text.
+  std::set<std::string> made_raw;
   // ... and of those, the ones written at random (BDOS 34 or 40) as well as
   // in sequence: a random file has to read back record for record.
   std::set<std::string> made_random;
@@ -707,6 +716,10 @@ private:
   enum MadeCheck { AS_WRITER, READS_BACK_TEXT, READS_BACK_RECORDS };
   bool convert_made_file_to_text(const std::string& path, const char* who, bool trace,
                                  MadeCheck check = READS_BACK_TEXT);
+  // Rewrite a file of CP/M records as host text, as a text file with
+  // conversion is written: to the first ^Z, CR LF to LF.  No test of what it
+  // holds - the configuration has said it is text.
+  bool write_made_file_as_text(const std::string& path, const char* who, bool trace);
   void renamed_made_file(const std::string& old_path, const std::string& new_name,
                          const std::string& new_path);
   // A MAKE_BY_CONTENT file whose last stream has closed: host text now, if
@@ -1287,8 +1300,11 @@ std::string CPMEmulator::tracked_path(const std::string& path) const {
 }
 
 // Read a host text file into `img`: LF with no CR before it to CR LF, the
-// text ending at a ^Z, padded with ^Z to a record.  Records its line starts
-// and the style it will be written back in.  False if it cannot be read.
+// text ending at a ^Z, padded with ^Z to a record.  A CR LF already there
+// stays CR LF, not CR CR LF.  Records its line starts, and where the first
+// line that ends CR LF starts: from there on the host file is not what a
+// write back makes of it, and the first write back rewrites it.  False if it
+// cannot be read.
 bool CPMEmulator::load_text_image(TextImage& img, const std::string& path) {
   FILE* fp = fopen(path.c_str(), "rb");
   if (!fp) return false;
@@ -1303,18 +1319,13 @@ bool CPMEmulator::load_text_image(TextImage& img, const std::string& path) {
   img.cpm.clear();
   img.cpm.reserve(host.size() + host.size() / 16 + 128);
   img.lines.assign(1, std::make_pair(static_cast<size_t>(0), static_cast<uint64_t>(0)));
-  img.crlf = false;
-  img.eof_mark = false;
-  bool seen_lf = false, prev_cr = false;
+  img.crlf_from = SIZE_MAX;
+  bool prev_cr = false;
   for (size_t h = 0; h < host.size(); h++) {
     uint8_t c = host[h];
-    if (c == CPM_EOF) {
-      img.eof_mark = true;
-      break;
-    }
+    if (c == CPM_EOF) break;
     if (c == '\n') {
-      if (!seen_lf) img.crlf = prev_cr;  // the first line end sets the style
-      seen_lf = true;
+      if (prev_cr && img.crlf_from == SIZE_MAX) img.crlf_from = img.lines.back().first;
       if (!prev_cr) img.cpm.push_back('\r');
       img.cpm.push_back('\n');
       img.lines.push_back(std::make_pair(img.cpm.size(), static_cast<uint64_t>(h + 1)));
@@ -1323,7 +1334,6 @@ bool CPMEmulator::load_text_image(TextImage& img, const std::string& path) {
     }
     prev_cr = (c == '\r');
   }
-  img.eof_pad = img.eof_mark && host.size() % 128 == 0;
   img.host_size = host.size();
   img.zpos = img.cpm.size() % 128 ? img.cpm.size() : SIZE_MAX;
   while (img.cpm.size() % 128) img.cpm.push_back(CPM_EOF);
@@ -1399,7 +1409,8 @@ void CPMEmulator::image_write(TextImage& img, uint32_t record, const uint8_t* da
 }
 
 // Write what has changed in the image back to the host file as text: from
-// the start of the line the first change is in to the end of the text, the
+// the start of the line the first change is in - or the first line the host
+// file has in another form, if that is earlier - to the end of the text, the
 // lines before it left as they are.  See TextImage for the form.
 bool CPMEmulator::write_back(TextImage& img) {
   if (!img.dirty || img.detached) return true;
@@ -1412,7 +1423,7 @@ bool CPMEmulator::write_back(TextImage& img) {
     img.dirty_from = SIZE_MAX;
     return true;
   }
-  auto it = std::upper_bound(img.lines.begin(), img.lines.end(), img.dirty_from,
+  auto it = std::upper_bound(img.lines.begin(), img.lines.end(), img.write_from(),
                              [](size_t v, const std::pair<size_t, uint64_t>& e) {
                                return v < e.first;
                              });
@@ -1460,13 +1471,19 @@ bool CPMEmulator::write_back(TextImage& img) {
   img.host_size = size;
   img.dirty = false;
   img.dirty_from = SIZE_MAX;
+  img.crlf_from = SIZE_MAX;
   return true;
 }
 
 // The host text for the image from `p`, a line start that is at `h` in the
-// host file, to the end of its text: CR LF to LF unless the file's lines end
-// CR LF, then a ^Z and padding if the file had them.  `lines` past `p` are
-// made again as it goes.
+// host file, to the end of its text, CR LF to LF, and nothing after it.
+// `lines` past `p` are made again as it goes.
+//
+// A CR LF host file's lines were written back CR LF, and a file that had a
+// ^Z, or ^Z padding to a record, got them again: the style of the file it
+// replaced.  The configuration is what says how a text file reaches the
+// host - eol_convert = true converts, false or binary writes the records as
+// they are - and a file's old bytes are not configuration.
 std::vector<uint8_t> CPMEmulator::host_text(TextImage& img, size_t p, uint64_t h) {
   auto it = std::upper_bound(img.lines.begin(), img.lines.end(), p,
                              [](size_t v, const std::pair<size_t, uint64_t>& e) {
@@ -1478,13 +1495,9 @@ std::vector<uint8_t> CPMEmulator::host_text(TextImage& img, size_t p, uint64_t h
   out.reserve(end > p ? end - p + 128 : 128);
   for (size_t i = p; i < end; i++) {
     uint8_t c = img.cpm[i];
-    if (!img.crlf && c == '\r' && i + 1 < end && img.cpm[i + 1] == '\n') continue;
+    if (c == '\r' && i + 1 < end && img.cpm[i + 1] == '\n') continue;
     out.push_back(c);
     if (c == '\n') img.lines.push_back(std::make_pair(i + 1, h + out.size()));
-  }
-  if (img.eof_mark) {
-    out.push_back(CPM_EOF);
-    while (img.eof_pad && (h + out.size()) % 128) out.push_back(CPM_EOF);
   }
   return out;
 }
@@ -1539,6 +1552,7 @@ bool CPMEmulator::write_back_whole(TextImage& img) {
   img.host_size = bytes.size();
   img.dirty = false;
   img.dirty_from = SIZE_MAX;
+  img.crlf_from = SIZE_MAX;
   return true;
 }
 
@@ -1638,7 +1652,7 @@ bool CPMEmulator::write_record(OpenFile& of, uint32_t record, const uint8_t* buf
     if (img.raw) return img.cpm.size() <= 65536 ? write_back(img) : true;
     size_t end = img.text_end();
     if (img.dirty_from > end) return write_back(img);  // past the text: nothing to write
-    auto it = std::upper_bound(img.lines.begin(), img.lines.end(), img.dirty_from,
+    auto it = std::upper_bound(img.lines.begin(), img.lines.end(), img.write_from(),
                                [](size_t v, const std::pair<size_t, uint64_t>& e) {
                                  return v < e.first;
                                });
@@ -2924,7 +2938,11 @@ void CPMEmulator::bdos_write_sequential() {
 // they have been written - see MakeKind.  A name on the text list used to be
 // made as text, and every name on it also names binary files: MBASIC's SAVE
 // makes X.BAS tokenized unless told ,A, and a library program can make its
-// X.LIB directly.
+// X.LIB directly.  With eol_convert false for the name nothing is converted,
+// so there is nothing to guess: it is written as it comes and stays so.  A
+// file a mapping with a host path reaches is not made there - make puts a
+// file in the drive's directory - so only a mode rule, the one kind of
+// mapping that applies wherever the file is, decides here.
 void CPMEmulator::make_file_mode(const std::string& filename, FileMode* mode, bool* eol,
                                  MakeKind* kind) {
   std::string normalized = normalize_cpm_filename(filename);
@@ -2939,8 +2957,8 @@ void CPMEmulator::make_file_mode(const std::string& filename, FileMode* mode, bo
   MakeKind k = MAKE_AS_MODE;
   if (*mode == MODE_AUTO) {
     FileMode ext = extension_mode(normalized);
-    if (ext == MODE_TEXT) k = MAKE_BY_CONTENT;
-    else if (ext == MODE_AUTO) k = MAKE_GUESSED;
+    if (*eol && ext == MODE_TEXT) k = MAKE_BY_CONTENT;
+    else if (*eol && ext == MODE_AUTO) k = MAKE_GUESSED;
     *mode = MODE_BINARY;
   }
   if (kind) *kind = k;
@@ -3026,8 +3044,10 @@ void CPMEmulator::bdos_make_file() {
     made_guessed.erase(unix_name);
     made_by_content.erase(unix_name);
     made_random.erase(unix_name);
+    made_raw.erase(unix_name);
     if (kind == MAKE_GUESSED) made_guessed.insert(unix_name);
     if (kind == MAKE_BY_CONTENT) made_by_content.insert(unix_name);
+    if (kind == MAKE_AS_MODE && !(mode == MODE_TEXT && eol_convert)) made_raw.insert(unix_name);
   }
   std::shared_ptr<TextImage> img;
   if (mode == MODE_TEXT && eol_convert) {
@@ -3099,6 +3119,7 @@ void CPMEmulator::bdos_delete_file() {
     made_guessed.erase(unix_path);
     made_by_content.erase(unix_path);
     made_random.erase(unix_path);
+    made_raw.erase(unix_path);
     forget_text_image(unix_path);
     cpu->set_reg8(0, qkz80::reg_A);  // Success
   }
@@ -3318,6 +3339,7 @@ void CPMEmulator::bdos_rename_file() {
       made_guessed.erase(replaced);
       made_by_content.erase(replaced);
       made_random.erase(replaced);
+      made_raw.erase(replaced);
       forget_text_image(replaced);
     }
     renamed_made_file(old_path, new_name, new_path);
@@ -3347,14 +3369,27 @@ void CPMEmulator::bdos_rename_file() {
 // given.  A name that still says nothing keeps the file on the list, so a
 // second rename can decide.  A MAKE_BY_CONTENT file renamed while still open
 // is decided by its new name the same way.
+//
+// The new name's configuration decides, as it would for a file made under
+// it: a mapping, mode rule or default_mode that makes it text, with
+// eol_convert, converts the file whatever it holds; binary, or eol_convert
+// false, leaves it as written; auto guesses from the name and, for a name on
+// the text list, from what the file holds.  A file made as written under an
+// explicit mode - X.$$$ under default_mode = binary - is converted too when
+// its new name is configured text.  Only files made this run are touched: a
+// rename of any other file changes its name and not its bytes.
 void CPMEmulator::renamed_made_file(const std::string& old_path, const std::string& new_name,
                                     const std::string& new_path) {
   // whatever the name held before is gone
   made_guessed.erase(new_path);
   made_by_content.erase(new_path);
   made_random.erase(new_path);
+  made_raw.erase(new_path);
   made_random.erase(old_path);
-  if (made_guessed.erase(old_path) + made_by_content.erase(old_path) == 0) return;
+  if (made_guessed.erase(old_path) + made_by_content.erase(old_path) +
+      made_raw.erase(old_path) == 0) {
+    return;
+  }
 
   bool trace = debug || debug_bdos_funcs.count(23);
   FileMode mode;
@@ -3365,7 +3400,12 @@ void CPMEmulator::renamed_made_file(const std::string& old_path, const std::stri
     made_guessed.insert(new_path);
     return;
   }
-  if (kind == MAKE_AS_MODE && (mode != MODE_TEXT || !eol_convert)) return;
+  if (kind == MAKE_AS_MODE && (mode != MODE_TEXT || !eol_convert)) {
+    if (trace) fprintf(stderr, "Rename: %s left as written: its name is not converted text\n",
+                       new_path.c_str());
+    made_raw.insert(new_path);  // still as written, for a rename after this one
+    return;
+  }
   // Converting under an open stream would leave that stream writing to the
   // file the conversion replaced.  CP/M lets a program rename an open file;
   // none of the three above does.
@@ -3375,7 +3415,11 @@ void CPMEmulator::renamed_made_file(const std::string& old_path, const std::stri
       return;
     }
   }
-  convert_made_file_to_text(new_path, "Rename", trace);
+  if (kind == MAKE_AS_MODE) {
+    write_made_file_as_text(new_path, "Rename", trace);
+  } else {
+    convert_made_file_to_text(new_path, "Rename", trace);
+  }
 }
 
 void CPMEmulator::settle_made_file(const std::string& path, bool trace) {
@@ -3476,6 +3520,31 @@ bool CPMEmulator::convert_made_file_to_text(const std::string& path, const char*
   ok = (fclose(fp) == 0) && ok;
   if (trace) {
     fprintf(stderr, "%s: %s converted to host text, %zu bytes to %zu%s\n", who, path.c_str(),
+            raw.size(), host.size(), ok ? "" : " (WRITE FAILED)");
+  }
+  return ok;
+}
+
+bool CPMEmulator::write_made_file_as_text(const std::string& path, const char* who, bool trace) {
+  FILE* fp = fopen(path.c_str(), "rb");
+  if (!fp) return false;
+  std::vector<uint8_t> raw;
+  uint8_t chunk[4096];
+  size_t n;
+  while ((n = fread(chunk, 1, sizeof chunk, fp)) > 0) raw.insert(raw.end(), chunk, chunk + n);
+  fclose(fp);
+  std::vector<uint8_t> host;
+  host.reserve(raw.size());
+  for (size_t i = 0; i < raw.size() && raw[i] != CPM_EOF; i++) {
+    if (raw[i] == '\r' && i + 1 < raw.size() && raw[i + 1] == '\n') continue;
+    host.push_back(raw[i]);
+  }
+  fp = fopen(path.c_str(), "wb");
+  if (!fp) return false;
+  bool ok = host.empty() || fwrite(host.data(), 1, host.size(), fp) == host.size();
+  ok = (fclose(fp) == 0) && ok;
+  if (trace) {
+    fprintf(stderr, "%s: %s written as host text, %zu bytes to %zu%s\n", who, path.c_str(),
             raw.size(), host.size(), ok ? "" : " (WRITE FAILED)");
   }
   return ok;

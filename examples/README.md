@@ -18,7 +18,7 @@ key that looks like a mistyped directive is now reported (see below).
 | `program` | Program to run. Required. |
 | `cd` / `chdir` | Change working directory. Applied immediately, in file order. |
 | `default_mode` | `auto`, `text` or `binary`. |
-| `eol_convert` | `true`/`false`. Convert `\n` <-> `\r\n` for text files. |
+| `eol_convert` | `true`/`false`. Convert `\r\n` <-> `\n` for text files. `false` keeps CP/M's bytes on the host. |
 | `debug` | `true`/`false`. Prints mappings, BDOS calls and file operations. |
 | `ctrl_c_exit` | `true`/`false`. Whether five fast ^C quit the emulator. |
 | `printer` | File to receive printer output. |
@@ -173,6 +173,23 @@ Text files get `\n` <-> `\r\n` conversion; binary files do not. `default_mode
 the file holds - a REL library named `.LIB` or a tokenized `.BAS` is binary
 (`docs/file_handling_notes.md` has the rule). Set it explicitly when a guess
 would be wrong, and use the per-file mapping form to override one file.
+
+A text file with `eol_convert = true` is read with each LF that has no CR
+before it made CR LF (a CR LF already there stays CR LF), ending at the first
+`^Z`, and is written to the host converted back: CR LF to LF, ending at the
+text's `^Z`, with nothing after it. That is so whatever line ends the host
+file had before: a CR LF file that a program rewrites in place, appends to or
+replaces comes back all LF, the lines it did not touch as well. With
+`eol_convert = false`, or `binary`, the records go to the host as the program
+wrote them - CR LF, `^Z` and padding - so either one keeps CP/M's CR LF on the
+host. A file only read is never rewritten.
+
+PIP, ED and WordStar write `NAME.$$$` and rename it over `NAME.EXT` when they
+are done. A file made this run and renamed is converted at the rename when
+the new name is text with `eol_convert` - by a mapping, a mode rule or
+`default_mode` - and a new name that is binary, or has `eol_convert = false`,
+leaves the file as written; under `auto` the new name's extension and the
+file's bytes decide.
 
 ## See also
 

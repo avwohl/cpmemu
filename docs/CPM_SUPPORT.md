@@ -44,8 +44,10 @@ given and does not touch CR, so a program zeroes both itself. A text file with
 conversion is held as the file a disk would hold - its host text converted, LF
 to CR LF, ending at `^Z`, padded with `^Z` to a record - and every call reads,
 writes and counts that, except BDOS 17 and 18, whose directory entries are
-sized from the host file. It is written back as host text in the file's own
-style; `docs/file_handling_notes.md` says how.
+sized from the host file. It is written back as host text converted as the
+configuration says - CR LF to LF, ending at the `^Z`, whatever line ends the
+host file had - and `eol_convert = false` or a binary mode writes the records
+as they are; `docs/file_handling_notes.md` says how.
 
 The disk this emulates has 2 KB blocks and `EXM` = 0, so a directory entry is
 one logical extent of 128 records. Open fails, `FFh`, for an extent the file

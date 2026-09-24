@@ -85,11 +85,10 @@ records are found, read and written back is the first entry under Fixed.
   A text file with conversion is now held as the file a CP/M disk would
   hold: the host text converted, LF to CR LF, ending at the first `^Z`, padded
   with `^Z` to a record. Every read and write, sequential or random, is
-  of that image; BDOS 35 counts its records. It is written back as host text:
-  the lines before the first change keep their host bytes, and the rest is
-  written in the file's own style - CR LF kept for a file whose lines ended
-  CR LF, a `^Z` kept for a file that had one, and `^Z` padding to a record
-  for a file that was a whole number of records. That happens at once when
+  of that image; BDOS 35 counts its records. It is written back as host text,
+  converted as `eol_convert = true` says - CR LF to LF, ending at the text's
+  `^Z`, with nothing after it - whatever form the host file had before (see
+  Changed: a CR LF file comes back all LF). That happens at once when
   the text from the changed line to the end is 64 KB or less - an append, a
   new file, any change to a small file - and otherwise at the file's close,
   at a disk reset, at the end of the run, at BDOS 48, before a search, a
@@ -165,10 +164,13 @@ records are found, read and written back is the first entry under Fixed.
   PIP, ED and WordStar make `NAME.$$$` and rename it when they are done, and
   `$$$` is on neither extension list, so the file is written as it comes and
   its real name arrives at BDOS 23. A rename to a name that opens as text now
-  turns the host copy into host text - CR LF to LF, ending at the `^Z` - when
+  turns the host copy into host text - CR LF to LF, ending at the `^Z` - as
+  the new name's configuration says: always, for a name a mapping, a mode
+  rule or `default_mode` makes text with `eol_convert = true`; never, for a
+  name that is binary or has `eol_convert = false`; and under `auto` when
   that loses nothing a text open would read back and the file is plainly text
-  (by the rule in the next entry); anything else, such as DRI LIB's
-  binary `X.$$$` renamed `X.LIB`, is left exactly as written. Without this,
+  (by the rule in the next entry), so that DRI LIB's binary `X.$$$` renamed
+  `X.LIB` is left exactly as written. Without this,
   `PIP U.TXT=T.TXT` of a two-line Unix file left 128 bytes of CR LF and `^Z`
   where 4.9.0 left the 12 it was given; now it is 12 again, and a 900-line
   file comes out byte-identical to its source.
@@ -322,6 +324,26 @@ records are found, read and written back is the first entry under Fixed.
   and says so.
 
 ### Changed
+
+- **Line ends on the host are the configuration's, and a CR LF text file a
+  program writes comes back all LF.** With `eol_convert = true` a text file
+  reaches the host as its text CR LF to LF, ending at its `^Z`, with nothing
+  after it, whatever line ends, `^Z` or padding the host file had: a CR LF
+  file rewritten in place, appended to, or replaced by ED, PIP or WordStar
+  through `NAME.$$$` comes back all LF, the lines no write reached included.
+  4.9.0's converting writer wrote LF for the text it wrote and left the rest
+  where it was, which is the corruption the first entry under Fixed
+  describes; commits on the way to this release kept a CR LF file's CR LF,
+  and a `^Z` and padding, as "the file's own style", and a file whose first
+  line ended LF and later ones CR LF came back half and half. **To keep
+  CP/M's CR LF on the host, set `eol_convert = false` or map the files
+  `binary`**: the records then reach the host as the program wrote them,
+  `^Z` padding and all. At a rename the new name's configuration alone says
+  whether a file made this run is converted (the BDOS 22 entry under
+  Fixed), and under `eol_convert = false` nothing is converted at a close or
+  a rename either - a file made under a text-list name was, on the way here.
+  A file only read, or whose writes changed nothing before its `^Z`, is not
+  rewritten.
 
 - **`cpm_disk.py add` pads a file's last block with NUL, not `^Z`.** The bytes
   past the last record are undefined in CP/M, so both are legal, but cpmtools'
