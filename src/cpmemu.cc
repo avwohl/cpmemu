@@ -563,7 +563,14 @@ private:
   // File I/O helpers
   FileMode detect_file_mode(const std::string& filename, const std::string& unix_path);
   static FileMode extension_mode(const std::string& filename);
-  static bool bytes_look_like_text(const uint8_t* p, size_t n, uint64_t size);
+  // What bytes_look_like_text finds: text, not text, or text by every test
+  // but the last - 8-bit, not UTF-8, with lines that do not all end in a
+  // bare LF - which is text to a close or a rename only if nothing is lost.
+  enum TextKind { NOT_TEXT, TEXT, TEXT_8BIT };
+  static TextKind text_kind(const uint8_t* p, size_t n, uint64_t size);
+  static bool bytes_look_like_text(const uint8_t* p, size_t n, uint64_t size) {
+    return text_kind(p, n, size) == TEXT;
+  }
   static bool file_looks_like_text(const std::string& unix_path);
   std::string find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out, bool* eol_out,
                                 qkz80_uint8 fcb_drive);
@@ -650,8 +657,14 @@ private:
   // ... and of those, the ones written at random (BDOS 34 or 40) as well as
   // in sequence: a random file has to read back record for record.
   std::set<std::string> made_random;
+  // What convert_made_file_to_text asks of a file besides being text.
+  // AS_WRITER: nothing - CR LF to LF, as the text writer always converted.
+  // READS_BACK_TEXT: its text reads back as it is, every LF after a CR.
+  // READS_BACK_RECORDS: and every record reads back as a text open of the
+  // file as written would read it - the text does not end in NULs.
+  enum MadeCheck { AS_WRITER, READS_BACK_TEXT, READS_BACK_RECORDS };
   bool convert_made_file_to_text(const std::string& path, const char* who, bool trace,
-                                 bool round_trip = true);
+                                 MadeCheck check = READS_BACK_TEXT);
   void renamed_made_file(const std::string& old_path, const std::string& new_name,
                          const std::string& new_path);
   // A MAKE_BY_CONTENT file whose last stream has closed: host text now, if
@@ -935,17 +948,23 @@ void CPMEmulator::add_file_mapping_ex(const std::string& cpm_pattern, const std:
 // So are all but 5 of the 1,802 .ASM, .MAC, .Z80, .PRN and .LST files.
 // Four of the 5 have no bare LF, which binary reads exactly as text would,
 // the guest stopping at the ^Z itself; the fifth is a listing with a DC1.
-bool CPMEmulator::bytes_look_like_text(const uint8_t* p, size_t n, uint64_t size) {
+//
+// TEXT_8BIT is what fails the last test only: CP/M text with a Latin-1 or
+// code page 437 byte in it, which is CR LF text as CP/M writes it.  It opens
+// binary, which reads it as it is, but a file made or renamed under a text
+// name is host text if its conversion loses nothing - see
+// convert_made_file_to_text.
+CPMEmulator::TextKind CPMEmulator::text_kind(const uint8_t* p, size_t n, uint64_t size) {
   size_t end = n;
   for (size_t i = 0; i < n; i++) {
     if (p[i] == CPM_EOF || p[i] == 0) { end = i; break; }
   }
-  if (end < n && size > end && size - end > 128) return false;  // not in the last record
+  if (end < n && size > end && size - end > 128) return NOT_TEXT;  // not in the last record
   if (end < n && p[end] == 0) {
-    if (end == 0) return false;  // NULs and nothing else: no sign of text
-    if (n < size) return false;  // padding that goes on past what was read
+    if (end == 0) return NOT_TEXT;  // NULs and nothing else: no sign of text
+    if (n < size) return NOT_TEXT;  // padding that goes on past what was read
     for (size_t i = end; i < n; i++) {
-      if (p[i] != 0 && p[i] != CPM_EOF) return false;
+      if (p[i] != 0 && p[i] != CPM_EOF) return NOT_TEXT;
     }
   }
   bool utf8 = true;
@@ -953,7 +972,7 @@ bool CPMEmulator::bytes_look_like_text(const uint8_t* p, size_t n, uint64_t size
   for (size_t i = 0; i < end;) {
     uint8_t c = p[i];
     if (c < 0x80) {
-      if (c < 0x20 && !(c >= 0x08 && c <= 0x0D) && c != 0x1B) return false;
+      if (c < 0x20 && !(c >= 0x08 && c <= 0x0D) && c != 0x1B) return NOT_TEXT;
       if (c == '\n') (i > 0 && p[i - 1] == '\r' ? crlf : bare_lf)++;
       i++;
       continue;
@@ -975,7 +994,7 @@ bool CPMEmulator::bytes_look_like_text(const uint8_t* p, size_t n, uint64_t size
       i += len;
     }
   }
-  return utf8 || (bare_lf > 0 && crlf == 0);
+  return utf8 || (bare_lf > 0 && crlf == 0) ? TEXT : TEXT_8BIT;
 }
 
 // The first 64 KB of a host file, judged by bytes_look_like_text.  A file
@@ -3150,21 +3169,38 @@ void CPMEmulator::settle_made_file(const std::string& path, bool trace) {
   // Written in sequence only, it is converted as the text writer converted
   // a text name before: CR LF to LF whether or not every line reads back as
   // it was written - RMAC's listings have a bare LF after their title line.
-  // Written at random, it is converted only if it reads back exactly, since
-  // a random file's records have to be where they were.
+  // Written at random, it is converted only if every record reads back as it
+  // was written, since a random file's records have to be where they were.
   bool random = made_random.erase(path) != 0;
-  convert_made_file_to_text(path, "Close", trace, random);
+  convert_made_file_to_text(path, "Close", trace, random ? READS_BACK_RECORDS : AS_WRITER);
 }
 
 // Rewrite a file of CP/M text as host text, if the file is text - the rule
 // bytes_look_like_text applies to a name on the text list when it is opened -
-// and, with `round_trip`, if that loses nothing a text open of it would read
-// back, which is checked, not assumed.  Text ends at the first ^Z, or at a
-// NUL with only NULs and ^Zs after it.  A binary file renamed to a text name - DRI's LIB writes X.$$$ and
-// renames it X.LIB - or saved under one - MBASIC's tokenized X.BAS - is left
-// exactly as it was written.  Returns whether the file was rewritten.
+// and if it passes `check`, which is checked, not assumed.  Text ends at the
+// first ^Z, or at a NUL with only NULs and ^Zs after it.  A binary file
+// renamed to a text name - DRI's LIB writes X.$$$ and renames it X.LIB - or
+// saved under one - MBASIC's tokenized X.BAS - is left exactly as it was
+// written.  Returns whether the file was rewritten.
+//
+// 8-bit text, TEXT_8BIT, has to read back as it is whatever `check` says:
+// CP/M text with a Latin-1 or code page 437 character in it, which PIP, ED or
+// a text writer leaves with CR LF lines, is host text once its CR LFs are LFs,
+// and reads back the same; a WordStar document, whose 8Dh LF soft returns
+// would come back as 8Dh CR LF, a hard return, stays as written.  Since
+// 0ea06bc required UTF-8 of every close and rename, the first had stayed
+// CP/M text on the host, CR LF and ^Z padding.
+//
+// A file written at random, READS_BACK_RECORDS, also must not end its text
+// in NULs.  Host text reads back padded with ^Z, so a last record that ended
+// in NULs - "JOHN" and a name field of NULs, from a random file of names -
+// would come back with ^Zs where its NULs were; left as written, it opens as
+// text, the NULs part of it, and reads back as it was.  What follows a ^Z is
+// another matter: a text open drops it whether the file is converted or not,
+// and MBASIC, which writes even PRINT # files at random, leaves the rest of
+// its buffer after the ^Z in the last record.
 bool CPMEmulator::convert_made_file_to_text(const std::string& path, const char* who,
-                                            bool trace, bool round_trip) {
+                                            bool trace, MadeCheck check) {
   FILE* fp = fopen(path.c_str(), "rb");
   if (!fp) return false;
   std::vector<uint8_t> raw;
@@ -3178,7 +3214,12 @@ bool CPMEmulator::convert_made_file_to_text(const std::string& path, const char*
     if (raw[i] == CPM_EOF || raw[i] == 0) { end = i; break; }
   }
   const char* why = nullptr;
-  if (!bytes_look_like_text(raw.data(), raw.size(), raw.size())) why = "not text";
+  TextKind kind = text_kind(raw.data(), raw.size(), raw.size());
+  if (kind == NOT_TEXT) why = "not text";
+  if (kind == TEXT_8BIT && check == AS_WRITER) check = READS_BACK_TEXT;
+  if (!why && check == READS_BACK_RECORDS && end < raw.size() && raw[end] == 0) {
+    why = "text ending in NULs, which host text would read back as ^Zs";
+  }
 
   // CR LF to LF, as the text writer does it; a lone CR or LF stays.
   std::vector<uint8_t> host;
@@ -3187,7 +3228,7 @@ bool CPMEmulator::convert_made_file_to_text(const std::string& path, const char*
     host.push_back(raw[i]);
   }
   // And back, as the text reader does it: an LF not after a CR gains one.
-  if (!why && round_trip) {
+  if (!why && check != AS_WRITER) {
     std::vector<uint8_t> back;
     bool cr = false;
     for (uint8_t ch : host) {

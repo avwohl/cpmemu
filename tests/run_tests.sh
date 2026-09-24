@@ -1031,6 +1031,28 @@ else
         fcb_reset; { printf 'A\r\n\n\032'; head -c 123 /dev/zero | tr '\0' A; } >"$tmp/want"
         check_fcb "files: one written at random with a bare LF is kept as written" \
             T.PRN MHAJ1K2K3U4N0PC '' t.prn "$tmp/want"
+        # CP/M text with an 8-bit character - Latin-1 E9 here - is not UTF-8,
+        # and its lines end CR LF, so it opens binary, which reads it as it is.
+        # Made or renamed under a text name it is host text when that loses
+        # nothing, as it was before the rule: PIP B.TXT=A.TXT of a Latin-1
+        # file left 128 bytes of CR LF and ^Z padding.
+        fcb_reset; printf '\351\n' >"$tmp/want"
+        check_fcb "files: 8-bit text made as X.\$\$\$ and renamed X.TXT is host text" \
+            'U.$$$' $'MH\351J1K2U3WC>U.TXT;' '' u.txt "$tmp/want"
+        fcb_reset; printf '\351\n' >"$tmp/want"
+        check_fcb "files: 8-bit text made under a text name is host text at its close" \
+            T.TXT $'MH\351J1K2U3WC' '' t.txt "$tmp/want"
+        # A WordStar document loses its soft returns, 8Dh LF, if an LF with no
+        # CR before it is converted: it is kept as written.
+        fcb_reset; { head -c 7 /dev/zero | tr '\0' A; printf '\215\nB\r\n\032'
+                     head -c 115 /dev/zero | tr '\0' A; } >"$tmp/want"
+        check_fcb "files: a WordStar document renamed X.DOC is kept as written" \
+            'U.$$$' $'MHAV7\215K8V9BJ10K11U12WC>U.DOC;' '' u.doc "$tmp/want"
+        # Written at random, text that ends in NULs is kept: host text reads
+        # back with ^Zs where they were.  Record 1 is JOHN and a field of NULs.
+        fcb_reset; { head -c 128 /dev/zero | tr '\0' A; printf 'JOHN'; head -c 124 /dev/zero; } >"$tmp/want"
+        check_fcb "files: a random file whose text ends in NULs is kept" \
+            T.TXT MV0JV1OV2HV3NN1PHAN0PCON1G 'J' t.txt "$tmp/want"
 
         # Open fails for an extent the file does not have, as 2.2's does, and
         # RC is that extent's record count.  It opened any extent asked for
