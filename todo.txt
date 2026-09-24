@@ -14,6 +14,35 @@ Todo list.  Open items only.
   the rename would have to remember what NAME.EXT was when it became
   NAME.BAK, which is a guess about what the program meant.
 
+[ANY] default_mode does not apply to a file a program opens.
+  find_unix_file_ex takes a mode rule or the extension (and, for the text
+  list, the file's bytes); default_mode reaches only a make and a mapping
+  written below it.  examples/README.md says "To set the mode for a whole
+  class of files, use default_mode".  Repro: printf 'a\nb\n' >t.txt, a
+  config with default_mode = binary, tests/fcb_io.com T.TXT OL prints
+  a<>b<>~ (converted); with *.TXT = binary it prints a>b>~.  As old as 4.9.0
+  at least.  Missing: a decision - applying it to opens changes what every
+  config that sets default_mode = text does to the .COM and .OVR files its
+  program opens.
+
+[ANY] A / in a command-line word becomes _ in the default FCB.
+  2.2's CCP takes / as a name character, and DRI's STAT reads its
+  attribute from the second FCB: STAT T.TXT $R/O answers "Invalid File
+  Indicator" here because FCB 2 holds $R_O.  filename_to_fcb replaces any
+  character is_valid_cpm_char refuses; a / that does not start the word
+  (./ and / are host paths) should be kept, as the CCP keeps it.  Older
+  than this branch; found by its verifier.
+
+[ANY] A make of a name the command line gave as a host path lands in the
+  drive's directory, not at that path.
+  cpmemu fcb_io.com ./sub/t.txt 'MHAJ1K2U3WCZ0OL' makes t.txt in the working
+  directory and then opens sub/t.txt, the file_map entry, and prints its old
+  text; ED on ./sub/x.txt renames sub/x.txt to sub/x.bak and leaves the
+  edited x.txt in the working directory.  bdos_make_file and the rename's
+  new path never look in file_map.  Older than this branch.  Missing: which
+  of file_map's spellings a make should honour - a path given on the command
+  line, but not a name a rename planted there.
+
 The rules that used to be in this header - what belongs here, what a tag means,
 where finished work goes - are in CLAUDE.md now.  They were rules rather than
 work, and keeping them here made the file look like it had contents when it did

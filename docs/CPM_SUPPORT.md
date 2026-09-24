@@ -34,7 +34,7 @@ What this emulator implements of CP/M 2.2, and the memory map a guest sees.
 | 38 | Access Free Space | Stub (returns success) |
 | 39 | Free Space | Stub (no-op) |
 | 40 | Write Random Zero Fill | Supported |
-| 48 | Flush Buffers | Supported (writes back text file changes not yet written; binary writes go straight to the host file) |
+| 48 | Flush Buffers | Supported (writes back text file changes not yet written, `FFh` if one cannot be; binary writes go straight to the host file) |
 
 A file's position is its FCB's, as in CP/M: BDOS 20 and 21 read and write
 record CR of logical extent EX of module S2, which is the record BDOS 36
@@ -81,7 +81,14 @@ Where this differs from 2.2 on purpose:
   closed and opened again. No text reader sees it on a disk either. A record
   written past the end leaves the records before it, if any are missing, as
   NULs, which is what a new block holds here rather than what a disk left in
-  it.
+  it. When those NULs land in the text of a file that is text only because
+  of what it holds, the host file becomes the file's records as a disk holds
+  them, CR LF and padding included, until the text is text again; see
+  `docs/file_handling_notes.md`.
+- **A close can fail.** A text file's change that could not be written back
+  to the host file - read-only, or its disk full - makes BDOS 16 answer `FFh`,
+  which 2.2's close answers only for a file that is not in the directory. It
+  is said on stderr as well.
 - **An FCB that runs past FFFFh** - the bytes the call uses, 36 for BDOS 33-36
   and 40, 33 for 20 and 21, fewer for the others - is refused with `FFh`
   rather than wrapping to 0000h. No CP/M program keeps an FCB there, above

@@ -52,12 +52,25 @@ as text:
 - a file that had a `^Z` gets one after its text, and one that was a whole
   number of records gets `^Z` padding to a record, as CP/M writes it.
 
-The write happens at once when the change is in the file's last line and that
-line and what follows are under 64 KB, as an append or a new file always is,
+The write happens at once when the text from the start of the changed line to
+the end is 64 KB or less - an append, a new file, any change to a small file -
 and otherwise when the file is closed, at a disk reset or BDOS 48, before a
-directory search, rename or file size, and when the program ends. What a
-program writes after the text's first `^Z` is not text, and does not reach the
-host file.
+directory search, rename or file size, when the program ends, and when
+SIGTERM, SIGHUP or SIGINT ends the run (POSIX; the process still dies of the
+signal). A `SIGKILL` or a crash before then loses a change that was waiting.
+A close whose change cannot be written - the host file read-only, the disk
+full - answers `FFh` and says so on stderr. What a program writes after the
+text's first `^Z` is not text, and does not reach the host file.
+
+Every FCB open on one host file shares its image, whichever name or path it
+was opened by. A file that opened as text because of what it holds (below)
+has to hold text afterwards: a write that would leave it failing the text
+rule - NULs in the text, from a record written past the end of text that
+fills its last record, or a control character - makes the host file the
+image itself, CR LF and padding included, which the next open reads binary,
+record for record. That is decided again at every write back, so once the
+NULs are written over it is host text again. A file a mode rule makes text
+stays host text whatever is written in it.
 
 ## Configuration File Format
 
@@ -220,14 +233,23 @@ CP/M text file that fails the rule for a stray 8-bit byte or text after its
 A file a program makes under a text extension is written as it comes, like
 one under a name on neither list, and at its last close - or at a disk reset
 or the end of the run, if the program never closes it - becomes host text if
-it is text by the rule above. If the program wrote any of it at random, it
-must also read back exactly as it was written, since a random file's records
-have to stay where they are; a file written in sequence is converted as a
-text file always was, a bare LF becoming a line end like any other. Until
-something has been written in it, it stays undecided: opened again, by the FCB
-that made it or another, it is still written as it comes. So a listing or an
-ASCII `SAVE "X",A` lands as host text, and a tokenized `SAVE "X"` or a library
+it is text by the rule above. If the program wrote any of it at random, its
+text must also read back as it was written - every LF after a CR - and must
+not end in NULs, which host text would read back as `^Z`s, since a random
+file's records have to stay what they were; what follows a `^Z` a text open
+drops either way. A file written in sequence is converted as a text file
+always was, a bare LF becoming a line end like any other. Until something has
+been written in it, it stays undecided: opened again, by the FCB that made it
+or another, it is still written as it comes. So a listing or an ASCII
+`SAVE "X",A` lands as host text, and a tokenized `SAVE "X"` or a library
 written directly under a `.LIB` name keeps its bytes.
+
+Text that fails the rule only for being 8-bit - not UTF-8, its lines ending
+CR LF, as CP/M text with a Latin-1 or code page 437 character in it does - is
+host text too, at a close or a rename, if its text reads back as it was
+written. Its host copy has bare LFs, which the rule accepts. A WordStar
+document does not read back - its `8Dh` LF soft returns would gain a CR and
+become hard ones - and is kept as written.
 
 Files with unrecognized extensions default to binary: read and written as
 they are, so a text file a program makes under such a name - `.HEX` from ASM,
@@ -237,10 +259,9 @@ Add a mode rule (`*.HEX = text`) for a name you know is text.
 A file a program makes under an unrecognized name and then renames is decided
 by the name it ends up with. PIP, ED and WordStar write `NAME.$$$` and rename
 it when they are done; when the new name is a text one, the host file is
-turned into host text at the rename, by the same test as at the close of a
-file written at random. A binary
-file renamed to a text name - DRI LIB's `X.$$$` renamed `X.LIB` - is left as
-it was written.
+turned into host text at the rename if it is text and its text reads back as
+it was written. A binary file renamed to a text name - DRI LIB's `X.$$$`
+renamed `X.LIB` - is left as it was written.
 
 A mode rule (`*.LIB = binary`, `*.BAS = text`) decides for the names it
 matches without looking at them, and so does `default_mode = text` or

@@ -90,13 +90,23 @@ records are found, read and written back is the first entry under Fixed.
   written in the file's own style - CR LF kept for a file whose lines ended
   CR LF, a `^Z` kept for a file that had one, and `^Z` padding to a record
   for a file that was a whole number of records. That happens at once when
-  the change is in the last line and cheap to write, as an append or a new
-  file always is, and otherwise at the file's close, at a disk reset, at the
-  end of the run, at BDOS 48, and before a search, a rename or a file size.
-  Two things follow that a disk would do differently, both in
-  `docs/CPM_SUPPORT.md`: what a program writes after a text file's first
-  `^Z` is gone once the file is closed and opened again, as no text reader
-  sees it anyway, and a record written past the end leaves NULs in the gap.
+  the text from the changed line to the end is 64 KB or less - an append, a
+  new file, any change to a small file - and otherwise at the file's close,
+  at a disk reset, at the end of the run, at BDOS 48, before a search, a
+  rename or a file size, and when SIGTERM, SIGHUP or SIGINT ends the run:
+  on POSIX those three now close every file first, and the process still
+  dies of the signal. A close whose change cannot be written back answers
+  `FFh` and says so on stderr. Every FCB on one host file shares one image,
+  whatever name or path it opened the file by. Two things follow that a disk
+  would do differently, both in `docs/CPM_SUPPORT.md`: what a program writes
+  after a text file's first `^Z` is gone once the file is closed and opened
+  again, as no text reader sees it anyway, and a record written past the end
+  leaves NULs in the gap. When those NULs, or a control character, land in
+  the text of a file that opened as text only for what it holds, the host
+  file is its records as a disk holds them, CR LF and padding included,
+  which opens binary and reads back as written - host text with NULs in it
+  opened binary the next time, one byte along for every LF. It is host text
+  again once the text is.
   `tests/text_image_prop.py` checks every call against that definition over
   random LF, CR LF, `^Z`-ended and `^Z`-padded files whose line ends fall at
   every place around a record boundary, with new guest `tests/text_ops.asm`:
@@ -192,13 +202,20 @@ records are found, read and written back is the first entry under Fixed.
   under such a name, a file is written as it comes, like a `$$$` file, and at
   its last close, at a disk reset or at the end of the run it becomes host
   text if it is text by the same rule - and, if any of it was written at
-  random, only if it reads back exactly, since a random file's records have
-  to stay where they are; so an `,A` save or a `.PRN` listing lands as host
-  text as before, and a tokenized save or a library made directly keeps its
-  bytes. Microsoft's LIB-80 makes its work file `MYLIB.LIB`, opens it again
-  at once and writes the REL library into it; 4.9.0 and e497958 wrote that
-  through the converter, 17,694 bytes of a 20,736-byte library, and LIB-80's
-  own listing of the result said `?Module name/number not found in file`.
+  random, only if its text reads back as written and does not end in NULs,
+  since a random file's records have to stay what they are; so an `,A` save
+  or a `.PRN` listing lands as host text as before, and a tokenized save or a
+  library made directly keeps its bytes. Made or renamed, CP/M text with a
+  Latin-1 or code page 437 character in it, which fails the rule only for
+  not being UTF-8, is host text too when its text reads back as written: PIP
+  `B.TXT=A.TXT` of an LF file with an `E9h` in it gives the same 26 bytes of
+  LF text as 4.9.0 and e497958, where the rule alone left 128 bytes of CR LF
+  and `^Z`. A WordStar document, whose `8Dh` LF soft returns would gain a CR,
+  is kept as written. Microsoft's LIB-80 makes its work file `MYLIB.LIB`,
+  opens it again at once and writes the REL library into it; 4.9.0 and
+  e497958 wrote that through the converter, 17,694 bytes of a 20,736-byte
+  library, and LIB-80's own listing of the result said `?Module name/number
+  not found in file`.
   It is the library now, and lists its module. With the default config,
   RMAC, LIB and LINK now rebuild `XDOS.SPR`, `TMP.SPR` and `BNKXDOS.SPR` from
   MP/M II's NUCLEUS sources byte-identical to DRI's, and RMAC reads an LF copy
@@ -279,6 +296,19 @@ records are found, read and written back is the first entry under Fixed.
   `Invalid File Indicator` for the same reason, DRI's STAT taking the NULs of
   the second name for an indicator it did not know; it lists the files now.
   New guest `tests/cli_fcb.asm`.
+
+- **A make over a file another FCB had open left the old file's records in
+  the new one.** A CP/M program that makes a file of a name it has open keeps
+  reading the old file through the FCB it had; here both FCBs wrote to one
+  host file. A 40-line file opened by one FCB and made over by another, each
+  then writing a record, was 928 bytes under 4.9.0 and 372 under e497958:
+  the made file's line, a hole of NULs and records of the old file. A make
+  now cuts the old file's text image loose, and that FCB goes on with it and
+  writes nothing to the host. The host file is matched as a file - device
+  and inode, volume and file index - and not only by its path string, since
+  a file named on the command line keeps the spelling it was given
+  (`./x.txt`, or `X.TXT` on macOS and Windows) and a make uses `x.txt`. Now
+  the file is the made one, 10 bytes of LF text, under either spelling.
 
 - **`cpm_disk.py add` said it had replaced a file it then failed to add.**
   On a disk too full for the new copy, `add` printed `(replaced existing

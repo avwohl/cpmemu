@@ -72,7 +72,7 @@ skipped=0
 
 # Every skip that means "this machine is missing a tool" registers itself here,
 # so --require can turn the lot into one failure at the end.  Registering is
-# separate from printing because the count behind a gate is not always one: 113
+# separate from printing because the count behind a gate is not always one: 126
 # checks sit behind the assembler.
 # Each takes a token so a caller can allow one by name: CPMEMU_SKIP_OK is a
 # space or comma separated list of tokens that --require lets through.  The
@@ -340,9 +340,9 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 113 checks live behind this gate, not the 6 an earlier version counted
-    skipped=$((skipped + 113))
-    soft_skip assembler "drive mapping tests: 113 checks, no assembler (pip install um80)"
+    # 126 checks live behind this gate, not the 6 an earlier version counted
+    skipped=$((skipped + 126))
+    soft_skip assembler "drive mapping tests: 126 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1
