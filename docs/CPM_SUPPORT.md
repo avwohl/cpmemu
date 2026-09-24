@@ -45,6 +45,10 @@ past 2^18, the most an FCB can address, is error 6. A text file's records are
 counted after conversion - LF to CR LF, ending at `^Z` - except by BDOS 33,
 34, 35 and 40, which see the host file's raw bytes.
 
+As in CP/M, a close, a disk reset or a copy of an FCB leaves the FCB usable: a
+read or write through an FCB the emulator holds no host file for opens the
+file again from its name and goes on from the FCB's position.
+
 Where this differs from 2.2 on purpose:
 
 - **An FCB that runs past FFFFh** - the bytes the call uses, 36 for BDOS 33-36

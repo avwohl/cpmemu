@@ -556,6 +556,9 @@ private:
   // Open the host file an FCB names into open_files, without touching the
   // FCB.  Returns false, having set A = 0xFF, when it cannot.
   bool open_fcb_file(qkz80_uint16 fcb_addr, int func);
+  // The open file an FCB names, opened from its name if this FCB address has
+  // none.  nullptr, with A = 0xFF, when there is no such file.
+  OpenFile* fcb_open_file(qkz80_uint16 fcb_addr, int func);
   // Copy to and from the DMA buffer, wrapping at 64K as CP/M addresses do.
   void dma_put(const uint8_t* src, size_t n);
   void dma_get(uint8_t* dst, size_t n);
@@ -2320,6 +2323,25 @@ void CPMEmulator::dma_get(uint8_t* dst, size_t n) {
   for (size_t i = 0; i < n; i++) dst[i] = mem[(current_dma + i) & 0xFFFF];
 }
 
+// CP/M keeps everything about an open file in its FCB: a close only writes
+// the directory, a disk reset does not invalidate an FCB, and a copy of an
+// FCB reads on from where the original was.  cpmemu keeps a host stream per
+// FCB address, so an FCB it has no stream for - closed, reset, or copied to
+// another address - is opened again from its name, the FCB left as it is;
+// its EX, S2 and CR still say which record.  Only BDOS 21 did this; 20, 33,
+// 34 and 40 answered 0xFF, so a program that closed a file to checkpoint its
+// directory entry and went on reading, or copied an FCB after opening it,
+// failed here and worked on CP/M.
+OpenFile* CPMEmulator::fcb_open_file(qkz80_uint16 fcb_addr, int func) {
+  auto it = open_files.find(fcb_addr);
+  if (it != open_files.end()) return &it->second;
+  if (debug || debug_bdos_funcs.count(func)) {
+    fprintf(stderr, "BDOS %d: FCB %04X not open, opening it from its name\n", func, fcb_addr);
+  }
+  if (!open_fcb_file(fcb_addr, func)) return nullptr;  // A = 0xFF
+  return &open_files.find(fcb_addr)->second;
+}
+
 // BDOS 20 and 21 read and write the record EX, S2 and CR name - CR within
 // logical extent EX of module S2 - which is the record BDOS 36 would report
 // for the same FCB.  They used to read and write wherever the host stream had
@@ -2337,21 +2359,15 @@ void CPMEmulator::bdos_read_sequential() {
   qkz80_uint8* f = &mem[fcb_addr];
   bool trace = debug || debug_bdos_funcs.count(20);
 
-  auto it = open_files.find(fcb_addr);
-  if (it == open_files.end()) {
-    if (trace) {
-      fprintf(stderr, "Read sequential: FCB %04X not open\n", fcb_addr);
-    }
-    cpu->set_reg8(0xFF, qkz80::reg_A);  // Error: file not open
-    return;
-  }
+  OpenFile* of = fcb_open_file(fcb_addr, 20);
+  if (!of) return;  // A = 0xFF: no such file
 
   qkz80_uint8 cr = f[FCB_CR];
   uint32_t record = fcb_extent_base(f) + cr;
   uint8_t buffer[128];
   size_t nread = 0;
   if (cr <= 128 && record < FCB_MAX_RECORDS) {
-    nread = read_record(it->second, record, buffer);
+    nread = read_record(*of, record, buffer);
   }
 
   // CP/M convention: return A=0 (success) when data is available,
@@ -2363,7 +2379,7 @@ void CPMEmulator::bdos_read_sequential() {
     cpu->set_reg8(1, qkz80::reg_A);  // EOF - no data available
     if (trace) {
       fprintf(stderr, "Read sequential: FCB %04X file '%s' record %u -> EOF (no data)\n",
-              fcb_addr, it->second.cpm_name.c_str(), record);
+              fcb_addr, of->cpm_name.c_str(), record);
     }
     return;
   }
@@ -2378,7 +2394,7 @@ void CPMEmulator::bdos_read_sequential() {
 
   if (trace) {
     fprintf(stderr, "Read sequential: FCB %04X file '%s' record %u read %zu bytes, returning A=0\n",
-            fcb_addr, it->second.cpm_name.c_str(), record, nread);
+            fcb_addr, of->cpm_name.c_str(), record, nread);
   }
 
   // The record after: CR + 1, so CR = 128 after an extent's last record.  A
@@ -2396,21 +2412,10 @@ void CPMEmulator::bdos_write_sequential() {
   qkz80_uint8* f = &mem[fcb_addr];
   bool trace = debug || debug_bdos_funcs.count(21);
 
-  auto it = open_files.find(fcb_addr);
-  if (it == open_files.end()) {
-    // File not open - try to open it for writing.  Not through BDOS 15,
-    // which would clear S2: the FCB already says where this record goes.
-    if (trace) {
-      fprintf(stderr, "Write sequential: FCB %04X not open, trying to open\n", fcb_addr);
-    }
-    if (!open_fcb_file(fcb_addr, 21)) {
-      if (trace) {
-        fprintf(stderr, "Write sequential: FCB %04X failed to open\n", fcb_addr);
-      }
-      return;  // A = 0xFF
-    }
-    it = open_files.find(fcb_addr);
-  }
+  // Not through BDOS 15 if it is not open, which would clear S2: the FCB
+  // already says where this record goes.
+  OpenFile* of = fcb_open_file(fcb_addr, 21);
+  if (!of) return;  // A = 0xFF
 
   qkz80_uint8 cr = f[FCB_CR];
   uint32_t record = fcb_extent_base(f) + cr;
@@ -2421,10 +2426,10 @@ void CPMEmulator::bdos_write_sequential() {
 
   uint8_t buffer[128];
   dma_get(buffer, 128);
-  bool ok = write_record(it->second, record, buffer);
+  bool ok = write_record(*of, record, buffer);
   if (trace) {
     fprintf(stderr, "Write sequential: FCB %04X file '%s' record %u %s\n", fcb_addr,
-            it->second.cpm_name.c_str(), record, ok ? "written" : "FAILED");
+            of->cpm_name.c_str(), record, ok ? "written" : "FAILED");
   }
   if (!ok) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
@@ -2599,23 +2604,20 @@ bool CPMEmulator::random_position(OpenFile& of, qkz80_uint16 fcb_addr, uint32_t*
 void CPMEmulator::bdos_read_random() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
 
-  auto it = open_files.find(fcb_addr);
-  if (it == open_files.end()) {
-    cpu->set_reg8(0xFF, qkz80::reg_A);  // Error: file not open
-    return;
-  }
+  OpenFile* of = fcb_open_file(fcb_addr, 33);
+  if (!of) return;  // A = 0xFF: no such file
 
   uint32_t record_num;
-  if (!random_position(it->second, fcb_addr, &record_num)) return;
+  if (!random_position(*of, fcb_addr, &record_num)) return;
 
   // Read 128 bytes to DMA
   uint8_t buffer[128];
-  it->second.last_op = OP_READ;
-  size_t nread = fread(buffer, 1, 128, it->second.fp);
+  of->last_op = OP_READ;
+  size_t nread = fread(buffer, 1, 128, of->fp);
 
   if (debug || debug_bdos_funcs.count(33)) {
     fprintf(stderr, "Read random: FCB %04X file '%s' record %u read %zu bytes\n",
-            fcb_addr, it->second.cpm_name.c_str(), record_num, nread);
+            fcb_addr, of->cpm_name.c_str(), record_num, nread);
   }
 
   if (nread == 0) {
@@ -2633,25 +2635,22 @@ void CPMEmulator::bdos_read_random() {
 void CPMEmulator::bdos_write_random() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
 
-  auto it = open_files.find(fcb_addr);
-  if (it == open_files.end()) {
-    cpu->set_reg8(0xFF, qkz80::reg_A);  // Error: file not open
-    return;
-  }
+  OpenFile* of = fcb_open_file(fcb_addr, 34);
+  if (!of) return;  // A = 0xFF: no such file
 
   uint32_t record_num;
-  if (!random_position(it->second, fcb_addr, &record_num)) return;
+  if (!random_position(*of, fcb_addr, &record_num)) return;
 
   // Write 128 bytes from DMA
   uint8_t buffer[128];
   dma_get(buffer, 128);
-  it->second.last_op = OP_WRITE;
-  size_t nwritten = fwrite(buffer, 1, 128, it->second.fp);
-  fflush(it->second.fp);
+  of->last_op = OP_WRITE;
+  size_t nwritten = fwrite(buffer, 1, 128, of->fp);
+  fflush(of->fp);
 
   if (debug || debug_bdos_funcs.count(34)) {
     fprintf(stderr, "Write random: FCB %04X file '%s' record %u wrote %zu bytes\n",
-            fcb_addr, it->second.cpm_name.c_str(), record_num, nwritten);
+            fcb_addr, of->cpm_name.c_str(), record_num, nwritten);
   }
 
   if (nwritten != 128) {

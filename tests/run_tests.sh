@@ -71,7 +71,7 @@ skipped=0
 
 # Every skip that means "this machine is missing a tool" registers itself here,
 # so --require can turn the lot into one failure at the end.  Registering is
-# separate from printing because the count behind a gate is not always one: 72
+# separate from printing because the count behind a gate is not always one: 78
 # checks sit behind the assembler.
 # Each takes a token so a caller can allow one by name: CPMEMU_SKIP_OK is a
 # space or comma separated list of tokens that --require lets through.  The
@@ -339,9 +339,9 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 72 checks live behind this gate, not the 6 an earlier version counted
-    skipped=$((skipped + 72))
-    soft_skip assembler "drive mapping tests: 72 checks, no assembler (pip install um80)"
+    # 78 checks live behind this gate, not the 6 an earlier version counted
+    skipped=$((skipped + 78))
+    soft_skip assembler "drive mapping tests: 78 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1
@@ -883,6 +883,18 @@ else
         fcb_reset; printf 'a\nb\n' >"$fcbdir/T.TXT"
         fcb_cfg=$tmp/fcbbin.cfg check_fcb "files: a mode rule applies to a file named on the command line" \
             T.TXT OL 'a>b>~'
+
+        # CP/M keeps an open file's state in its FCB, so a read after a close,
+        # after a disk reset, or through a copy of the FCB goes on from it.
+        # Only a sequential write did; the rest answered 0xFF.
+        fcb_reset; fcb_file "$fcbdir/data.dat" 012
+        check_fcb "files: a read after close goes on from the FCB" DATA.DAT ORCRS '01(00,00,02)'
+        check_fcb "files: a read after a disk reset goes on" DATA.DAT ORBRS '01(00,00,02)'
+        check_fcb "files: a copy of an open FCB reads on" DATA.DAT ORIRS '01(00,00,02)'
+        check_fcb "files: a random read after close" DATA.DAT OCN2GS '2(00,00,02)'
+        fcb_reset; fcb_file "$fcbdir/data.dat" 012; fcb_file "$tmp/want" 0X2
+        check_fcb "files: a random write after close" DATA.DAT OCN1HXPC '' data.dat "$tmp/want"
+        check_fcb "files: a read of a file that is not there still fails" NONE.DAT R '=FF'
 
         # A CR the text writer holds at a record's end reaches the file when
         # the run ends at the end of its input, not only when the program

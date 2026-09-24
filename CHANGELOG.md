@@ -143,6 +143,13 @@ is still 128, not the extent's record count.
   and wrong for a REL library: building one with DRI LIB or Microsoft LIB-80
   under `auto` still needs `*.LIB = binary`, as it did in 4.9.0.
 
+- **A read or write through an FCB the emulator held no stream for failed
+  with `FFh`.** CP/M keeps an open file's state in its FCB, so a read after
+  a close, after BDOS 13 or 37, or through a copy of an open FCB at another
+  address goes on from where the FCB says. Here BDOS 20, 33, 34 and 40
+  answered `FFh`; only 21 opened the file again. All five do now, without
+  touching the FCB.
+
 - **An FCB near the top of memory had the file calls write past the
   emulator's 64K.** BDOS 22 with its FCB at FFECh cleared bytes 13 to 31 of
   it, the last 12 of them past FFFFh in the host heap (AddressSanitizer:
