@@ -192,6 +192,15 @@ after it, since the host file cannot be truncated there.
   the BDOS's make leaves it. On hd1k this is older than 4.9.0; on SSSD it
   arrived with `add` replacing a file of the same name, above.
 
+- **`cpm_disk.py add` never reused the blocks a delete or a replace freed.**
+  It wrote every file in one run after the highest block in use, so on a
+  241-block SSSD image a 100 KB file replaced twice beside a 10 KB one ran
+  out - "needs 100 blocks and only 21 are left" - with 110 blocks in use. The
+  run after the highest block is still where a file goes when it fits there,
+  so every image built without that failure is byte-identical to before
+  (romwbw_disks' 66 images for 3.5.1, 3.6.0 and 3.7.0-dev.14 are); when it
+  does not fit, the file goes in the free blocks, lowest first.
+
 ### Changed
 
 - **`cpm_disk.py add` pads a file's last block with NUL, not `^Z`.** The bytes

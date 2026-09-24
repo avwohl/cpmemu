@@ -211,6 +211,30 @@ def filename_to_name83(filename):
     ext = ext[1:4].ljust(3) if ext else '   '
     return (name + ext).encode('ascii', 'replace')
 
+def allocate_blocks(used, first_block, max_block, blocks_needed):
+    """The blocks a file of `blocks_needed` blocks is written to, or None.
+
+    One run after the highest block in use, when the file fits there: that is
+    where this tool has always put a file, and romwbw_disks rebuilds published
+    images byte for byte on it.  When it does not fit, free blocks from the
+    lowest up - an allocation map lists each block, and nothing needs them
+    adjacent.  This stopped at the run, so the blocks a delete or a replace
+    freed below the highest file were never used again: on SSSD, a 100 KB
+    file replaced twice beside a 10 KB one filled the disk with 110 of its
+    241 blocks in use."""
+    top = max(used) if used else first_block - 1
+    start = max(top + 1, first_block)
+    if start + blocks_needed - 1 <= max_block:
+        return list(range(start, start + blocks_needed))
+    free = [b for b in range(first_block, max_block + 1) if b not in used]
+    if len(free) < blocks_needed:
+        return None
+    return free[:blocks_needed]
+
+
+def free_block_count(used, first_block, max_block):
+    return sum(1 for b in range(first_block, max_block + 1) if b not in used)
+
 # Disk format sizes
 HD1K_SINGLE_SIZE = 8388608      # 8 MB
 HD1K_SLICE_SIZE = 8388608       # 8 MB per slice
@@ -457,6 +481,22 @@ class SssdDisk:
                 return i
         return None
 
+    def dir_entries(self):
+        """Every directory entry, 32 bytes each, in order."""
+        for i in range(self.DIR_ENTRIES):
+            yield self.read_dir_entry(i)
+
+    def get_used_blocks(self):
+        """Every block number the directory points at, and 0-1, which are the
+        directory itself."""
+        used = {0, 1}
+        for entry in self.dir_entries():
+            if entry[0] != 0xE5:
+                for j in range(16):
+                    if entry[16 + j]:
+                        used.add(entry[16 + j])
+        return used
+
     def find_max_block(self):
         """Find highest used block number in directory.
 
@@ -500,13 +540,13 @@ class SssdDisk:
         num_records = (len(file_data) + 127) // 128
         blocks_needed = (num_records + self.RECORDS_PER_BLOCK - 1) // self.RECORDS_PER_BLOCK
 
-        next_block = self.find_max_block() + 1
-        if next_block + blocks_needed - 1 > self.MAX_BLOCK:
-            free = self.MAX_BLOCK - next_block + 1
+        used = self.get_used_blocks()
+        blocks = allocate_blocks(used, 2, self.MAX_BLOCK, blocks_needed)
+        if blocks is None:
             print(f"Error: {filename} needs {blocks_needed} blocks and only "
-                  f"{max(free, 0)} are left before the end of the disk")
+                  f"{free_block_count(used, 2, self.MAX_BLOCK)} are free")
             return False
-
+        next_block = blocks[0] if blocks else self.find_max_block() + 1
 
         sys_flag = " [SYS]" if sys_attr else ""
         user_flag = f" [U{user}]" if user != 0 else ""
@@ -519,7 +559,7 @@ class SssdDisk:
 
         # Write file data to blocks first
         for i in range(blocks_needed):
-            block_num = next_block + i
+            block_num = blocks[i]
             data_offset = i * self.BLOCK_SIZE
             chunk = file_data[data_offset:data_offset + self.BLOCK_SIZE]
             self.write_block(block_num, chunk)
@@ -545,10 +585,7 @@ class SssdDisk:
             entry[9:12] = ext_bytes
 
             # Get blocks for this extent (up to 16 for 8-bit pointers)
-            extent_blocks = []
-            for i in range(self.BLOCKS_PER_EXTENT):
-                if block_idx + i < blocks_needed:
-                    extent_blocks.append(next_block + block_idx + i)
+            extent_blocks = blocks[block_idx:block_idx + self.BLOCKS_PER_EXTENT]
 
             # Calculate record count for this extent
             if block_idx + len(extent_blocks) >= blocks_needed:
@@ -814,19 +851,19 @@ class Hd1kDisk:
         records_per_block = BLOCK_SIZE // 128  # 32 records per 4KB block
         blocks_needed = (num_records + records_per_block - 1) // records_per_block
 
-        next_block = self.find_max_block() + 1
-
         # Refuse rather than run off the end.  There was no bound here at all:
         # `cpm_disk.py add hd.img <9MB file>` on an 8 MB image printed
         # "Successfully updated" and left the file 9,486,336 bytes - a grown
         # image whose directory points past where the geometry says the disk
         # ends.  Slice-aware, so on a combo it stops at the slice boundary
         # rather than writing into the next slice.
-        if next_block + blocks_needed - 1 > self.MAX_BLOCK:
-            free = self.MAX_BLOCK - next_block + 1
+        used = self.get_used_blocks()
+        blocks = allocate_blocks(used, 8, self.MAX_BLOCK, blocks_needed)
+        if blocks is None:
             print(f"Error: {filename} needs {blocks_needed} blocks and only "
-                  f"{max(free, 0)} are left before the end of the disk")
+                  f"{free_block_count(used, 8, self.MAX_BLOCK)} are free")
             return False
+        next_block = blocks[0] if blocks else self.find_max_block() + 1
 
         sys_flag = " [SYS]" if sys_attr else ""
         user_flag = f" [U{user}]" if user != 0 else ""
@@ -839,7 +876,7 @@ class Hd1kDisk:
 
         # Write file data to blocks first
         for i in range(blocks_needed):
-            block_num = next_block + i
+            block_num = blocks[i]
             block_offset = self.DIR_START + (block_num * BLOCK_SIZE)
             data_offset = i * BLOCK_SIZE
             chunk = file_data[data_offset:data_offset + BLOCK_SIZE]
@@ -883,10 +920,7 @@ class Hd1kDisk:
             entry[9:12] = ext_bytes
 
             # Get blocks for this physical extent
-            extent_blocks = []
-            for i in range(blocks_per_physical_extent):
-                if block_idx + i < blocks_needed:
-                    extent_blocks.append(next_block + block_idx + i)
+            extent_blocks = blocks[block_idx:block_idx + blocks_per_physical_extent]
 
             # Calculate which logical extent this ends on and the record count
             records_before = block_idx * records_per_block

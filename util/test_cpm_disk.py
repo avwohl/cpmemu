@@ -530,6 +530,59 @@ def each_geometry():
         yield cls.__name__, data, cls(data)
 
 
+class TestFreedBlocks(unittest.TestCase):
+    """The blocks a delete or a replace frees are used again.
+
+    add_file put every file in one run after the highest block in use, so a
+    file deleted or replaced below another one left blocks nothing would ever
+    hand out.  On a 241-block SSSD image, a 100 KB file replaced twice beside
+    a 10 KB one ran out, "needs 100 blocks and only 21 are left", with 110
+    blocks in use.
+    """
+
+    def test_sssd_survives_replacing_a_file_below_another(self):
+        data = bytearray(create_sssd_disk())
+        disk = SssdDisk(data)
+        a, b = b"a" * 102400, b"b" * 10240
+        for name, body in (("A.BIN", a), ("B.BIN", b), ("A.BIN", a), ("B.BIN", b),
+                           ("A.BIN", a), ("B.BIN", b), ("A.BIN", a)):
+            self.assertTrue(disk.add_file(name, body), name)
+        self.assertEqual(bytes(disk.extract_file("A.BIN")), a)
+        self.assertEqual(bytes(disk.extract_file("B.BIN")), b)
+        self.assertEqual(verify_disk(disk, data, 'sssd')[0], [])
+
+    def test_hd1k_reuses_what_a_delete_freed(self):
+        for fmt, data, disk in each_geometry():
+            if fmt == 'SssdDisk':
+                continue
+            with self.subTest(fmt=fmt):
+                big = bytes(range(256)) * 19532          # 5,000,192 bytes
+                self.assertTrue(disk.add_file("BIG.DAT", big))
+                self.assertTrue(disk.add_file("MID.DAT", b"m" * 1000064))
+                self.assertTrue(disk.add_file("BIG.DAT", big))
+                self.assertEqual(bytes(disk.extract_file("BIG.DAT")), big)
+                self.assertEqual(bytes(disk.extract_file("MID.DAT")), b"m" * 1000064)
+                self.assertEqual(verify_disk(disk, data, detect_disk_format(data))[0], [])
+
+    def test_a_file_that_fits_after_the_last_goes_there(self):
+        """The run after the highest block is still first choice: images
+        romwbw_disks rebuilds byte for byte depend on where files land."""
+        for fmt, data, disk in each_geometry():
+            with self.subTest(fmt=fmt):
+                disk.add_file("A.COM", b"a" * 5000)
+                disk.add_file("B.COM", b"b" * 5000)
+                top = max(disk.list_files()[(0, "B.COM")]['blocks'])
+                disk.delete_file("A.COM")
+                disk.add_file("C.COM", b"c" * 5000)
+                self.assertEqual(min(disk.list_files()[(0, "C.COM")]['blocks']), top + 1)
+
+    def test_a_full_disk_says_how_much_is_free(self):
+        data = bytearray(create_sssd_disk())
+        disk = SssdDisk(data)
+        self.assertTrue(disk.add_file("A.BIN", b"a" * 200 * 1024))
+        self.assertFalse(disk.add_file("B.BIN", b"b" * 100 * 1024))
+
+
 class TestEmptyFile(unittest.TestCase):
     """An empty file has a directory entry: extent 0, RC 0, no blocks.
 
