@@ -921,6 +921,15 @@ else
         check_fcb "text: a record rewritten shorter cuts the text there" \
             T.TXT OHXJ1K2U3WC '' t.txt "$tmp/want"
 
+        # A make over a file another FCB has open under another spelling of
+        # its path - ./t.txt on the command line, t.txt to make - left that
+        # FCB's image tied to the host file, and its close wrote the old text
+        # back over the new file.  The same on macOS or Windows for X.TXT.
+        fcb_reset; for i in $(seq 1 40); do printf 'line %02d of the file\n' $i; done >"$fcbdir/t.txt"
+        printf 'B\n' >"$tmp/want"
+        check_fcb "text: a make over a file open by another spelling of it" \
+            ./t.txt ORIMZ0HBJ1K2U3WIRHQWCIC 'ln' t.txt "$tmp/want"
+
         # Random files: every sequence of calls, against a model of the
         # image.  tests/text_image_prop.py has the definition.
         if command -v python3 >/dev/null 2>&1; then

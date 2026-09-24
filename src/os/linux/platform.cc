@@ -385,6 +385,14 @@ bool delete_file(const char* path) {
     return unlink(path) == 0;
 }
 
+bool same_file(const char* a, const char* b) {
+    struct stat sa, sb;
+    if (stat(a, &sa) != 0 || stat(b, &sb) != 0) {
+        return false;
+    }
+    return sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino;
+}
+
 std::vector<DirEntry> list_directory(const char* path) {
     std::vector<DirEntry> entries;
 

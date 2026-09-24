@@ -574,6 +574,30 @@ bool delete_file(const char* path) {
     return DeleteFileA(path) != 0;
 }
 
+// The volume serial number and file index GetFileInformationByHandle gives
+// are what identify a file on Windows; a path compares nothing, since
+// X.TXT, x.txt and .\x.txt all name one file.
+static bool file_identity(const char* path, BY_HANDLE_FILE_INFORMATION* info) {
+    HANDLE h = CreateFileA(path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    BOOL ok = GetFileInformationByHandle(h, info);
+    CloseHandle(h);
+    return ok != 0;
+}
+
+bool same_file(const char* a, const char* b) {
+    BY_HANDLE_FILE_INFORMATION ia, ib;
+    if (!file_identity(a, &ia) || !file_identity(b, &ib)) {
+        return false;
+    }
+    return ia.dwVolumeSerialNumber == ib.dwVolumeSerialNumber &&
+           ia.nFileIndexHigh == ib.nFileIndexHigh &&
+           ia.nFileIndexLow == ib.nFileIndexLow;
+}
+
 std::vector<DirEntry> list_directory(const char* path) {
     std::vector<DirEntry> entries;
 

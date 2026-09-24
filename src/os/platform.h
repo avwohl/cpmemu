@@ -69,6 +69,13 @@ int64_t get_file_size(const char* path);
 // Delete a file, returns true on success
 bool delete_file(const char* path);
 
+// Whether two paths name the same existing file: device and inode on POSIX,
+// volume serial number and file index on Windows.  False if either does not
+// exist.  Two spellings of one file are ordinary - X.TXT and x.txt on a
+// case-insensitive disk, ./x.txt and x.txt anywhere - and the emulator keys
+// its open files by path.
+bool same_file(const char* a, const char* b);
+
 // Directory entry information
 struct DirEntry {
     std::string name;

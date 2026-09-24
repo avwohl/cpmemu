@@ -615,6 +615,11 @@ private:
   size_t read_record(OpenFile& of, uint32_t record, uint8_t* buffer, bool sequential);
   bool write_record(OpenFile& of, uint32_t record, const uint8_t* buffer);
 
+  // The path by which the host file at `path` is already known - an open
+  // FCB's, a text image's or a make's this run - or `path` if it is known by
+  // none.  See the definition.
+  std::string tracked_path(const std::string& path) const;
+
   // Converted text files: see TextImage.  One image per host path, shared.
   std::map<std::string, std::shared_ptr<TextImage> > text_images;
   std::shared_ptr<TextImage> text_image(const std::string& path, bool empty);
@@ -1202,6 +1207,39 @@ void CPMEmulator::pad_to_128(uint8_t* buffer, size_t actual_size) {
     // Pad with ^Z for CP/M compatibility
     memset(buffer + actual_size, CPM_EOF, 128 - actual_size);
   }
+}
+
+// Open files, text images and the made-file sets are keyed by host path, and
+// one host file can have more than one: a file named on the command line is
+// found by the spelling it was given - X.TXT, ./x.txt, dir/../x.txt - and a
+// make or a rename uses the lower-case name in the drive's directory.  On a
+// case-insensitive disk, or with a path on the command line, those are the
+// same file under two keys, so a make over a file an FCB had open by the
+// other one did not cut its image loose, and the image's stale text was
+// written back over the new file when that FCB closed.  Every path an open, a
+// make, a delete, a rename or a file size is about is looked up here first,
+// and takes the spelling the file is already known by.  Paths are compared
+// as strings first, and as files - device and inode, or volume and file
+// index - only when that fails and the file exists.  made_guessed is not
+// looked in: it is every file made this run under a name neither list knows,
+// it only grows, and a rename finds those by the name they were made under.
+std::string CPMEmulator::tracked_path(const std::string& path) const {
+  std::vector<const std::string*> known;
+  for (const auto& pair : open_files) {
+    if (pair.second.is_open()) known.push_back(&pair.second.unix_path);
+  }
+  for (const auto& pair : text_images) known.push_back(&pair.first);
+  for (const auto& p : made_by_content) known.push_back(&p);
+  for (const auto* k : known) {
+    if (*k == path) return path;
+  }
+  if (known.empty() || platform::get_file_type(path.c_str()) == platform::FileType::NotFound) {
+    return path;
+  }
+  for (const auto* k : known) {
+    if (platform::same_file(path.c_str(), k->c_str())) return *k;
+  }
+  return path;
 }
 
 // Read a host text file into `img`: LF with no CR before it to CR LF, the
@@ -2427,6 +2465,7 @@ bool CPMEmulator::open_fcb_file(qkz80_uint16 fcb_addr, int func) {
   bool eol_convert = false;
   std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert,
                                             cpu->get_mem()[fcb_addr]);
+  if (!unix_path.empty()) unix_path = tracked_path(unix_path);
 
   if (trace) {
     fprintf(stderr, "BDOS Open: '%s' -> '%s' (mode: %s)\n", filename.c_str(),
@@ -2456,6 +2495,7 @@ bool CPMEmulator::open_fcb_file(qkz80_uint16 fcb_addr, int func) {
         cpu->set_reg8(0xFF, qkz80::reg_A);
         return false;
       }
+      unix_path = tracked_path(unix_path);
     }
   }
 
@@ -2801,7 +2841,7 @@ void CPMEmulator::bdos_make_file() {
                                           cpu->get_mem()[fcb_addr]);
     if (!found.empty() && (fp = fopen(found.c_str(), "r+b")) != nullptr) {
       extending = true;
-      unix_name = found;
+      unix_name = tracked_path(found);
       mode = found_mode;
       eol_convert = found_eol;
       if (debug || debug_bdos_funcs.count(22)) {
@@ -2810,6 +2850,9 @@ void CPMEmulator::bdos_make_file() {
       }
     }
   }
+  // The file this makes over, if it exists, may be open or imaged under
+  // another spelling: see tracked_path.
+  if (!fp) unix_name = tracked_path(unix_name);
   if (!fp) fp = fopen(unix_name.c_str(), "w+b");
   if (!fp) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
@@ -2881,6 +2924,7 @@ void CPMEmulator::bdos_delete_file() {
   bool eol_convert;
   std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert,
                                             cpu->get_mem()[fcb_addr]);
+  if (!unix_path.empty()) unix_path = tracked_path(unix_path);  // before it is gone
 
   if (debug || debug_bdos_funcs.count(19)) {
     fprintf(stderr, "Delete file: %s -> %s\n", filename.c_str(),
@@ -3006,6 +3050,7 @@ void CPMEmulator::bdos_file_size() {
   // A text file with conversion has the records its image has - the ones a
   // random read reads - not its host bytes / 128: an LF file is short of them
   // by one byte a line, so the record a program took for the last was not.
+  unix_path = tracked_path(unix_path);
   if (mode == MODE_TEXT && eol_convert) records = text_record_count(unix_path);
 
   // Store in FCB bytes 33-35 (r0, r1, r2)
@@ -3063,6 +3108,7 @@ void CPMEmulator::bdos_rename_file() {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error: old file not found
     return;
   }
+  old_path = tracked_path(old_path);
 
   // Extract new name from second FCB (at offset +16)
   std::string new_name = fcb_to_filename(fcb_addr + 16);
@@ -3083,6 +3129,15 @@ void CPMEmulator::bdos_rename_file() {
     fprintf(stderr, "Rename: %s -> %s\n", old_path.c_str(), new_path.c_str());
   }
 
+  // The file the rename replaces, by the spelling it is known by, or none
+  // when the new name is the old file itself: the same name, or another case
+  // of it on a case-insensitive disk.
+  std::string replaced;
+  if (new_path != old_path && !platform::same_file(old_path.c_str(), new_path.c_str()) &&
+      platform::get_file_type(new_path.c_str()) != platform::FileType::NotFound) {
+    replaced = tracked_path(new_path);
+  }
+
   if (rename(old_path.c_str(), new_path.c_str()) != 0) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
   } else {
@@ -3094,10 +3149,15 @@ void CPMEmulator::bdos_rename_file() {
     if (drive_dir(fcb_drive_index(cpu->get_mem()[fcb_addr])).empty()) {
       file_map[normalize_cpm_filename(new_name)] = new_path;
     }
+    if (!replaced.empty()) {
+      made_guessed.erase(replaced);
+      made_by_content.erase(replaced);
+      made_random.erase(replaced);
+      forget_text_image(replaced);
+    }
     renamed_made_file(old_path, new_name, new_path);
     // An FCB still open on the file follows it, as a CP/M FCB does: its
     // image, and the path its host file is found by, are the new name's.
-    if (new_path != old_path) forget_text_image(new_path);  // the file it replaced
     auto moved = text_images.find(old_path);
     if (moved != text_images.end() && new_path != old_path) {
       moved->second->path = new_path;
