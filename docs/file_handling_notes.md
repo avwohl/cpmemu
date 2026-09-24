@@ -35,12 +35,14 @@
 - Convert `\r\n` -> `\n` when writing CP/M text files to Unix
 - Only apply to text files, not binary, and only with `eol_convert = true`
 
-`eol_convert` says whether a text file is converted, and the host file's own
-line ends do not. A text file written with `eol_convert = true` reaches the
-host converted whatever line ends it had there before, so a CR LF host file
-that a program rewrites comes back all LF. With `eol_convert = false`, or a
-binary mode, the records reach the host as the program wrote them, which is
-how to keep CP/M's CR LF on the host.
+The configuration decides, and only the configuration: a file's mode comes
+from its mapping or mode rule, else `default_mode`, else - `auto` only - a
+guess (see File Mode Detection), and `eol_convert` says whether a text file is
+converted. A text file written with `eol_convert = true` reaches the host
+converted whatever line ends it had there before, so a CR LF host file that
+a program rewrites comes back all LF. With `eol_convert = false`, or a binary
+mode, the records reach the host as the program wrote them, which is how to
+keep CP/M's CR LF on the host.
 
 ### 3. Rewriting text in place
 
@@ -81,8 +83,9 @@ rule - NULs in the text, from a record written past the end of text that
 fills its last record, or a control character - makes the host file the
 image itself, CR LF and padding included, which the next open reads binary,
 record for record. That is decided again at every write back, so once the
-NULs are written over it is host text again. A file a mode rule makes text
-stays host text whatever is written in it.
+NULs are written over it is host text again. A file the configuration makes
+text - a mapping, a mode rule or `default_mode = text` - stays host text
+whatever is written in it.
 
 ## Configuration File Format
 
@@ -97,7 +100,8 @@ program = /path/to/program.com
 # Change to directory before running
 cd = /path/to/working/directory
 
-# Default file mode: auto, text, or binary
+# The mode of every file a program opens or makes that no mapping or mode
+# rule names: auto, text, or binary
 default_mode = auto
 
 # Enable EOL conversion for text files (default: true).  false keeps CP/M's
@@ -216,8 +220,18 @@ cd = /tmp/build
 
 ## File Mode Detection
 
-When `default_mode = auto` and no mode rule names the file, the emulator
-looks at the extension:
+A file's mode is the configuration's, for a file a program opens and for one
+it makes alike:
+
+1. the mapping with a host path that reached the file, if its line gave a
+   mode - `text` or `binary`, or `default_mode` as it stood there;
+2. a mode rule for the name (`*.LIB = binary`, `X.TXT = text`), the last
+   one that matches;
+3. `default_mode`, if it is `text` or `binary`.
+
+What the configuration calls text is text, and binary binary, without a look
+at the file. Only when none of those says - `default_mode = auto` and no
+mapping or rule for the name - does the emulator guess, from the extension:
 
 **Text extensions:** .BAS, .MAC, .ASM, .TXT, .DOC, .LST, .PRN, .Z80, .LIB
 **Binary extensions:** .COM, .EXE, .OVL, .OVR, .SYS, .BIN, .DAT, .SPR, .REL, .PRL, .RSP
@@ -282,12 +296,9 @@ a file made this run and written as it came - under `auto`, or as `binary`,
 or with `eol_convert = false` - is converted at a rename to a name that is
 text with `eol_convert = true` by a mapping, a mode rule or `default_mode`,
 and is left as written at a rename to a name that is `binary` or has
-`eol_convert = false`. A file that was not made this run keeps its bytes at a
-rename.
-
-A mode rule (`*.LIB = binary`, `*.BAS = text`) decides for the names it
-matches without looking at them, and so does `default_mode = text` or
-`binary` for a file a program makes.
+`eol_convert = false`. So under `default_mode = text`, rules `*.$$$ = binary`
+and `*.COM = binary` have PIP copy a program byte for byte and a text file to
+host text. A file that was not made this run keeps its bytes at a rename.
 
 ## File Search Order
 

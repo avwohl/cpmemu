@@ -1,16 +1,5 @@
 Todo list.  Open items only.
 
-[ANY] default_mode does not apply to a file a program opens.
-  find_unix_file_ex takes a mode rule or the extension (and, for the text
-  list, the file's bytes); default_mode reaches only a make and a mapping
-  written below it.  examples/README.md says "To set the mode for a whole
-  class of files, use default_mode".  Repro: printf 'a\nb\n' >t.txt, a
-  config with default_mode = binary, tests/fcb_io.com T.TXT OL prints
-  a<>b<>~ (converted); with *.TXT = binary it prints a>b>~.  As old as 4.9.0
-  at least.  Missing: a decision - applying it to opens changes what every
-  config that sets default_mode = text does to the .COM and .OVR files its
-  program opens.
-
 [ANY] A / in a command-line word becomes _ in the default FCB.
   2.2's CCP takes / as a name character, and DRI's STAT reads its
   attribute from the second FCB: STAT T.TXT $R/O answers "Invalid File

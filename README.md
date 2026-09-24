@@ -16,7 +16,8 @@ also installs as a standalone library.
   host path or length mapped into a fake 8.3 CP/M name
 - **Drive letters**: `drive_A`..`drive_P` back a CP/M drive with a host
   directory, and a configured drive is confined to it
-- **Text/binary mode**: automatic EOL conversion between CP/M and Unix
+- **Text/binary mode**: EOL conversion between CP/M and Unix for the files the
+  configuration makes text, guessed by name and content only where it says `auto`
 - **Terminal output**: ADM-3A escape sequences and the Kaypro `ESC G` attribute
   byte are translated to ANSI/VT100
 - **Device redirection**: printer and auxiliary I/O

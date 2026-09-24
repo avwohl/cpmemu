@@ -325,6 +325,29 @@ records are found, read and written back is the first entry under Fixed.
 
 ### Changed
 
+- **Configs that set `default_mode` now affect the files a program opens, not
+  only the ones it makes.** A file's mode is the configuration's: the mapping
+  that reached it if its line gave a mode, else a mode rule for the name, else
+  `default_mode` when it is `text` or `binary`; only when all of that is
+  `auto` is it guessed from the extension and, for a name on the text list,
+  from the file's bytes. `default_mode` reached BDOS 22 alone, and an opened
+  file was guessed at whatever it said, which is as old as 4.9.0 at least:
+  under `default_mode = binary` an LF `T.TXT` read `a<>b<>~` through
+  `tests/fcb_io.com` - converted - and under `text` a `.DAT` did not convert.
+  **A config that sets `default_mode = text` now reads every file a program
+  opens as text**, a `.COM`, `.OVR` or `.REL` included, and one that sets
+  `binary` reads none as text: name what must be the other mode with a rule,
+  `*.REL = binary` or `*.TXT = text`. `examples/README.md` says so, and the
+  example configs that set it do: `simple_test.cfg` and `mbasic_tests.cfg` add
+  `*.BAS = binary` for MBASIC's tokenized saves, which a text read would cut
+  at their first `^Z` byte - or, converted, corrupt. `simple_test.cfg` also
+  said the `tests/*.bas` files had CP/M line ends with `eol_convert = false`;
+  they are LF, and `LOAD "PRINTSEP.BAS"` has answered `Line buffer overflow in
+  10` since 4.9.0 at least. It converts now and loads and runs all three. The
+  guess - by content, 8-bit text accepted at a close or rename, a file kept as
+  its records once its text stops being text - is for `auto` alone: a file the
+  configuration makes text stays host text whatever is written in it.
+
 - **Line ends on the host are the configuration's, and a CR LF text file a
   program writes comes back all LF.** With `eol_convert = true` a text file
   reaches the host as its text CR LF to LF, ending at its `^Z`, with nothing

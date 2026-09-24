@@ -17,7 +17,7 @@ key that looks like a mistyped directive is now reported (see below).
 | --- | --- |
 | `program` | Program to run. Required. |
 | `cd` / `chdir` | Change working directory. Applied immediately, in file order. |
-| `default_mode` | `auto`, `text` or `binary`. |
+| `default_mode` | `auto`, `text` or `binary`: the mode of every file a program opens or makes that no mapping or mode rule names. |
 | `eol_convert` | `true`/`false`. Convert `\r\n` <-> `\n` for text files. `false` keeps CP/M's bytes on the host. |
 | `debug` | `true`/`false`. Prints mappings, BDOS calls and file operations. |
 | `ctrl_c_exit` | `true`/`false`. Whether five fast ^C quit the emulator. |
@@ -96,9 +96,10 @@ verbose = 0                   # not a directive; becomes a mapping named VERBOSE
 args = TEST.BAS               # not a directive
 ```
 
-To set the mode for a whole class of files, use `default_mode`. To expose a
-directory of files, either give it a drive letter (below) or `cd` into it: a
-name with no mapping is looked up lowercased in the working directory.
+To set the mode for a whole class of files, use `default_mode`, or a mode
+rule (`*.DAT = binary`) for the names it matches. To expose a directory of
+files, either give it a drive letter (below) or `cd` into it: a name with no
+mapping is looked up lowercased in the working directory.
 
 ```ini
 default_mode = text
@@ -160,7 +161,7 @@ against files this repo does have.
 | File | What it shows |
 | --- | --- |
 | `example.cfg` | Every directive, with comments. Start here. |
-| `simple_test.cfg` | MBASIC against this repo's `tests/*.bas`. |
+| `simple_test.cfg` | MBASIC against this repo's `tests/*.bas`, `default_mode = text` with a binary rule for what MBASIC saves tokenized. |
 | `mbasic_tests.cfg` | MBASIC with a directory of programs reached by a drive letter (`drive_B`). |
 | `assembler.cfg` | M80/L80 assembly workflow. |
 | `compiler.cfg` | Hi-Tech C workflow. |
@@ -168,11 +169,21 @@ against files this repo does have.
 
 ## Text vs binary
 
-Text files get `\n` <-> `\r\n` conversion; binary files do not. `default_mode
-= auto` guesses from the extension, and for a name on the text list from what
-the file holds - a REL library named `.LIB` or a tokenized `.BAS` is binary
-(`docs/file_handling_notes.md` has the rule). Set it explicitly when a guess
-would be wrong, and use the per-file mapping form to override one file.
+The configuration decides how a file is read and written, and nothing else
+does. A file's mode is, in order:
+
+1. the mapping with a host path that reached the file, if it has a mode: the
+   `text` or `binary` on its line, or else `default_mode` as it stood on that
+   line when that was `text` or `binary`;
+2. a mode rule for the name, `*.BAS = text` or `X.DAT = binary`;
+3. `default_mode`, when it is `text` or `binary` - for every file a program
+   opens as well as every file it makes;
+4. only when all of that says `auto`, a guess: the extension, and for a name
+   on the text list what the file holds - a REL library named `.LIB` or a
+   tokenized `.BAS` is binary (`docs/file_handling_notes.md` has the rule).
+
+What the configuration names text is text whatever it holds, and what it
+names binary is binary; the look at the bytes is for `auto` alone.
 
 A text file with `eol_convert = true` is read with each LF that has no CR
 before it made CR LF (a CR LF already there stays CR LF), ending at the first
@@ -184,12 +195,27 @@ replaces comes back all LF, the lines it did not touch as well. With
 wrote them - CR LF, `^Z` and padding - so either one keeps CP/M's CR LF on the
 host. A file only read is never rewritten.
 
+`default_mode = text` or `binary` applies to what a program opens, so a
+config that sets it names what has to be the other mode with a rule. Under
+`default_mode = text`, a program's `.COM`, `.OVR` or `.REL` files, a
+tokenized MBASIC program and anything else binary would be read through the
+converter:
+
+```ini
+default_mode = text
+*.COM = binary
+*.OVR = binary
+*.REL = binary
+*.$$$ = binary      # PIP's, ED's and WordStar's work file: see below
+```
+
 PIP, ED and WordStar write `NAME.$$$` and rename it over `NAME.EXT` when they
 are done. A file made this run and renamed is converted at the rename when
 the new name is text with `eol_convert` - by a mapping, a mode rule or
-`default_mode` - and a new name that is binary, or has `eol_convert = false`,
-leaves the file as written; under `auto` the new name's extension and the
-file's bytes decide.
+`default_mode` - so a `*.$$$ = binary` rule leaves a copied program alone and
+still gives a copied text file host line ends. A new name that is binary, or
+has `eol_convert = false`, leaves the file as written; under `auto` the new
+name's extension and the file's bytes decide.
 
 ## See also
 

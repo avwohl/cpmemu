@@ -1126,6 +1126,40 @@ else
         fcb_cfg=$tmp/fcbdbin.cfg check_fcb "files: and converts what a guess would take for binary" \
             'U.$$$' $'MH\001J1K2U3WC>U.TXT;' '' u.txt "$tmp/want"
 
+        # default_mode is the mode of a file a program opens, as well as of
+        # one it makes, unless a mapping or a mode rule names it; only auto
+        # guesses.  It reached only a make: under binary an LF .TXT was
+        # converted, under text a .DAT and a tokenized .BAS were not.
+        { echo "program = $tmp/fcb_io.com"; echo "default_mode = binary"; } >"$tmp/fcbdb.cfg"
+        { echo "program = $tmp/fcb_io.com"; echo "default_mode = text"; } >"$tmp/fcbdt.cfg"
+        { echo "program = $tmp/fcb_io.com"; echo "default_mode = auto"; } >"$tmp/fcbda.cfg"
+        fcb_reset; printf 'a\nb\n' >"$fcbdir/t.txt"; printf 'a\nb\n' >"$fcbdir/t.dat"
+        fcb_cfg=$tmp/fcbdb.cfg check_fcb "files: default_mode = binary opens a .TXT binary" T.TXT OL 'a>b>~'
+        fcb_cfg=$tmp/fcbdt.cfg check_fcb "files: default_mode = text opens a .DAT as text" T.DAT OL 'a<>b<>~'
+        fcb_cfg=$tmp/fcbda.cfg check_fcb "files: default_mode = auto opens a .TXT of text as text" \
+            T.TXT OL 'a<>b<>~'
+        fcb_cfg=$tmp/fcbda.cfg check_fcb "files: default_mode = auto opens a .DAT binary" T.DAT OL 'a>b>~'
+        fcb_reset; { printf '\377A\n\000B\r\n\032'; head -c 120 /dev/zero | tr '\0' C; } >"$fcbdir/t.bas"
+        fcb_cfg=$tmp/fcbdt.cfg check_fcb "files: default_mode = text opens a tokenized .BAS as text" \
+            T.BAS OL '?A<>?B<>~'
+        # A mode rule, or a mapping that gives a mode, is for the names it
+        # matches and beats default_mode either way.
+        fcb_reset; printf 'a\nb\n' >"$fcbdir/t.txt"; printf 'a\nb\n' >"$fcbdir/t.dat"
+        mkdir -p "$fcbdir/sub"; printf 'a\nb\n' >"$fcbdir/sub/m.dat"
+        fcb_cfg=$tmp/fcbdbin.cfg check_fcb "files: a mode rule beats default_mode = binary" T.TXT OL 'a<>b<>~'
+        { echo "program = $tmp/fcb_io.com"; echo "default_mode = text"; echo "*.DAT = binary"
+          echo "M.DAT = $fcbdir/sub/m.dat binary"; echo "N.DAT = $fcbdir/sub/m.dat text"; } >"$tmp/fcbdtb.cfg"
+        fcb_cfg=$tmp/fcbdtb.cfg check_fcb "files: a mode rule beats default_mode = text" T.DAT OL 'a>b>~'
+        fcb_cfg=$tmp/fcbdtb.cfg check_fcb "files: a mapping's mode beats default_mode" M.DAT OL 'a>b>~'
+        fcb_cfg=$tmp/fcbdtb.cfg check_fcb "files: and beats a mode rule for its name" N.DAT OL 'a<>b<>~'
+        # The configuration beats what the file holds after it is written as
+        # well: made text by default_mode, a file whose text gains NULs is
+        # still host text, NULs and all.  Under auto it becomes its records
+        # (the check "a write that leaves NULs in the text keeps its records").
+        fcb_reset; { head -c 126 /dev/zero | tr '\0' x; printf '\n'; } >"$fcbdir/t.txt"
+        { head -c 126 /dev/zero | tr '\0' x; printf '\n'; head -c 128 /dev/zero; printf 'ZHHHH\n'; } >"$tmp/want"
+        fcb_cfg=$tmp/fcbdt.cfg check_fcb "files: default_mode = text keeps a file host text whatever it holds" \
+            T.TXT OHHV0ZJ5K6U7N2PCON2G 'Z' t.txt "$tmp/want"
 
         # A name on the text list opens as text only if it holds text, and is
         # made as it comes and turned into host text at its close if it is

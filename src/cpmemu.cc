@@ -438,16 +438,17 @@ struct OpenFile {
 // the file sees a change whether or not it has been written back; a make or
 // a delete of the path cuts the image loose from the host file.
 //
-// A file that opened as text because of what it holds (`by_content`) has to
-// hold text afterwards, or the next open takes it for binary and reads its
-// host bytes, which are not its records once an LF has become CR LF.  A
-// write that makes its text fail the rule - a record written past the end
-// of text that fills its last record, which leaves NULs in the text, or a
-// control character - makes the host file the image itself (`raw`), CR LF,
-// padding and all, record for record, which the next open reads binary and
-// gets back as it was written.  That is decided again at every write back,
-// so the host file is text again once the text is.  A file a mode rule makes
-// text stays host text.
+// A file that opened as text because of what it holds (`by_content`: auto,
+// with nothing in the configuration to say) has to hold text afterwards, or
+// the next open takes it for binary and reads its host bytes, which are not
+// its records once an LF has become CR LF.  A write that makes its text fail
+// the rule - a record written past the end of text that fills its last
+// record, which leaves NULs in the text, or a control character - makes the
+// host file the image itself (`raw`), CR LF, padding and all, record for
+// record, which the next open reads binary and gets back as it was written.
+// That is decided again at every write back, so the host file is text again
+// once the text is.  A file the configuration makes text - a mapping, a mode
+// rule or default_mode = text - stays host text whatever is written in it.
 //
 // This replaced a converting stream.  Its text was only ever right read or
 // written in order: rewriting a record in place wrote shorter or longer host
@@ -460,7 +461,7 @@ struct TextImage {
   std::vector<uint8_t> cpm;
   bool dirty;        // cpm has changed since the host was written
   bool detached;     // deleted or made over: nothing is written back
-  bool by_content;   // text because of what it holds, not by a mode rule
+  bool by_content;   // text because of what it holds, not by the configuration
   bool raw;          // the host file is cpm itself, not text: see above
   size_t dirty_from; // the first CP/M byte changed, SIZE_MAX when none
   size_t crlf_from;  // where the first line the host has CR LF in starts, or SIZE_MAX
@@ -604,8 +605,21 @@ private:
     return text_kind(p, n, size) == TEXT;
   }
   static bool file_looks_like_text(const std::string& unix_path);
+  // The last mode rule - a mapping with no host path - that matches a
+  // normalized name, if there is one.
+  bool mode_rule(const std::string& normalized, FileMode* mode, bool* eol) const;
+  // The mode and conversion the configuration gives a name wherever it is
+  // found: its mode rule if it has one, else default_mode and eol_convert.
+  // MODE_AUTO means the configuration does not say.
+  void configured_mode(const std::string& normalized, FileMode* mode, bool* eol) const;
+  // The mode a found file is read in: `mode` if the configuration said text
+  // or binary, the guess from its name and bytes if it said auto.
+  // `by_content`, if given, is set when the guess looked at the bytes.
+  FileMode resolve_mode(const std::string& normalized, const std::string& path, FileMode mode,
+                        bool* by_content);
   // `by_content`, if given, is set to whether the mode came from what the
-  // file holds - auto, no mode rule - rather than from a rule or a mapping.
+  // file holds - auto, with no mapping, mode rule or default_mode to say -
+  // rather than from the configuration.
   std::string find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out, bool* eol_out,
                                 qkz80_uint8 fcb_drive, bool* by_content = nullptr);
   // Substitute the text a CP/M pattern matched into a '*' on the host side,
@@ -614,7 +628,7 @@ private:
   std::string expand_unix_pattern(const std::string& cpm_pattern,
                                   const std::string& unix_pattern,
                                   const std::string& normalized) const;
-  bool match_pattern(const std::string& pattern, const std::string& text);
+  static bool match_pattern(const std::string& pattern, const std::string& text);
 
   // Decode an FCB drive byte to a 0-based drive index.
   // The two CP/M drive encodings are different and must not be conflated:
@@ -1155,46 +1169,69 @@ std::string CPMEmulator::expand_unix_pattern(const std::string& cpm_pattern,
   return unix_pattern.substr(0, star) + stand_in + unix_pattern.substr(star + 1);
 }
 
+bool CPMEmulator::mode_rule(const std::string& normalized, FileMode* mode, bool* eol) const {
+  bool found = false;
+  for (const auto& mapping : file_mappings) {
+    if (!mapping.unix_pattern.empty()) continue;
+    if (match_pattern(mapping.cpm_pattern, normalized)) {
+      found = true;
+      *mode = mapping.mode;
+      *eol = mapping.eol_convert;
+    }
+  }
+  return found;
+}
+
+// A name's mode is the configuration's: a mode rule for it, then default_mode
+// when that is text or binary.  Only when the configuration says auto is it
+// guessed - from the extension, and for a name on the text list from what
+// the file holds.  default_mode reached only the files a program made, and
+// a file it opened was guessed at whatever default_mode said, so under
+// default_mode = binary a .TXT was converted and under text a .DAT was not.
+void CPMEmulator::configured_mode(const std::string& normalized, FileMode* mode,
+                                  bool* eol) const {
+  if (mode_rule(normalized, mode, eol)) return;
+  *mode = default_mode;
+  *eol = default_eol_convert;
+}
+
+FileMode CPMEmulator::resolve_mode(const std::string& normalized, const std::string& path,
+                                   FileMode mode, bool* by_content) {
+  if (by_content) *by_content = false;
+  if (mode != MODE_AUTO) return mode;
+  if (by_content) *by_content = extension_mode(normalized) == MODE_TEXT;
+  return detect_file_mode(normalized, path);
+}
+
 std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out,
                                            bool* eol_out, qkz80_uint8 fcb_drive,
                                            bool* by_content) {
   std::string normalized = normalize_cpm_filename(cpm_name);
   if (by_content) *by_content = false;
 
-  // A mapping with no host path is a mode rule rather than a location: it
-  // says how a name should be treated wherever it is eventually found.
-  // Collected first, applied to whatever path the steps below settle on.
-  bool have_mode_rule = false;
-  FileMode rule_mode = MODE_AUTO;
-  bool rule_eol = default_eol_convert;
+  // Check file mappings with a host path.  One that gave a mode - `text` or
+  // `binary` on its line, or default_mode as it stood there - decides for
+  // the file it reaches; one that is auto leaves it to a mode rule for the
+  // name, and then to the guess.
   for (const auto& mapping : file_mappings) {
-    if (mapping.unix_pattern.empty() && match_pattern(mapping.cpm_pattern, normalized)) {
-      have_mode_rule = true;
-      rule_mode = mapping.mode;
-      rule_eol = mapping.eol_convert;
-    }
-  }
-
-  // Check new file mappings with patterns
-  for (const auto& mapping : file_mappings) {
-    if (mapping.unix_pattern.empty()) continue;  // mode rule, handled above
+    if (mapping.unix_pattern.empty()) continue;  // mode rule: see configured_mode
     if (match_pattern(mapping.cpm_pattern, normalized)) {
       std::string target = expand_unix_pattern(mapping.cpm_pattern, mapping.unix_pattern,
                                                normalized);
       if (platform::get_file_type(target.c_str()) != platform::FileType::NotFound) {
-        *mode_out = mapping.mode;
+        FileMode mode = mapping.mode;
         *eol_out = mapping.eol_convert;
-
-        // Auto-detect if needed
-        if (*mode_out == MODE_AUTO) {
-          *mode_out = detect_file_mode(normalized, target);
-          if (by_content) *by_content = true;
-        }
-
+        if (mode == MODE_AUTO) mode_rule(normalized, &mode, eol_out);
+        *mode_out = resolve_mode(normalized, target, mode, by_content);
         return target;
       }
     }
   }
+
+  // Everywhere else the name's mode is configured_mode's: a mode rule, then
+  // default_mode, then the guess.
+  FileMode mode;
+  configured_mode(normalized, &mode, eol_out);
 
   // Check legacy file map: a file named on the command line, or one a guest
   // renamed.  A mode rule for the name applies here as it does below - it
@@ -1202,10 +1239,7 @@ std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode
   // while every other X.TXT opened binary.
   auto it = file_map.find(normalized);
   if (it != file_map.end()) {
-    *mode_out = have_mode_rule ? rule_mode : detect_file_mode(normalized, it->second);
-    *eol_out = have_mode_rule ? rule_eol : default_eol_convert;
-    if (*mode_out == MODE_AUTO) *mode_out = detect_file_mode(normalized, it->second);
-    if (by_content) *by_content = !have_mode_rule || rule_mode == MODE_AUTO;
+    *mode_out = resolve_mode(normalized, it->second, mode, by_content);
     return it->second;
   }
 
@@ -1223,10 +1257,7 @@ std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode
                                         join_path(ddir, normalized) };
     for (int i = 0; i < 2; i++) {
       if (platform::get_file_type(candidates[i].c_str()) != platform::FileType::NotFound) {
-        *mode_out = have_mode_rule ? rule_mode : detect_file_mode(normalized, candidates[i]);
-        *eol_out = have_mode_rule ? rule_eol : default_eol_convert;
-        if (*mode_out == MODE_AUTO) *mode_out = detect_file_mode(normalized, candidates[i]);
-        if (by_content) *by_content = !have_mode_rule || rule_mode == MODE_AUTO;
+        *mode_out = resolve_mode(normalized, candidates[i], mode, by_content);
         return candidates[i];
       }
     }
@@ -1240,19 +1271,13 @@ std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode
   }
 
   if (platform::get_file_type(lowercase.c_str()) != platform::FileType::NotFound) {
-    *mode_out = have_mode_rule ? rule_mode : detect_file_mode(normalized, lowercase);
-    *eol_out = have_mode_rule ? rule_eol : default_eol_convert;
-    if (*mode_out == MODE_AUTO) *mode_out = detect_file_mode(normalized, lowercase);
-    if (by_content) *by_content = !have_mode_rule || rule_mode == MODE_AUTO;
+    *mode_out = resolve_mode(normalized, lowercase, mode, by_content);
     return lowercase;
   }
 
   // Try as-is
   if (platform::get_file_type(normalized.c_str()) != platform::FileType::NotFound) {
-    *mode_out = have_mode_rule ? rule_mode : detect_file_mode(normalized, normalized);
-    *eol_out = have_mode_rule ? rule_eol : default_eol_convert;
-    if (*mode_out == MODE_AUTO) *mode_out = detect_file_mode(normalized, normalized);
-    if (by_content) *by_content = !have_mode_rule || rule_mode == MODE_AUTO;
+    *mode_out = resolve_mode(normalized, normalized, mode, by_content);
     return normalized;
   }
 
@@ -2946,14 +2971,7 @@ void CPMEmulator::bdos_write_sequential() {
 void CPMEmulator::make_file_mode(const std::string& filename, FileMode* mode, bool* eol,
                                  MakeKind* kind) {
   std::string normalized = normalize_cpm_filename(filename);
-  *mode = default_mode;
-  *eol = default_eol_convert;
-  for (const auto& mapping : file_mappings) {
-    if (mapping.unix_pattern.empty() && match_pattern(mapping.cpm_pattern, normalized)) {
-      *mode = mapping.mode;
-      *eol = mapping.eol_convert;
-    }
-  }
+  configured_mode(normalized, mode, eol);
   MakeKind k = MAKE_AS_MODE;
   if (*mode == MODE_AUTO) {
     FileMode ext = extension_mode(normalized);
