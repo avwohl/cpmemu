@@ -180,8 +180,8 @@ records are found, read and written back is the first entry under Fixed.
   a `^Z` in its first record and stopped, `DISK READ ERROR: XDOS2.LIB`, unless
   the config said `*.LIB = binary`. Under `auto` a name on the text list now
   opens as text only when what it holds is text - no NUL but trailing
-  padding, no control character but BS, TAB, LF, VT, FF, CR and ESC, a `^Z`
-  only in the last record, and UTF-8 unless its lines end in bare LFs - and
+  padding, no control character but BS, TAB, LF, VT, FF, CR and ESC, the
+  text ending in the last record, and UTF-8 unless its lines end in bare LFs - and
   opens binary otherwise, which loses nothing: the guest reads the bytes that
   are there. Of 3,796 distinct files on the RomWBW, MP/M II and CP/M tool
   disks, every REL file and REL library, tokenized program, WordStar document

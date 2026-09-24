@@ -204,7 +204,8 @@ opens as text only if the bytes before its end (the first `^Z`, or a NUL with
 nothing but NULs and `^Z`s after it) hold:
 
 - no NUL and no control character other than BS, TAB, LF, VT, FF, CR and ESC;
-- a `^Z`, if there is one, in the last record: at most 128 bytes after it;
+- the end, the `^Z` or the NUL, in the last record: at most 128 bytes after
+  it;
 - UTF-8, which ASCII is - unless the lines end in bare LFs and none in CR LF,
   which is a host file with a Latin-1 or 8-bit character that still needs its
   LFs converted.

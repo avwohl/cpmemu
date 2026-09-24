@@ -72,7 +72,7 @@ skipped=0
 
 # Every skip that means "this machine is missing a tool" registers itself here,
 # so --require can turn the lot into one failure at the end.  Registering is
-# separate from printing because the count behind a gate is not always one: 112
+# separate from printing because the count behind a gate is not always one: 113
 # checks sit behind the assembler.
 # Each takes a token so a caller can allow one by name: CPMEMU_SKIP_OK is a
 # space or comma separated list of tokens that --require lets through.  The
@@ -340,9 +340,9 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 112 checks live behind this gate, not the 6 an earlier version counted
-    skipped=$((skipped + 112))
-    soft_skip assembler "drive mapping tests: 112 checks, no assembler (pip install um80)"
+    # 113 checks live behind this gate, not the 6 an earlier version counted
+    skipped=$((skipped + 113))
+    soft_skip assembler "drive mapping tests: 113 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1
@@ -1008,6 +1008,12 @@ else
         fcb_reset; printf 'A\n' >"$tmp/want"
         check_fcb "files: and at the end of the run when it is never closed" \
             T.PRN MHAJ1K2U3W '' t.prn "$tmp/want"
+        # More than a record of NULs after the text is not padding: MBASIC's
+        # PUT of an empty record into a random file named R37.TXT made one,
+        # and taking it for text dropped the records and changed LOF.
+        fcb_reset; { printf 'AB'; head -c 254 /dev/zero; } >"$tmp/want"
+        check_fcb "files: a random file ending in whole records of NULs is kept" \
+            T.TXT MN1PV0AV1BN0PC '' t.txt "$tmp/want"
         # Made and at once opened again, as LIB-80 does with its MYLIB.LIB work
         # file, it is still undecided: opened while empty it was taken for
         # text, and the REL library written into it went through the

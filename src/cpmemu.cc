@@ -914,7 +914,9 @@ void CPMEmulator::add_file_mapping_ex(const std::string& cpm_pattern, const std:
 // Whether bytes are text, as a name on the text list has to be to open as text
 // under auto.  `n` bytes from the top of a file of `size`, which may be a
 // prefix of it.  Text ends at the first ^Z or NUL, and it is binary if
-//   - a ^Z has more than a record after it: text ends in its last record;
+//   - the ^Z or NUL has more than a record after it: text ends in its last
+//     record.  A random file MBASIC wrote with PUT, the last records it put
+//     all NULs, is not text followed by padding;
 //   - a NUL has anything after it but NULs and ^Zs, which would be a last
 //     record padded with NUL rather than ^Z, or has nothing before it;
 //   - there is a control character before the end other than BS, TAB, LF,
@@ -930,17 +932,16 @@ void CPMEmulator::add_file_mapping_ex(const std::string& cpm_pattern, const std:
 // returns and CR LF hard ones; Aztec C's and ISIS's libraries have a NUL in
 // their first four bytes.  DRI's macro libraries - DISKDEF.LIB, Z80.LIB,
 // SEQIO.LIB and the rest on the MP/M II disks - and M80's XX80.LIB are text.
-// So are all but 4 of the 1,802 .ASM, .MAC, .Z80, .PRN and .LST files.
-// Three of the 4 have no bare LF, which binary reads exactly as text would,
-// the guest stopping at the ^Z itself; the fourth is a listing with a DC1.
+// So are all but 5 of the 1,802 .ASM, .MAC, .Z80, .PRN and .LST files.
+// Four of the 5 have no bare LF, which binary reads exactly as text would,
+// the guest stopping at the ^Z itself; the fifth is a listing with a DC1.
 bool CPMEmulator::bytes_look_like_text(const uint8_t* p, size_t n, uint64_t size) {
   size_t end = n;
   for (size_t i = 0; i < n; i++) {
     if (p[i] == CPM_EOF || p[i] == 0) { end = i; break; }
   }
-  if (end < n && p[end] == CPM_EOF) {
-    if (size > end && size - end > 128) return false;
-  } else if (end < n) {
+  if (end < n && size > end && size - end > 128) return false;  // not in the last record
+  if (end < n && p[end] == 0) {
     if (end == 0) return false;  // NULs and nothing else: no sign of text
     if (n < size) return false;  // padding that goes on past what was read
     for (size_t i = end; i < n; i++) {
