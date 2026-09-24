@@ -136,7 +136,7 @@ after it, since the host file cannot be truncated there.
   its real name arrives at BDOS 23. A rename to a name that opens as text now
   turns the host copy into host text - CR LF to LF, ending at the `^Z` - when
   that loses nothing a text open would read back and the file is plainly text
-  (no NUL, no whole record after its `^Z`); anything else, such as DRI LIB's
+  (by the rule in the next entry); anything else, such as DRI LIB's
   binary `X.$$$` renamed `X.LIB`, is left exactly as written. Without this,
   `PIP U.TXT=T.TXT` of a two-line Unix file left 128 bytes of CR LF and `^Z`
   where 4.9.0 left the 12 it was given; now it is 12 again, and a 900-line
@@ -149,10 +149,34 @@ after it, since the host file cannot be truncated there.
   that way. 4.9.0 wrote it as host text and read it back raw, so a binary
   under such a name - a `.$$$` temporary file, `$$$.SUB`, an archive member
   that was a program - was corrupted. A mode rule such as `*.HEX = text`
-  gets host text for a name that is known to be text. `.LIB` is on the text
-  list and stays there, which is right for MAC's and M80's macro libraries
-  and wrong for a REL library: building one with DRI LIB or Microsoft LIB-80
-  under `auto` still needs `*.LIB = binary`, as it did in 4.9.0.
+  gets host text for a name that is known to be text. A name on the text
+  list is decided by what it holds; see the next entry.
+
+- **Every name on the text list also names binary files, and auto read and
+  made them all as text.** `.LIB` is a macro library to MAC and RMAC and a REL
+  library to LINK and L80; `.BAS` is an ASCII program or a tokenized one, as
+  MBASIC's `SAVE` chooses; `.DOC` and `.TXT` are what WordStar writes in
+  document mode. DRI's own MP/M II build shows it: LIB makes `XDOS2.LIB` as
+  `REL.$$$` and renames it, and LINK reading it through the text converter hit
+  a `^Z` in its first record and stopped, `DISK READ ERROR: XDOS2.LIB`, unless
+  the config said `*.LIB = binary`. Under `auto` a name on the text list now
+  opens as text only when what it holds is text - no NUL but trailing
+  padding, no control character but BS, TAB, LF, VT, FF, CR and ESC, a `^Z`
+  only in the last record, and UTF-8 unless its lines end in bare LFs - and
+  opens binary otherwise, which loses nothing: the guest reads the bytes that
+  are there. Of 3,796 distinct files on the RomWBW, MP/M II and CP/M tool
+  disks, every REL file and REL library, tokenized program, WordStar document
+  and Aztec C or ISIS library opens binary, and every one of DRI's macro
+  libraries opens as text. `docs/file_handling_notes.md` has the rule. Made
+  under such a name, a file is written as it comes, like a `$$$` file, and at
+  its last close, at a disk reset or at the end of the run it becomes host
+  text if it is text by the same rule and the round trip loses nothing; so an
+  `,A` save or a `.PRN` listing lands as host text as before, and a tokenized
+  save or a library made directly keeps its bytes. With the default config,
+  RMAC, LIB and LINK now rebuild `XDOS.SPR`, `TMP.SPR` and `BNKXDOS.SPR` from
+  MP/M II's NUCLEUS sources byte-identical to DRI's, and RMAC reads an LF copy
+  of DRI's `Z80.LIB` as the macro library it is. A mode rule for the name
+  still decides without looking.
 
 - **Search First and Next returned one directory entry per file, with EX = 0
   and RC at most 128, whatever the FCB asked for.** A CP/M directory has an

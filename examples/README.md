@@ -169,8 +169,10 @@ against files this repo does have.
 ## Text vs binary
 
 Text files get `\n` <-> `\r\n` conversion; binary files do not. `default_mode
-= auto` guesses from the extension. Set it explicitly when a guess would be
-wrong, and use the per-file mapping form to override one file.
+= auto` guesses from the extension, and for a name on the text list from what
+the file holds - a REL library named `.LIB` or a tokenized `.BAS` is binary
+(`docs/file_handling_notes.md` has the rule). Set it explicitly when a guess
+would be wrong, and use the per-file mapping form to override one file.
 
 ## See also
 

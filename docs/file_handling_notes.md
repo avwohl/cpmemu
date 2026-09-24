@@ -165,10 +165,39 @@ cd = /tmp/build
 
 ## File Mode Detection
 
-When `default_mode = auto`, the emulator checks the file extension:
+When `default_mode = auto` and no mode rule names the file, the emulator
+looks at the extension:
 
-**Known text extensions:** .BAS, .MAC, .ASM, .TXT, .DOC, .LST, .PRN, .Z80, .LIB
-**Known binary extensions:** .COM, .EXE, .OVL, .OVR, .SYS, .BIN, .DAT, .SPR, .REL, .PRL, .RSP
+**Text extensions:** .BAS, .MAC, .ASM, .TXT, .DOC, .LST, .PRN, .Z80, .LIB
+**Binary extensions:** .COM, .EXE, .OVL, .OVR, .SYS, .BIN, .DAT, .SPR, .REL, .PRL, .RSP
+
+Every name on the text list also names binary files - `.LIB` is a macro
+library to MAC and RMAC and a REL library to LINK and L80, `.BAS` is an ASCII
+program or a tokenized one, `.DOC` and `.TXT` are WordStar's document-mode
+files - so for those the file itself decides. A file under a text extension
+opens as text only if the bytes before its end (the first `^Z`, or a NUL with
+nothing but NULs and `^Z`s after it) hold:
+
+- no NUL and no control character other than BS, TAB, LF, VT, FF, CR and ESC;
+- a `^Z`, if there is one, in the last record: at most 128 bytes after it;
+- UTF-8, which ASCII is - unless the lines end in bare LFs and none in CR LF,
+  which is a host file with a Latin-1 or 8-bit character that still needs its
+  LFs converted.
+
+Anything else opens binary: the guest reads the bytes that are there, which
+loses nothing. The first 64 KB of the file are looked at. A REL file opens
+with a byte of 84h or 85h, which is not UTF-8, a tokenized MBASIC program with
+FFh, and a WordStar document has 8Dh soft returns among CR LF hard ones. A
+CP/M text file that fails the rule for a stray 8-bit byte or text after its
+`^Z` reads the same either way, since its lines already end in CR LF.
+
+A file a program makes under a text extension is written as it comes, like
+one under a name on neither list, and at its last close - or at a disk reset
+or the end of the run, if the program never closes it - becomes host text if
+it is text by the rule above and the conversion loses nothing a text open
+would read back. So a listing or an ASCII `SAVE "X",A` lands as host text, and
+a tokenized `SAVE "X"` or a library written directly under a `.LIB` name keeps
+its bytes.
 
 Files with unrecognized extensions default to binary: read and written as
 they are, so a text file a program makes under such a name - `.HEX` from ASM,
@@ -178,13 +207,13 @@ Add a mode rule (`*.HEX = text`) for a name you know is text.
 A file a program makes under an unrecognized name and then renames is decided
 by the name it ends up with. PIP, ED and WordStar write `NAME.$$$` and rename
 it when they are done; when the new name is a text one, the host file is
-turned into host text at the rename - if it is plainly text and the
-conversion loses nothing a text open would read back. A binary file renamed to
-a text name is left as it was written.
+turned into host text at the rename, by the same test as at a close. A binary
+file renamed to a text name - DRI LIB's `X.$$$` renamed `X.LIB` - is left as
+it was written.
 
-`.LIB` is a text extension, which suits MAC's and M80's macro libraries. A REL
-library built by DRI LIB or Microsoft LIB-80 is binary under the same name, so
-a config that builds one needs `*.LIB = binary`.
+A mode rule (`*.LIB = binary`, `*.BAS = text`) decides for the names it
+matches without looking at them, and so does `default_mode = text` or
+`binary` for a file a program makes.
 
 ## File Search Order
 

@@ -71,7 +71,7 @@ skipped=0
 
 # Every skip that means "this machine is missing a tool" registers itself here,
 # so --require can turn the lot into one failure at the end.  Registering is
-# separate from printing because the count behind a gate is not always one: 92
+# separate from printing because the count behind a gate is not always one: 101
 # checks sit behind the assembler.
 # Each takes a token so a caller can allow one by name: CPMEMU_SKIP_OK is a
 # space or comma separated list of tokens that --require lets through.  The
@@ -339,9 +339,9 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 92 checks live behind this gate, not the 6 an earlier version counted
-    skipped=$((skipped + 92))
-    soft_skip assembler "drive mapping tests: 92 checks, no assembler (pip install um80)"
+    # 101 checks live behind this gate, not the 6 an earlier version counted
+    skipped=$((skipped + 101))
+    soft_skip assembler "drive mapping tests: 101 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1
@@ -908,6 +908,44 @@ else
         fcb_reset; printf 'a\nb\n' >"$fcbdir/T.TXT"
         fcb_cfg=$tmp/fcbbin.cfg check_fcb "files: a mode rule applies to a file named on the command line" \
             T.TXT OL 'a>b>~'
+
+        # A name on the text list opens as text only if it holds text, and is
+        # made as it comes and turned into host text at its close if it is
+        # text.  Every name on that list also names binary files.  DRI's LINK
+        # read XDOS2.LIB, a REL library LIB had made, through the converter,
+        # which ended it at the first ^Z in its first record: DISK READ ERROR.
+        # Here Q, a ^Z, and a whole record after it: binary reads both records.
+        fcb_reset; { printf 'Q\032'; head -c 126 /dev/zero | tr '\0' R
+                     head -c 128 /dev/zero | tr '\0' T; } >"$fcbdir/x.lib"
+        check_fcb "files: a REL library named .LIB opens binary" X.LIB ORRR 'QT=01'
+        # A macro library is text: LF becomes CR LF.
+        fcb_reset; printf 'a\nb\n' >"$fcbdir/m.lib"
+        check_fcb "files: a macro library named .LIB opens as text" M.LIB OL 'a<>b<>~'
+        # A tokenized MBASIC program: FFh, then its bytes, LF and NUL among them.
+        fcb_reset; { printf '\377A\n\000B\r\n\032'; head -c 120 /dev/zero | tr '\0' C; } >"$fcbdir/t.bas"
+        check_fcb "files: a tokenized .BAS opens binary" T.BAS OL '?A>?B<>~'
+        # A WordStar document: 8Dh LF is a soft return, CR LF a hard one.  The
+        # converter gave the soft one a CR, which WordStar reads as a hard one.
+        fcb_reset; printf 'Hello\215\nworld\r\n\032' >"$fcbdir/w.doc"
+        check_fcb "files: a WordStar document opens binary" W.DOC OL 'Hello?>world<>~'
+        # Not UTF-8, but a host file of bare LFs with a Latin-1 character in it
+        # needs the converter, and gets it.
+        fcb_reset; printf 'caf\351\nx\n' >"$fcbdir/l.asm"
+        check_fcb "files: an LF file with a Latin-1 byte still opens as text" L.ASM OL 'caf?<>x<>~'
+        # Made: written as it comes, and host text at the close if it is text.
+        # A record of binary with a CR LF in it stays 128 bytes; made as text
+        # it lost the CR.  MBASIC saves a tokenized program with a random write.
+        fcb_reset; { printf 'A\000\000\000\000B\000\000\000\r\n'; head -c 117 /dev/zero; } >"$tmp/want"
+        check_fcb "files: a binary record made under a text name is kept" \
+            T.BAS MV0AV5BJ9K10WC '' t.bas "$tmp/want"
+        check_fcb "files: and so is one written at random" \
+            T.BAS MV0AV5BJ9K10N0PC '' t.bas "$tmp/want"
+        fcb_reset; printf 'A\n' >"$tmp/want"
+        check_fcb "files: a text record made under a text name is host text at its close" \
+            T.PRN MHAJ1K2U3WC '' t.prn "$tmp/want"
+        fcb_reset; printf 'A\n' >"$tmp/want"
+        check_fcb "files: and at the end of the run when it is never closed" \
+            T.PRN MHAJ1K2U3W '' t.prn "$tmp/want"
 
         # Open fails for an extent the file does not have, as 2.2's does, and
         # RC is that extent's record count.  It opened any extent asked for

@@ -512,6 +512,8 @@ private:
   // File I/O helpers
   FileMode detect_file_mode(const std::string& filename, const std::string& unix_path);
   static FileMode extension_mode(const std::string& filename);
+  static bool bytes_look_like_text(const uint8_t* p, size_t n, uint64_t size);
+  static bool file_looks_like_text(const std::string& unix_path);
   std::string find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out, bool* eol_out,
                                 qkz80_uint8 fcb_drive);
   // Substitute the text a CP/M pattern matched into a '*' on the host side,
@@ -570,17 +572,26 @@ private:
   void dma_put(const uint8_t* src, size_t n);
   void dma_get(uint8_t* dst, size_t n);
   uint32_t cpm_record_count(const OpenFile& of);
-  // The mode and conversion a file created by BDOS 22 gets.  *guessed is set
-  // when nothing named it - no mode rule, default_mode auto, and an extension
-  // on neither list - so binary is only auto's fallback.
+  // How a file BDOS 22 makes is written.  MAKE_AS_MODE: as *mode says, which
+  // a mode rule, default_mode or the binary list decided.  The other two are
+  // auto with nothing to go on yet, and are written as they come, binary:
+  // MAKE_BY_CONTENT, a name on the text list, becomes host text when it is
+  // closed if what was written is text; MAKE_GUESSED, a name on neither list,
+  // waits for a rename to a name that says, as PIP's X.$$$ does.
+  enum MakeKind { MAKE_AS_MODE, MAKE_BY_CONTENT, MAKE_GUESSED };
   void make_file_mode(const std::string& filename, FileMode* mode, bool* eol,
-                      bool* guessed = nullptr);
-  // Host paths of files BDOS 22 made this run whose mode was only guessed, and
-  // which were therefore written as they came.  See bdos_rename_file.
+                      MakeKind* kind = nullptr);
+  // Host paths of files BDOS 22 made this run under MAKE_GUESSED and under
+  // MAKE_BY_CONTENT, still as they were written.  See bdos_rename_file and
+  // settle_made_file.
   std::set<std::string> made_guessed;
-  bool convert_made_file_to_text(const std::string& path, bool trace);
+  std::set<std::string> made_by_content;
+  bool convert_made_file_to_text(const std::string& path, const char* who, bool trace);
   void renamed_made_file(const std::string& old_path, const std::string& new_name,
                          const std::string& new_path);
+  // A MAKE_BY_CONTENT file whose last stream has closed: host text now, if
+  // it is text.
+  void settle_made_file(const std::string& path, bool trace);
 
 private:
   // BDOS functions
@@ -835,13 +846,97 @@ void CPMEmulator::add_file_mapping_ex(const std::string& cpm_pattern, const std:
   }
 }
 
+// Whether bytes are text, as a name on the text list has to be to open as text
+// under auto.  `n` bytes from the top of a file of `size`, which may be a
+// prefix of it.  Text ends at the first ^Z or NUL, and it is binary if
+//   - a ^Z has more than a record after it: text ends in its last record;
+//   - a NUL has anything after it but NULs and ^Zs, which would be a last
+//     record padded with NUL rather than ^Z, or has nothing before it;
+//   - there is a control character before the end other than BS, TAB, LF,
+//     VT, FF, CR and ESC;
+//   - what is before the end is not UTF-8 (ASCII is) - unless its lines end
+//     in bare LFs and none in CR LF, which is a host text file with a Latin-1
+//     or 8-bit character in it and needs the converter to be read at all.
+// Measured on 3,796 distinct files from the RomWBW, MP/M II and CP/M tool
+// disks.  Every binary one fails within its first record: a REL file or a
+// REL library opens with a link item, 84h or 85h, which is no UTF-8 lead byte,
+// and has a NUL or a control byte within a few more; a tokenized MBASIC
+// program opens with FFh and has a NUL; a WordStar document has 8Dh soft
+// returns and CR LF hard ones; Aztec C's and ISIS's libraries have a NUL in
+// their first four bytes.  DRI's macro libraries - DISKDEF.LIB, Z80.LIB,
+// SEQIO.LIB and the rest on the MP/M II disks - and M80's XX80.LIB are text.
+// So are all but 4 of the 1,802 .ASM, .MAC, .Z80, .PRN and .LST files.
+// Three of the 4 have no bare LF, which binary reads exactly as text would,
+// the guest stopping at the ^Z itself; the fourth is a listing with a DC1.
+bool CPMEmulator::bytes_look_like_text(const uint8_t* p, size_t n, uint64_t size) {
+  size_t end = n;
+  for (size_t i = 0; i < n; i++) {
+    if (p[i] == CPM_EOF || p[i] == 0) { end = i; break; }
+  }
+  if (end < n && p[end] == CPM_EOF) {
+    if (size > end && size - end > 128) return false;
+  } else if (end < n) {
+    if (end == 0) return false;  // NULs and nothing else: no sign of text
+    if (n < size) return false;  // padding that goes on past what was read
+    for (size_t i = end; i < n; i++) {
+      if (p[i] != 0 && p[i] != CPM_EOF) return false;
+    }
+  }
+  bool utf8 = true;
+  size_t crlf = 0, bare_lf = 0;
+  for (size_t i = 0; i < end;) {
+    uint8_t c = p[i];
+    if (c < 0x80) {
+      if (c < 0x20 && !(c >= 0x08 && c <= 0x0D) && c != 0x1B) return false;
+      if (c == '\n') (i > 0 && p[i - 1] == '\r' ? crlf : bare_lf)++;
+      i++;
+      continue;
+    }
+    size_t len = (c >= 0xC2 && c <= 0xDF) ? 2 : (c >= 0xE0 && c <= 0xEF) ? 3
+               : (c >= 0xF0 && c <= 0xF4) ? 4 : 0;
+    bool ok = len != 0;
+    for (size_t k = 1; ok && k < len; k++) {
+      if (i + k >= end) {
+        ok = end == n && n < size;  // cut by the window, not by the end
+        break;
+      }
+      ok = (p[i + k] & 0xC0) == 0x80;
+    }
+    if (!ok) {
+      utf8 = false;
+      i++;
+    } else {
+      i += len;
+    }
+  }
+  return utf8 || (bare_lf > 0 && crlf == 0);
+}
+
+// The first 64 KB of a host file, judged by bytes_look_like_text.  A file
+// that cannot be read is text, which is what its name says.
+bool CPMEmulator::file_looks_like_text(const std::string& unix_path) {
+  FILE* fp = fopen(unix_path.c_str(), "rb");
+  if (!fp) return true;
+  std::vector<uint8_t> head(65536);
+  size_t n = fread(head.data(), 1, head.size(), fp);
+  fclose(fp);
+  int64_t size = platform::get_file_size(unix_path.c_str());
+  return bytes_look_like_text(head.data(), n, size < 0 ? n : static_cast<uint64_t>(size));
+}
+
+// The mode auto gives a file that exists: binary unless its name is on the
+// text list, and then text only if what it holds is text.  The name alone
+// decided until now, and every name on the text list also names binary
+// files: .LIB is a macro library to MAC and RMAC and a REL library to LINK
+// and L80, and DRI's LINK read XDOS2.LIB, made by LIB, through the text
+// converter and stopped with DISK READ ERROR; .BAS is an ASCII program or a
+// tokenized one, as MBASIC's SAVE chooses; .DOC and .TXT are what WordStar
+// writes in document mode, soft returns and all.  Binary loses nothing - the
+// guest reads what is there - so it is what a name that could be either gets
+// when its bytes are not text.
 FileMode CPMEmulator::detect_file_mode(const std::string& filename, const std::string& unix_path) {
-  // unix_path is part of the signature for callers that want to key the mode off
-  // the host path; the current rules look only at the CP/M name.
-  (void)unix_path;
-  // Default to binary for unknown extensions - safer than heuristic detection
-  // which can misidentify binary files with low control char counts
-  return extension_mode(filename) == MODE_TEXT ? MODE_TEXT : MODE_BINARY;
+  if (extension_mode(filename) != MODE_TEXT) return MODE_BINARY;
+  return file_looks_like_text(unix_path) ? MODE_TEXT : MODE_BINARY;
 }
 
 // What the extension alone says: MODE_TEXT or MODE_BINARY for the two lists
@@ -1194,6 +1289,8 @@ void CPMEmulator::close_all_files() {
     close_open_file(pair.second);
   }
   open_files.clear();
+  std::set<std::string> made = made_by_content;
+  for (const auto& path : made) settle_made_file(path, debug);
 }
 
 // Position a text file's stream at `record` for `op`.
@@ -2241,6 +2338,26 @@ bool CPMEmulator::open_fcb_file(qkz80_uint16 fcb_addr, int func) {
     return false;
   }
 
+  // Opening an FCB that is already open replaces it; close the old stream
+  // rather than leaking it, and start the new one clean.  First, because
+  // closing the old one can rewrite the file this is about to open: the
+  // same name made by this FCB and not closed is decided at its last close.
+  auto old = open_files.find(fcb_addr);
+  if (old != open_files.end()) {
+    std::string old_path = old->second.unix_path;
+    close_open_file(old->second);
+    open_files.erase(old);
+    settle_made_file(old_path, trace);
+    if (old_path == unix_path) {
+      // it may be text now, and opens as what it is
+      unix_path = find_unix_file_ex(filename, &mode, &eol_convert, cpu->get_mem()[fcb_addr]);
+      if (unix_path.empty()) {
+        cpu->set_reg8(0xFF, qkz80::reg_A);
+        return false;
+      }
+    }
+  }
+
   FILE* fp = fopen(unix_path.c_str(), "r+b");
   if (!fp) {
     fp = fopen(unix_path.c_str(), "rb");
@@ -2248,14 +2365,6 @@ bool CPMEmulator::open_fcb_file(qkz80_uint16 fcb_addr, int func) {
       cpu->set_reg8(0xFF, qkz80::reg_A);
       return false;
     }
-  }
-
-  // Opening an FCB that is already open replaces it; close the old stream
-  // rather than leaking it, and start the new one clean.
-  auto old = open_files.find(fcb_addr);
-  if (old != open_files.end()) {
-    close_open_file(old->second);
-    open_files.erase(old);
   }
 
   OpenFile of;
@@ -2319,8 +2428,10 @@ void CPMEmulator::bdos_open_file() {
       fprintf(stderr, "BDOS Open: '%s' has %u records, no extent %u\n",
               it->second.cpm_name.c_str(), records, ex);
     }
+    std::string path = it->second.unix_path;
     close_open_file(it->second);
     open_files.erase(it);
+    settle_made_file(path, debug || debug_bdos_funcs.count(15));
     cpu->set_reg8(0xFF, qkz80::reg_A);
     return;
   }
@@ -2343,8 +2454,10 @@ void CPMEmulator::bdos_close_file() {
     if (debug || debug_bdos_funcs.count(16)) {
       fprintf(stderr, "Close file: closing '%s'\n", it->second.cpm_name.c_str());
     }
+    std::string path = it->second.unix_path;
     close_open_file(it->second);
     open_files.erase(it);
+    settle_made_file(path, debug || debug_bdos_funcs.count(16));
   } else {
     if (debug || debug_bdos_funcs.count(16)) {
       fprintf(stderr, "Close file: file not open (OK)\n");
@@ -2499,13 +2612,17 @@ void CPMEmulator::bdos_write_sequential() {
 }
 
 // The mode a file BDOS 22 creates is written in: a mode rule for the name if
-// there is one, else default_mode, and `auto` - the default - guesses from the
-// extension, which is what the README says auto does and what BDOS 15 does
-// for the same name.  Make used default_mode as it stood, and auto is not
-// binary, so it was converted as text: every file a guest created, a .COM or
-// a .REL included, lost each ^Z record tail and had its CR LFs collapsed.
+// there is one, else default_mode.  Make used default_mode as it stood, and
+// auto is not binary, so it was converted as text: every file a guest
+// created, a .COM or a .REL included, lost each ^Z record tail and had its
+// CR LFs collapsed.  Under auto a name on the binary list is binary, and the
+// rest are written as they come, since what they are is not known until
+// they have been written - see MakeKind.  A name on the text list used to be
+// made as text, and every name on it also names binary files: MBASIC's SAVE
+// makes X.BAS tokenized unless told ,A, and a library program can make its
+// X.LIB directly.
 void CPMEmulator::make_file_mode(const std::string& filename, FileMode* mode, bool* eol,
-                                 bool* guessed) {
+                                 MakeKind* kind) {
   std::string normalized = normalize_cpm_filename(filename);
   *mode = default_mode;
   *eol = default_eol_convert;
@@ -2515,8 +2632,14 @@ void CPMEmulator::make_file_mode(const std::string& filename, FileMode* mode, bo
       *eol = mapping.eol_convert;
     }
   }
-  if (guessed) *guessed = (*mode == MODE_AUTO && extension_mode(normalized) == MODE_AUTO);
-  if (*mode == MODE_AUTO) *mode = detect_file_mode(normalized, normalized);
+  MakeKind k = MAKE_AS_MODE;
+  if (*mode == MODE_AUTO) {
+    FileMode ext = extension_mode(normalized);
+    if (ext == MODE_TEXT) k = MAKE_BY_CONTENT;
+    else if (ext == MODE_AUTO) k = MAKE_GUESSED;
+    *mode = MODE_BINARY;
+  }
+  if (kind) *kind = k;
 }
 
 void CPMEmulator::bdos_make_file() {
@@ -2534,12 +2657,14 @@ void CPMEmulator::bdos_make_file() {
 
   FileMode mode;
   bool eol_convert;
-  bool guessed;
-  make_file_mode(filename, &mode, &eol_convert, &guessed);
+  MakeKind kind;
+  make_file_mode(filename, &mode, &eol_convert, &kind);
 
   if (debug || debug_bdos_funcs.count(22)) {
     fprintf(stderr, "Make file: %s (mode: %s%s)\n", filename.c_str(),
-            mode == MODE_TEXT ? "text" : "binary", guessed ? ", until renamed" : "");
+            mode == MODE_TEXT ? "text" : "binary",
+            kind == MAKE_GUESSED ? ", until renamed"
+            : kind == MAKE_BY_CONTENT ? ", text at its close if it is text" : "");
   }
 
   // Convert to lowercase for Unix
@@ -2589,16 +2714,19 @@ void CPMEmulator::bdos_make_file() {
   }
   if (extending) {
     // the file is what it was; a rename decides it as before, if at all
-  } else if (guessed) {
-    made_guessed.insert(unix_name);
   } else {
     made_guessed.erase(unix_name);
+    made_by_content.erase(unix_name);
+    if (kind == MAKE_GUESSED) made_guessed.insert(unix_name);
+    if (kind == MAKE_BY_CONTENT) made_by_content.insert(unix_name);
   }
 
   auto old = open_files.find(fcb_addr);
   if (old != open_files.end()) {
+    std::string old_path = old->second.unix_path;
     close_open_file(old->second);
     open_files.erase(old);
+    if (old_path != unix_name) settle_made_file(old_path, debug || debug_bdos_funcs.count(22));
   }
 
   OpenFile of;
@@ -2646,6 +2774,7 @@ void CPMEmulator::bdos_delete_file() {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
   } else {
     made_guessed.erase(unix_path);
+    made_by_content.erase(unix_path);
     cpu->set_reg8(0, qkz80::reg_A);  // Success
   }
 }
@@ -2876,23 +3005,25 @@ void CPMEmulator::bdos_rename_file() {
 // two-line Unix file left u.txt as 128 bytes of CR LF text and ^Z padding
 // where e4f7fd5, which made every file as text, left the 12 bytes it was
 // given.  A name that still says nothing keeps the file on the list, so a
-// second rename can decide.
+// second rename can decide.  A MAKE_BY_CONTENT file renamed while still open
+// is decided by its new name the same way.
 void CPMEmulator::renamed_made_file(const std::string& old_path, const std::string& new_name,
                                     const std::string& new_path) {
-  made_guessed.erase(new_path);  // whatever the name held before is gone
-  auto it = made_guessed.find(old_path);
-  if (it == made_guessed.end()) return;
-  made_guessed.erase(it);
+  // whatever the name held before is gone
+  made_guessed.erase(new_path);
+  made_by_content.erase(new_path);
+  if (made_guessed.erase(old_path) + made_by_content.erase(old_path) == 0) return;
 
   bool trace = debug || debug_bdos_funcs.count(23);
   FileMode mode;
-  bool eol_convert, guessed;
-  make_file_mode(new_name, &mode, &eol_convert, &guessed);
-  if (guessed) {
+  bool eol_convert;
+  MakeKind kind;
+  make_file_mode(new_name, &mode, &eol_convert, &kind);
+  if (kind == MAKE_GUESSED) {
     made_guessed.insert(new_path);
     return;
   }
-  if (mode != MODE_TEXT || !eol_convert) return;
+  if (kind == MAKE_AS_MODE && (mode != MODE_TEXT || !eol_convert)) return;
   // Converting under an open stream would leave that stream writing to the
   // file the conversion replaced.  CP/M lets a program rename an open file;
   // none of the three above does.
@@ -2902,16 +3033,28 @@ void CPMEmulator::renamed_made_file(const std::string& old_path, const std::stri
       return;
     }
   }
-  convert_made_file_to_text(new_path, trace);
+  convert_made_file_to_text(new_path, "Rename", trace);
 }
 
-// Rewrite a file of CP/M text as host text, if that loses nothing a text-mode
-// open of it would read back - the round trip is checked, not assumed - and
-// the file is plainly text: no NUL before its ^Z, and the ^Z, if there is
-// one, in its last record, with no whole record after it.  A binary file
-// renamed to a text name - DRI's LIB writes X.$$$ and renames it X.LIB - is
-// left exactly as it was written.  Returns whether the file was rewritten.
-bool CPMEmulator::convert_made_file_to_text(const std::string& path, bool trace) {
+void CPMEmulator::settle_made_file(const std::string& path, bool trace) {
+  auto it = made_by_content.find(path);
+  if (it == made_by_content.end()) return;
+  for (const auto& pair : open_files) {
+    if (pair.second.fp && pair.second.unix_path == path) return;  // not its last close
+  }
+  made_by_content.erase(it);
+  convert_made_file_to_text(path, "Close", trace);
+}
+
+// Rewrite a file of CP/M text as host text, if the file is text - the rule
+// bytes_look_like_text applies to a name on the text list when it is opened -
+// and that loses nothing a text open of it would read back, which is checked,
+// not assumed.  Text ends at the first ^Z, or at a NUL with only NULs and ^Zs
+// after it.  A binary file renamed to a text name - DRI's LIB writes X.$$$ and
+// renames it X.LIB - or saved under one - MBASIC's tokenized X.BAS - is left
+// exactly as it was written.  Returns whether the file was rewritten.
+bool CPMEmulator::convert_made_file_to_text(const std::string& path, const char* who,
+                                            bool trace) {
   FILE* fp = fopen(path.c_str(), "rb");
   if (!fp) return false;
   std::vector<uint8_t> raw;
@@ -2922,21 +3065,18 @@ bool CPMEmulator::convert_made_file_to_text(const std::string& path, bool trace)
 
   size_t end = raw.size();
   for (size_t i = 0; i < raw.size(); i++) {
-    if (raw[i] == CPM_EOF) { end = i; break; }
+    if (raw[i] == CPM_EOF || raw[i] == 0) { end = i; break; }
   }
   const char* why = nullptr;
-  if (!raw.empty() && end < ((raw.size() - 1) / 128) * 128) why = "a ^Z before its last record";
-  for (size_t i = 0; !why && i < end; i++) {
-    if (raw[i] == 0) why = "a NUL";
-  }
+  if (!bytes_look_like_text(raw.data(), raw.size(), raw.size())) why = "not text";
 
-  // CR LF to LF, as write_with_conversion does it; a lone CR or LF stays.
+  // CR LF to LF, as the text writer does it; a lone CR or LF stays.
   std::vector<uint8_t> host;
   for (size_t i = 0; !why && i < end; i++) {
     if (raw[i] == '\r' && i + 1 < end && raw[i + 1] == '\n') continue;
     host.push_back(raw[i]);
   }
-  // And back, as read_with_conversion does it: an LF not after a CR gains one.
+  // And back, as the text reader does it: an LF not after a CR gains one.
   if (!why) {
     std::vector<uint8_t> back;
     bool cr = false;
@@ -2950,7 +3090,7 @@ bool CPMEmulator::convert_made_file_to_text(const std::string& path, bool trace)
     }
   }
   if (why) {
-    if (trace) fprintf(stderr, "Rename: %s left as written: %s\n", path.c_str(), why);
+    if (trace) fprintf(stderr, "%s: %s left as written: %s\n", who, path.c_str(), why);
     return false;
   }
 
@@ -2959,7 +3099,7 @@ bool CPMEmulator::convert_made_file_to_text(const std::string& path, bool trace)
   bool ok = host.empty() || fwrite(host.data(), 1, host.size(), fp) == host.size();
   ok = (fclose(fp) == 0) && ok;
   if (trace) {
-    fprintf(stderr, "Rename: %s converted to host text, %zu bytes to %zu%s\n", path.c_str(),
+    fprintf(stderr, "%s: %s converted to host text, %zu bytes to %zu%s\n", who, path.c_str(),
             raw.size(), host.size(), ok ? "" : " (WRITE FAILED)");
   }
   return ok;
