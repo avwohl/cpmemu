@@ -219,8 +219,10 @@ CP/M text file that fails the rule for a stray 8-bit byte or text after its
 A file a program makes under a text extension is written as it comes, like
 one under a name on neither list, and at its last close - or at a disk reset
 or the end of the run, if the program never closes it - becomes host text if
-it is text by the rule above and the conversion loses nothing a text open
-would read back. So a listing or an ASCII `SAVE "X",A` lands as host text, and
+it is text by the rule above. If the program wrote any of it at random, it
+must also read back exactly as it was written, since a random file's records
+have to stay where they are; a file written in sequence is converted as a
+text file always was, a bare LF becoming a line end like any other. So a listing or an ASCII `SAVE "X",A` lands as host text, and
 a tokenized `SAVE "X"` or a library written directly under a `.LIB` name keeps
 its bytes.
 

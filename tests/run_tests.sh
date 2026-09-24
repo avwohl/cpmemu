@@ -72,7 +72,7 @@ skipped=0
 
 # Every skip that means "this machine is missing a tool" registers itself here,
 # so --require can turn the lot into one failure at the end.  Registering is
-# separate from printing because the count behind a gate is not always one: 109
+# separate from printing because the count behind a gate is not always one: 111
 # checks sit behind the assembler.
 # Each takes a token so a caller can allow one by name: CPMEMU_SKIP_OK is a
 # space or comma separated list of tokens that --require lets through.  The
@@ -340,9 +340,9 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 109 checks live behind this gate, not the 6 an earlier version counted
-    skipped=$((skipped + 109))
-    soft_skip assembler "drive mapping tests: 109 checks, no assembler (pip install um80)"
+    # 111 checks live behind this gate, not the 6 an earlier version counted
+    skipped=$((skipped + 111))
+    soft_skip assembler "drive mapping tests: 111 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1
@@ -1008,6 +1008,16 @@ else
         fcb_reset; printf 'A\n' >"$tmp/want"
         check_fcb "files: and at the end of the run when it is never closed" \
             T.PRN MHAJ1K2U3W '' t.prn "$tmp/want"
+        # Written in sequence, it is converted as the text writer always did,
+        # a bare LF and all - RMAC's listings have one after the title line.
+        # Written at random, it has to read back record for record, and a
+        # bare LF would not: it stays as written.
+        fcb_reset; printf 'A\n\n' >"$tmp/want"
+        check_fcb "files: a listing with a bare LF is host text at its close" \
+            T.PRN MHAJ1K2K3U4WC '' t.prn "$tmp/want"
+        fcb_reset; { printf 'A\r\n\n\032'; head -c 123 /dev/zero | tr '\0' A; } >"$tmp/want"
+        check_fcb "files: one written at random with a bare LF is kept as written" \
+            T.PRN MHAJ1K2K3U4N0PC '' t.prn "$tmp/want"
 
         # Open fails for an extent the file does not have, as 2.2's does, and
         # RC is that extent's record count.  It opened any extent asked for

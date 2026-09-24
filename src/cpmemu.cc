@@ -647,7 +647,11 @@ private:
   // settle_made_file.
   std::set<std::string> made_guessed;
   std::set<std::string> made_by_content;
-  bool convert_made_file_to_text(const std::string& path, const char* who, bool trace);
+  // ... and of those, the ones written at random (BDOS 34 or 40) as well as
+  // in sequence: a random file has to read back record for record.
+  std::set<std::string> made_random;
+  bool convert_made_file_to_text(const std::string& path, const char* who, bool trace,
+                                 bool round_trip = true);
   void renamed_made_file(const std::string& old_path, const std::string& new_name,
                          const std::string& new_path);
   // A MAKE_BY_CONTENT file whose last stream has closed: host text now, if
@@ -2792,6 +2796,7 @@ void CPMEmulator::bdos_make_file() {
   } else {
     made_guessed.erase(unix_name);
     made_by_content.erase(unix_name);
+    made_random.erase(unix_name);
     if (kind == MAKE_GUESSED) made_guessed.insert(unix_name);
     if (kind == MAKE_BY_CONTENT) made_by_content.insert(unix_name);
   }
@@ -2863,6 +2868,7 @@ void CPMEmulator::bdos_delete_file() {
   } else {
     made_guessed.erase(unix_path);
     made_by_content.erase(unix_path);
+    made_random.erase(unix_path);
     forget_text_image(unix_path);
     cpu->set_reg8(0, qkz80::reg_A);  // Success
   }
@@ -2926,6 +2932,7 @@ void CPMEmulator::bdos_write_random() {
   uint8_t buffer[128];
   dma_get(buffer, 128);
   bool ok = write_record(*of, record_num, buffer);
+  if (made_by_content.count(of->unix_path)) made_random.insert(of->unix_path);
 
   if (debug || debug_bdos_funcs.count(34)) {
     fprintf(stderr, "Write random: FCB %04X file '%s' record %u %s\n",
@@ -3096,6 +3103,8 @@ void CPMEmulator::renamed_made_file(const std::string& old_path, const std::stri
   // whatever the name held before is gone
   made_guessed.erase(new_path);
   made_by_content.erase(new_path);
+  made_random.erase(new_path);
+  made_random.erase(old_path);
   if (made_guessed.erase(old_path) + made_by_content.erase(old_path) == 0) return;
 
   bool trace = debug || debug_bdos_funcs.count(23);
@@ -3127,18 +3136,24 @@ void CPMEmulator::settle_made_file(const std::string& path, bool trace) {
     if (pair.second.is_open() && pair.second.unix_path == path) return;  // not its last close
   }
   made_by_content.erase(it);
-  convert_made_file_to_text(path, "Close", trace);
+  // Written in sequence only, it is converted as the text writer converted
+  // a text name before: CR LF to LF whether or not every line reads back as
+  // it was written - RMAC's listings have a bare LF after their title line.
+  // Written at random, it is converted only if it reads back exactly, since
+  // a random file's records have to be where they were.
+  bool random = made_random.erase(path) != 0;
+  convert_made_file_to_text(path, "Close", trace, random);
 }
 
 // Rewrite a file of CP/M text as host text, if the file is text - the rule
 // bytes_look_like_text applies to a name on the text list when it is opened -
-// and that loses nothing a text open of it would read back, which is checked,
-// not assumed.  Text ends at the first ^Z, or at a NUL with only NULs and ^Zs
-// after it.  A binary file renamed to a text name - DRI's LIB writes X.$$$ and
+// and, with `round_trip`, if that loses nothing a text open of it would read
+// back, which is checked, not assumed.  Text ends at the first ^Z, or at a
+// NUL with only NULs and ^Zs after it.  A binary file renamed to a text name - DRI's LIB writes X.$$$ and
 // renames it X.LIB - or saved under one - MBASIC's tokenized X.BAS - is left
 // exactly as it was written.  Returns whether the file was rewritten.
 bool CPMEmulator::convert_made_file_to_text(const std::string& path, const char* who,
-                                            bool trace) {
+                                            bool trace, bool round_trip) {
   FILE* fp = fopen(path.c_str(), "rb");
   if (!fp) return false;
   std::vector<uint8_t> raw;
@@ -3161,7 +3176,7 @@ bool CPMEmulator::convert_made_file_to_text(const std::string& path, const char*
     host.push_back(raw[i]);
   }
   // And back, as the text reader does it: an LF not after a CR gains one.
-  if (!why) {
+  if (!why && round_trip) {
     std::vector<uint8_t> back;
     bool cr = false;
     for (uint8_t ch : host) {

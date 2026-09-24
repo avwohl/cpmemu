@@ -189,9 +189,11 @@ records are found, read and written back is the first entry under Fixed.
   libraries opens as text. `docs/file_handling_notes.md` has the rule. Made
   under such a name, a file is written as it comes, like a `$$$` file, and at
   its last close, at a disk reset or at the end of the run it becomes host
-  text if it is text by the same rule and the round trip loses nothing; so an
-  `,A` save or a `.PRN` listing lands as host text as before, and a tokenized
-  save or a library made directly keeps its bytes. With the default config,
+  text if it is text by the same rule - and, if any of it was written at
+  random, only if it reads back exactly, since a random file's records have
+  to stay where they are; so an `,A` save or a `.PRN` listing lands as host
+  text as before, and a tokenized save or a library made directly keeps its
+  bytes. With the default config,
   RMAC, LIB and LINK now rebuild `XDOS.SPR`, `TMP.SPR` and `BNKXDOS.SPR` from
   MP/M II's NUCLEUS sources byte-identical to DRI's, and RMAC reads an LF copy
   of DRI's `Z80.LIB` as the macro library it is. A mode rule for the name
