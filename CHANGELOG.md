@@ -113,6 +113,16 @@ is still 128, not the extent's record count.
   what it asks for as before. New guest `tests/fcb_io.asm` runs a script of
   BDOS file calls against one FCB, and every check for this section uses it.
 
+### Changed
+
+- **`cpm_disk.py add` pads a file's last block with NUL, not `^Z`.** The bytes
+  past the last record are undefined in CP/M, so both are legal, but cpmtools'
+  `cpmcp` writes NUL and every hd1k image RomWBW and romwbw_disks publish was
+  written with it: a rebuilt image differed from its published self in exactly
+  those bytes, 4608 of them in `hd1k_combo`. With NUL, romwbw_disks' 48
+  artifacts rebuild byte-identical to what the `v0-romwbw-3.5.1` and
+  `v0-romwbw-3.6.0` tags serve. (e4f7fd5)
+
 ## [4.9.0] - 2026-09-17
 
 **`tests/test_results_final.txt` claimed the 8080 core fails its own
