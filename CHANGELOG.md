@@ -221,6 +221,17 @@ after it, since the host file cannot be truncated there.
   `NAME.$$$` renamed over the original is host text. New guest
   `tests/cli_fcb.asm`.
 
+- **`cpm_disk.py add` said it had replaced a file it then failed to add.**
+  On a disk too full for the new copy, `add` printed `(replaced existing
+  A.BIN)` and then `Error: a.bin needs 150 blocks and only 141 are free`, and
+  the old A.BIN was still on the disk - the delete was only on the image in
+  memory, which an error does not write back. In a program using the disk
+  object the file was gone. A directory without room for the new file's
+  extents was found later still, after its data and first extent were
+  written. Both are now checked, with the old copy counted out, before
+  anything is reported or kept: a refused replace leaves the file as it was
+  and says so.
+
 ### Changed
 
 - **`cpm_disk.py add` pads a file's last block with NUL, not `^Z`.** The bytes

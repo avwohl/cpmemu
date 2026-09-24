@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Unit tests for cpm_disk.py"""
 
+import contextlib
+import io
 import os
 import shutil
 import struct
@@ -581,6 +583,70 @@ class TestFreedBlocks(unittest.TestCase):
         disk = SssdDisk(data)
         self.assertTrue(disk.add_file("A.BIN", b"a" * 200 * 1024))
         self.assertFalse(disk.add_file("B.BIN", b"b" * 100 * 1024))
+
+
+class TestFailedReplace(unittest.TestCase):
+    """A replace that cannot be written leaves the file it would have
+    replaced, and does not say it replaced it.
+
+    add_file deleted the old file, printed "(replaced existing A.BIN)", and
+    only then found the disk too full - "needs 150 blocks and only 141 are
+    free".  The command wrote nothing back, so A.BIN survived on disk; in the
+    disk object it was gone.  A directory with no room for the new file's
+    extents was found later still, after the data blocks and its first
+    extent were written over the old file's entry.
+    """
+
+    def add_quietly(self, disk, name, body):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ok = disk.add_file(name, body)
+        return ok, out.getvalue()
+
+    def test_too_few_blocks(self):
+        for fmt, data, disk in each_geometry():
+            with self.subTest(fmt=fmt):
+                self.assertTrue(disk.add_file("A.BIN", b"a" * 1024))
+                ok, out = self.add_quietly(disk, "A.BIN", b"b" * len(data))
+                self.assertFalse(ok)
+                self.assertNotIn("replaced", out)
+                self.assertIn("A.BIN it would replace, which is left as it was", out)
+                self.assertEqual(bytes(disk.extract_file("A.BIN")), b"a" * 1024)
+                self.assertEqual(verify_disk(disk, data, detect_disk_format(data))[0], [])
+
+    def test_too_few_directory_entries(self):
+        data = bytearray(create_sssd_disk())
+        disk = SssdDisk(data)
+        for i in range(disk.DIR_ENTRIES - 1):
+            self.assertTrue(self.add_quietly(disk, "F%02d.DAT" % i, b"f")[0])
+        self.assertTrue(disk.add_file("A.BIN", b"a" * 1024))
+        # 20 blocks is two extents, and only A.BIN's one entry would be free
+        ok, out = self.add_quietly(disk, "A.BIN", b"b" * 20 * 1024)
+        self.assertFalse(ok)
+        self.assertNotIn("replaced", out)
+        self.assertIn("needs 2 directory entries and only 1 are free", out)
+        self.assertEqual(bytes(disk.extract_file("A.BIN")), b"a" * 1024)
+        self.assertEqual(verify_disk(disk, data, 'sssd')[0], [])
+
+    def test_the_command_says_so(self):
+        d = tempfile.mkdtemp()
+        try:
+            img = os.path.join(d, 's.img')
+            with open(img, 'wb') as f:
+                f.write(create_sssd_disk())
+            for name, size in (('a.bin', 100 * 1024), ('c.bin', 40 * 1024), ('a.bin', 210 * 1024)):
+                with open(os.path.join(d, name), 'wb') as f:
+                    f.write(name[0].encode() * size)
+                p = subprocess.run([sys.executable, CPM_DISK, 'add', img, name], cwd=d,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   universal_newlines=True)
+            self.assertEqual(p.returncode, 1, p.stdout)
+            self.assertNotIn("replaced", p.stdout)
+            with open(img, 'rb') as f:
+                disk = SssdDisk(bytearray(f.read()))
+            self.assertEqual(bytes(disk.extract_file("A.BIN")), b"a" * 100 * 1024)
+        finally:
+            shutil.rmtree(d)
 
 
 class TestEmptyFile(unittest.TestCase):

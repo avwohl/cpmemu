@@ -260,6 +260,30 @@ def allocate_blocks(used, first_block, max_block, blocks_needed):
 def free_block_count(used, first_block, max_block):
     return sum(1 for b in range(first_block, max_block + 1) if b not in used)
 
+
+def refusal(filename, cpm_filename, replacing, blocks, blocks_needed, free_blocks,
+            entries_needed, free_entries):
+    """Why add_file cannot write this file, or None when it can.
+
+    Both refusals are decided before anything is written or reported, with a
+    file of the same name already counted out, so a replace that fails leaves
+    that file as it was and does not say it was replaced.  add printed
+    "(replaced existing A.BIN)" and then "needs 150 blocks and only 141 are
+    free", and A.BIN was still there: the delete was on the image in memory,
+    which add does not write back after an error.  The directory check was
+    made while the entries were being written, after the data blocks.
+    """
+    also = (f", counting the blocks of the {cpm_filename} it would replace, "
+            f"which is left as it was") if replacing else ""
+    if blocks is None:
+        return (f"Error: {filename} needs {blocks_needed} blocks and only "
+                f"{free_blocks} are free{also}")
+    if entries_needed > free_entries:
+        return (f"Error: {filename} needs {entries_needed} directory entries and only "
+                f"{free_entries} are free{also}")
+    return None
+
+
 # Disk format sizes
 HD1K_SINGLE_SIZE = 8388608      # 8 MB
 HD1K_SLICE_SIZE = 8388608       # 8 MB per slice
@@ -558,19 +582,27 @@ class SssdDisk:
         # did not, so a second add wrote a second extent 0 beside the first,
         # which `add` then refused in its verify step and wrote nothing.
         cpm_filename = (name.rstrip() + '.' + ext.rstrip()).rstrip('.')
-        deleted = self.delete_file(cpm_filename, user, exact=True)
-        if deleted:
-            print(f"  (replaced existing {cpm_filename})")
+        replacing = self._entries_named(cpm_filename, user)
+        self.delete_file(cpm_filename, user, exact=True)
 
         num_records = (len(file_data) + 127) // 128
         blocks_needed = (num_records + self.RECORDS_PER_BLOCK - 1) // self.RECORDS_PER_BLOCK
+        entries_needed = max(1, -(-blocks_needed // self.BLOCKS_PER_EXTENT))
 
         used = self.get_used_blocks()
         blocks = allocate_blocks(used, 2, self.MAX_BLOCK, blocks_needed)
-        if blocks is None:
-            print(f"Error: {filename} needs {blocks_needed} blocks and only "
-                  f"{free_block_count(used, 2, self.MAX_BLOCK)} are free")
+        why = refusal(filename, cpm_filename, replacing, blocks, blocks_needed,
+                      free_block_count(used, 2, self.MAX_BLOCK), entries_needed,
+                      sum(1 for e in self.dir_entries() if e[0] == 0xE5))
+        if why:
+            for i in replacing:
+                entry = bytearray(self.read_dir_entry(i))
+                entry[0] = user
+                self.write_dir_entry(i, entry)
+            print(why)
             return False
+        if replacing:
+            print(f"  (replaced existing {cpm_filename})")
         next_block = blocks[0] if blocks else self.find_max_block() + 1
 
         sys_flag = " [SYS]" if sys_attr else ""
@@ -674,6 +706,13 @@ class SssdDisk:
         for info in files.values():
             info['attrs'] = attribute_names(info.pop('attr_bits'))
         return files
+
+    def _entries_named(self, filename, user):
+        """The directory entries delete_file(filename, user, exact=True) would
+        erase, by number."""
+        want = filename_to_name83(filename, fold=False)
+        return [i for i, e in enumerate(self.dir_entries())
+                if e[0] == user and entry_name83(e) == want]
 
     def delete_file(self, filename, user=0, exact=False):
         """Delete a file from the disk image.
@@ -876,13 +915,13 @@ class Hd1kDisk:
 
         # Delete existing file with same name to avoid duplicates
         cpm_filename = (name.rstrip() + '.' + ext.rstrip()).rstrip('.')
-        deleted = self.delete_file(cpm_filename, user, exact=True)
-        if deleted:
-            print(f"  (replaced existing {cpm_filename})")
+        replacing = self._entries_named(cpm_filename, user)
+        self.delete_file(cpm_filename, user, exact=True)
 
         num_records = (len(file_data) + 127) // 128
         records_per_block = BLOCK_SIZE // 128  # 32 records per 4KB block
         blocks_needed = (num_records + records_per_block - 1) // records_per_block
+        entries_needed = max(1, -(-blocks_needed // 8))  # 8 block pointers an entry
 
         # Refuse rather than run off the end.  There was no bound here at all:
         # `cpm_disk.py add hd.img <9MB file>` on an 8 MB image printed
@@ -892,10 +931,16 @@ class Hd1kDisk:
         # rather than writing into the next slice.
         used = self.get_used_blocks()
         blocks = allocate_blocks(used, 8, self.MAX_BLOCK, blocks_needed)
-        if blocks is None:
-            print(f"Error: {filename} needs {blocks_needed} blocks and only "
-                  f"{free_block_count(used, 8, self.MAX_BLOCK)} are free")
+        why = refusal(filename, cpm_filename, replacing, blocks, blocks_needed,
+                      free_block_count(used, 8, self.MAX_BLOCK), entries_needed,
+                      sum(1 for e in self.dir_entries() if e[0] == 0xE5))
+        if why:
+            for i in replacing:
+                self.data[self.DIR_START + i * 32] = user
+            print(why)
             return False
+        if replacing:
+            print(f"  (replaced existing {cpm_filename})")
         next_block = blocks[0] if blocks else self.find_max_block() + 1
 
         sys_flag = " [SYS]" if sys_attr else ""
@@ -1024,6 +1069,13 @@ class Hd1kDisk:
         for info in files.values():
             info['attrs'] = attribute_names(info.pop('attr_bits'))
         return files
+
+    def _entries_named(self, filename, user):
+        """The directory entries delete_file(filename, user, exact=True) would
+        erase, by number."""
+        want = filename_to_name83(filename, fold=False)
+        return [i for i, e in enumerate(self.dir_entries())
+                if e[0] == user and entry_name83(e) == want]
 
     def delete_file(self, filename, user=0, exact=False):
         """Delete a file from the disk image by marking its directory entries as empty.
