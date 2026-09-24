@@ -613,6 +613,59 @@ class TestEmptyFile(unittest.TestCase):
                 self.assertEqual(entries[0][12:], bytes(20))
 
 
+class TestLowerCaseNames(unittest.TestCase):
+    """A name a program made with a lower-case FCB can be extracted and deleted.
+
+    The BDOS does not fold case, and list showed such a file, but extract and
+    delete upper-cased what they were given and so could never match it:
+    `delete *.*` matched it by its listed name and then deleted nothing.
+    """
+
+    def disks(self):
+        for fmt, data, disk in each_geometry():
+            disk.add_file("LOW.TXT", b"lower" * 30)
+            for i, e in dir_entries(disk):
+                if e[0] == 0 and bytes(e[1:12]) == b"LOW     TXT":
+                    e[1:4] = b"low"
+                    put_entry(disk, i, e)
+            yield fmt, data, disk
+
+    def test_extract_and_delete_reach_it(self):
+        for fmt, data, disk in self.disks():
+            with self.subTest(fmt=fmt):
+                self.assertIn((0, "low.TXT"), disk.list_files())
+                self.assertEqual(bytes(disk.extract_file("low.txt"))[:150], b"lower" * 30)
+                self.assertEqual(disk.delete_file("LOW.TXT"), 1)
+                self.assertEqual(disk.list_files(), {})
+
+    def test_an_exact_name_wins_over_a_folded_one(self):
+        for fmt, data, disk in self.disks():
+            with self.subTest(fmt=fmt):
+                disk.add_file("LOW.TXT", b"UPPER" * 30)
+                self.assertEqual(bytes(disk.extract_file("low.txt"))[:150], b"UPPER" * 30)
+                self.assertEqual(disk.delete_file("low.txt"), 1)
+                self.assertEqual(list(disk.list_files()), [(0, "low.TXT")])
+
+    def test_delete_star_dot_star_deletes_it(self):
+        d = tempfile.mkdtemp()
+        try:
+            for fmt, data, disk in self.disks():
+                with self.subTest(fmt=fmt):
+                    img = os.path.join(d, 'x.img')
+                    with open(img, 'wb') as f:
+                        f.write(data)
+                    p = subprocess.run([sys.executable, CPM_DISK, 'delete', img, '*.*'],
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                       universal_newlines=True)
+                    self.assertEqual(p.returncode, 0, p.stdout)
+                    self.assertIn('Deleted low.TXT', p.stdout)
+                    with open(img, 'rb') as f:
+                        after = bytearray(f.read())
+                    self.assertEqual(get_disk_object(after, None).list_files(), {})
+        finally:
+            shutil.rmtree(d)
+
+
 class TestCommandLine(unittest.TestCase):
     """The same through the commands, which is where the crash was reported."""
 

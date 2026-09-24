@@ -201,6 +201,13 @@ after it, since the host file cannot be truncated there.
   (romwbw_disks' 66 images for 3.5.1, 3.6.0 and 3.7.0-dev.14 are); when it
   does not fit, the file goes in the free blocks, lowest first.
 
+- **`cpm_disk.py extract` and `delete` could not reach a name with lower-case
+  letters in it**, which a program making a file with a lower-case FCB
+  leaves, although `list` showed it: both upper-cased the name they were
+  given, and `delete *.*` matched it by its listed name and deleted nothing.
+  A name that matches exactly still wins; one that differs only in case is
+  found when nothing matches exactly.
+
 ### Changed
 
 - **`cpm_disk.py add` pads a file's last block with NUL, not `^Z`.** The bytes

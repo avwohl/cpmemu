@@ -202,14 +202,39 @@ def entry_filename(entry):
     return name + '.' + ext if ext else name
 
 
-def filename_to_name83(filename):
+def filename_to_name83(filename, fold=True):
     """The eleven bytes a filename is compared with an entry's as: upper case,
     both fields space-padded.  A character with no ASCII form becomes '?',
-    which no name on a disk has, so it matches nothing rather than raising."""
-    name, ext = os.path.splitext(filename.upper())
+    which no name on a disk has, so it matches nothing rather than raising.
+    fold=False keeps the case, for a name taken from the directory itself."""
+    name, ext = os.path.splitext(filename.upper() if fold else filename)
     name = name[:8].ljust(8)
     ext = ext[1:4].ljust(3) if ext else '   '
     return (name + ext).encode('ascii', 'replace')
+
+
+def lookup_name83(disk, filename, user):
+    """The eleven name bytes the entries `filename` means carry.
+
+    The name upper-cased, as the CCP upper-cases everything typed at it - and,
+    when no entry of this user has that name, the one name that differs from
+    it only in case.  The BDOS does not fold case, so a program that makes a
+    file with a lower-case FCB leaves a name no CCP command can reach; this
+    upper-cased the request and compared, so extract and delete could not
+    reach it either, although list showed it.  Two names that fold alike and
+    neither exact: nothing matches, rather than a guess."""
+    want = filename_to_name83(filename)
+    folded = []
+    for entry in disk.dir_entries():
+        if entry[0] != user:
+            continue
+        name = entry_name83(entry)
+        if name == want:
+            return want
+        if name.upper() == want and name not in folded:
+            folded.append(name)
+    return folded[0] if len(folded) == 1 else want
+
 
 def allocate_blocks(used, first_block, max_block, blocks_needed):
     """The blocks a file of `blocks_needed` blocks is written to, or None.
@@ -533,7 +558,7 @@ class SssdDisk:
         # did not, so a second add wrote a second extent 0 beside the first,
         # which `add` then refused in its verify step and wrote nothing.
         cpm_filename = (name.rstrip() + '.' + ext.rstrip()).rstrip('.')
-        deleted = self.delete_file(cpm_filename, user)
+        deleted = self.delete_file(cpm_filename, user, exact=True)
         if deleted:
             print(f"  (replaced existing {cpm_filename})")
 
@@ -650,13 +675,15 @@ class SssdDisk:
             info['attrs'] = attribute_names(info.pop('attr_bits'))
         return files
 
-    def delete_file(self, filename, user=0):
+    def delete_file(self, filename, user=0, exact=False):
         """Delete a file from the disk image.
 
         Only byte 0 of each entry changes, so its attribute bits stay on disk
-        as a real ERA leaves them.
+        as a real ERA leaves them.  exact=True takes the name's case as given
+        (see lookup_name83 for the other).
         """
-        want = filename_to_name83(filename)
+        want = (filename_to_name83(filename, fold=False) if exact
+                else lookup_name83(self, filename, user))
 
         deleted_count = 0
         for i in range(self.DIR_ENTRIES):
@@ -676,7 +703,7 @@ class SssdDisk:
 
         Returns the file data as bytes, or None if not found.
         """
-        want = filename_to_name83(filename)
+        want = lookup_name83(self, filename, user)
 
         # Collect all extents for this file
         extents = {}
@@ -789,6 +816,12 @@ class Hd1kDisk:
                 return offset
         return None
 
+    def dir_entries(self):
+        """Every directory entry, 32 bytes each, in order."""
+        for i in range(self.DIR_ENTRIES):
+            offset = self.DIR_START + (i * 32)
+            yield bytes(self.data[offset:offset + 32])
+
     def get_used_blocks(self):
         """Every block number the directory currently points at."""
         used = set(range(8))          # 0-7 are the directory itself
@@ -843,7 +876,7 @@ class Hd1kDisk:
 
         # Delete existing file with same name to avoid duplicates
         cpm_filename = (name.rstrip() + '.' + ext.rstrip()).rstrip('.')
-        deleted = self.delete_file(cpm_filename, user)
+        deleted = self.delete_file(cpm_filename, user, exact=True)
         if deleted:
             print(f"  (replaced existing {cpm_filename})")
 
@@ -992,13 +1025,15 @@ class Hd1kDisk:
             info['attrs'] = attribute_names(info.pop('attr_bits'))
         return files
 
-    def delete_file(self, filename, user=0):
+    def delete_file(self, filename, user=0, exact=False):
         """Delete a file from the disk image by marking its directory entries as empty.
 
         Only byte 0 of each entry changes, so its attribute bits stay on disk
-        as a real ERA leaves them.
+        as a real ERA leaves them.  exact=True takes the name's case as given
+        (see lookup_name83 for the other).
         """
-        want = filename_to_name83(filename)
+        want = (filename_to_name83(filename, fold=False) if exact
+                else lookup_name83(self, filename, user))
 
         deleted_count = 0
         for i in range(self.DIR_ENTRIES):
@@ -1016,7 +1051,7 @@ class Hd1kDisk:
 
         Returns the file data as bytes, or None if not found.
         """
-        want = filename_to_name83(filename)
+        want = lookup_name83(self, filename, user)
 
         # Collect all extents for this file
         extents = {}  # extent_num -> (records, blocks)
@@ -1342,34 +1377,45 @@ def cmd_delete(args):
     files = disk.list_files()
 
     any_deleted = False
+    def name_83(fullname):
+        if '.' in fullname:
+            name, ext = fullname.rsplit('.', 1)
+        else:
+            name, ext = fullname, ''
+        return name.ljust(8) + ext.ljust(3)
+
     for pattern in args.files:
         pattern_83 = cpm_pattern_to_83(pattern)
         matched = False
 
-        for (user, fullname), info in list(files.items()):
-            # Convert filename to 8.3 format for matching
-            if '.' in fullname:
-                name, ext = fullname.rsplit('.', 1)
-            else:
-                name, ext = fullname, ''
-            filename_83 = name.ljust(8) + ext.ljust(3)
+        # The pattern is upper-cased.  Names that match it as they are come
+        # first; only when none does are names compared with their case
+        # folded, so `delete low.txt` reaches a lower-case name a program
+        # made, and never takes it along with an upper-case LOW.TXT.  Each
+        # is then deleted by its own name, case and all: this upper-cased the
+        # listed name again, so `delete *.*` matched low.TXT and deleted
+        # nothing.
+        candidates = [k for k in files if cpm_match(pattern_83, name_83(k[1]))]
+        if not candidates:
+            candidates = [k for k in files if cpm_match(pattern_83, name_83(k[1]).upper())]
 
-            if cpm_match(pattern_83, filename_83):
-                deleted = disk.delete_file(fullname, user)
-                if deleted > 0:
-                    attrs = f" [{' '.join(info['attrs'])}]" if info['attrs'] else ""
-                    print(f"Deleted {fullname}{attrs} ({deleted} extent(s))")
-                    any_deleted = True
-                    matched = True
-                    del files[(user, fullname)]
+        for (user, fullname) in candidates:
+            info = files[(user, fullname)]
+            deleted = disk.delete_file(fullname, user, exact=True)
+            if deleted > 0:
+                attrs = f" [{' '.join(info['attrs'])}]" if info['attrs'] else ""
+                print(f"Deleted {fullname}{attrs} ({deleted} extent(s))")
+                any_deleted = True
+                matched = True
+                del files[(user, fullname)]
 
-                    # Verify after each delete
-                    errors, warnings = verify_disk(disk, disk_data, fmt)
-                    if errors:
-                        print(f"VERIFY FAILED after deleting {fullname}:")
-                        for e in errors:
-                            print(f"  {e}")
-                        return 1
+                # Verify after each delete
+                errors, warnings = verify_disk(disk, disk_data, fmt)
+                if errors:
+                    print(f"VERIFY FAILED after deleting {fullname}:")
+                    for e in errors:
+                        print(f"  {e}")
+                    return 1
 
         if not matched:
             print(f"No files matching: {pattern}")
