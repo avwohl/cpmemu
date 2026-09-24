@@ -109,9 +109,11 @@ records are found, read and written back is the first entry under Fixed.
   `tests/text_image_prop.py` checks every call against that definition over
   random LF, CR LF, `^Z`-ended and `^Z`-padded files whose line ends fall at
   every place around a record boundary, with new guest `tests/text_ops.asm`:
-  300 cases in the suite, and 6,400 across four seeds when this was written.
-  Of its first 400 cases e497958 fails 310 and 4.9.0 372, and of 400 made of
-  sequential calls alone, 231 and 331.
+  300 cases in the suite, and 6,400 across eight seeds when this was
+  written. Of its first 400 cases e497958 fails 306 and 4.9.0 371, and of
+  400 made of sequential calls alone, 208 and 328 - measured with the model
+  of the rule under Changed, all converted; against the "own style" model it
+  first had, 310 and 372, 231 and 331.
   Measured with DRI's own tools on MP/M's sources, which are CR LF text:
   under e4f7fd5 RMAC reported errors in all nine modules it assembled, 104
   lines of them for `BNKBDOS` alone. Now PIP, RMAC and LINK rebuild
