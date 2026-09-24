@@ -413,5 +413,167 @@ class TestSssdCreate(unittest.TestCase):
 
 
 
+def put_entry(disk, index, entry):
+    if isinstance(disk, SssdDisk):
+        disk.write_dir_entry(index, bytes(entry))
+    else:
+        at = disk.DIR_START + index * 32
+        disk.data[at:at + 32] = entry
+
+
+def set_attributes(disk, name83, positions):
+    """Set the high bit of name bytes `positions` (1-11) in every entry of a
+    file, the way MP/M's SET does: SET Y.COM [F1=ON] sets position 1, R/O is
+    9, SYS 10 and archive 11."""
+    for i, entry in dir_entries(disk):
+        if entry[0] != 0xE5 and bytes(b & 0x7F for b in entry[1:12]) == name83:
+            for p in positions:
+                entry[p] |= 0x80
+            put_entry(disk, i, entry)
+
+
+class TestAttributeBits(unittest.TestCase):
+    """A name's high bits are attributes, not part of the name.
+
+    CP/M keeps f1'-f4' (user attributes, MP/M's and CP/M 3's SET [F1=ON]),
+    f5'-f8' (reserved) and t1'-t3' (read-only, SYS, archive) in bit 7 of the
+    eleven name bytes, and the BDOS compares names with those bits stripped.
+    `delete` and `add` crashed with UnicodeDecodeError on any disk where one
+    entry had a bit set in its first eight bytes - they decoded every entry
+    of the user as ASCII to compare it - `extract` crashed the same way on
+    hd1k, and `list` skipped the file as though it were not there.  Found by
+    MP/M's SET [F1=ON] followed by cpm_disk.py delete.
+    """
+
+    X = b"hello" * 30
+    Y = b"world" * 30
+
+    def disks(self):
+        for make, cls in ((lambda: create_hd1k_disk(combo=False), Hd1kDisk),
+                          (create_sssd_disk, SssdDisk),
+                          (lambda: create_hd1k_disk(combo=True), ComboDisk)):
+            data = bytearray(make())
+            disk = cls(data)
+            disk.add_file("X.COM", self.X)
+            disk.add_file("Y.COM", self.Y)
+            set_attributes(disk, b"Y       COM", (1, 10))   # F1 and SYS
+            yield cls.__name__, data, disk
+
+    def test_list_shows_a_file_with_an_attribute_set(self):
+        for fmt, data, disk in self.disks():
+            with self.subTest(fmt=fmt):
+                files = disk.list_files()
+                self.assertIn((0, "Y.COM"), files)
+                self.assertEqual(files[(0, "Y.COM")]['attrs'], ['F1', 'SYS'])
+                self.assertEqual(files[(0, "X.COM")]['attrs'], [])
+
+    def test_delete_is_not_stopped_by_another_files_attributes(self):
+        for fmt, data, disk in self.disks():
+            with self.subTest(fmt=fmt):
+                self.assertEqual(disk.delete_file("X.COM"), 1)
+                self.assertNotIn((0, "X.COM"), disk.list_files())
+
+    def test_delete_matches_through_the_attribute_bits(self):
+        for fmt, data, disk in self.disks():
+            with self.subTest(fmt=fmt):
+                self.assertEqual(disk.delete_file("Y.COM"), 1)
+                self.assertNotIn((0, "Y.COM"), disk.list_files())
+
+    def test_extract_matches_through_the_attribute_bits(self):
+        for fmt, data, disk in self.disks():
+            with self.subTest(fmt=fmt):
+                self.assertEqual(bytes(disk.extract_file("Y.COM"))[:len(self.Y)], self.Y)
+
+    def test_add_is_not_stopped_by_another_files_attributes(self):
+        for fmt, data, disk in self.disks():
+            with self.subTest(fmt=fmt):
+                self.assertTrue(disk.add_file("Z.COM", b"Z" * 128))
+                self.assertEqual(bytes(disk.extract_file("Z.COM")), b"Z" * 128)
+
+    def test_add_replaces_a_file_whose_name_has_attributes(self):
+        for fmt, data, disk in self.disks():
+            with self.subTest(fmt=fmt):
+                self.assertTrue(disk.add_file("Y.COM", b"N" * 128))
+                self.assertEqual(bytes(disk.extract_file("Y.COM")), b"N" * 128)
+                self.assertEqual(len([e for i, e in dir_entries(disk) if e[0] == 0
+                                      and bytes(b & 0x7F for b in e[1:12]) == b"Y       COM"]), 1)
+                self.assertEqual(verify_disk(disk, data, detect_disk_format(data))[0], [])
+
+    def test_the_bits_on_disk_survive_other_changes(self):
+        """Nothing that rewrites the directory may strip them."""
+        for fmt, data, disk in self.disks():
+            with self.subTest(fmt=fmt):
+                def marked():
+                    return [e for i, e in dir_entries(disk) if e[0] != 0xE5 and e[1] & 0x80]
+                before = marked()
+                self.assertEqual(len(before), 1)
+                disk.delete_file("X.COM")
+                disk.add_file("Z.COM", b"Z" * 128)
+                self.assertEqual(marked(), before)
+
+    def test_every_attribute_is_named(self):
+        data = bytearray(create_hd1k_disk(combo=False))
+        disk = Hd1kDisk(data)
+        disk.add_file("A.COM", b"A")
+        set_attributes(disk, b"A       COM", range(1, 12))
+        self.assertEqual(disk.list_files()[(0, "A.COM")]['attrs'],
+                         ['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'R/O', 'SYS', 'ARC'])
+        self.assertEqual(verify_disk(disk, data, 'hd1k')[0], [])
+
+
+class TestCommandLine(unittest.TestCase):
+    """The same through the commands, which is where the crash was reported."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.img = os.path.join(self.dir, 'hd.img')
+        data = bytearray(create_hd1k_disk(combo=False))
+        disk = Hd1kDisk(data)
+        disk.add_file("X.COM", b"x" * 200)
+        disk.add_file("Y.COM", b"y" * 200)
+        set_attributes(disk, b"Y       COM", (1, 9))   # F1 and R/O
+        with open(self.img, 'wb') as f:
+            f.write(data)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir)
+
+    def run_tool(self, *args):
+        p = subprocess.run([sys.executable, CPM_DISK] + list(args), cwd=self.dir,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           universal_newlines=True)
+        return p.returncode, p.stdout
+
+    def test_list_reports_the_attributes_after_the_columns_it_had(self):
+        rc, out = self.run_tool('list', self.img)
+        self.assertEqual(rc, 0, out)
+        rows = {line.split()[1]: line.split() for line in out.splitlines()[2:]}
+        # romwbw_emu and romwbw_disks read the name as the second field of
+        # every line after the first two, so it has to stay there.
+        self.assertEqual(sorted(rows), ['X.COM', 'Y.COM'])
+        self.assertEqual(rows['Y.COM'][4:], ['F1', 'R/O'])
+        self.assertEqual(rows['X.COM'][4:], [])
+
+    def test_delete_and_add_run(self):
+        rc, out = self.run_tool('delete', self.img, 'X.COM')
+        self.assertEqual(rc, 0, out)
+        self.assertIn('Deleted X.COM', out)
+        with open(os.path.join(self.dir, 'z.com'), 'wb') as f:
+            f.write(b'z' * 300)
+        rc, out = self.run_tool('add', self.img, 'z.com')
+        self.assertEqual(rc, 0, out)
+        rc, out = self.run_tool('delete', self.img, 'Y.*')
+        self.assertEqual(rc, 0, out)
+        self.assertIn('Deleted Y.COM', out)
+        rc, out = self.run_tool('list', self.img)
+        self.assertEqual([line.split()[1] for line in out.splitlines()[2:]], ['Z.COM'])
+
+    def test_extract_runs(self):
+        rc, out = self.run_tool('extract', self.img, 'Y.COM', '-o', self.dir)
+        self.assertEqual(rc, 0, out)
+        with open(os.path.join(self.dir, 'y.com'), 'rb') as f:
+            self.assertEqual(f.read()[:200], b"y" * 200)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -14,7 +14,8 @@ Usage:
   cpm_disk.py create --sssd <disk.img>             # Create 250KB SSSD floppy
   cpm_disk.py create --combo <disk.img>            # Create 51MB combo disk
   cpm_disk.py add <disk.img> <file1.com> [...]     # Add files to disk
-  cpm_disk.py list <disk.img>                      # List files in disk
+  cpm_disk.py list <disk.img>                      # List files, and any of
+                                                   # F1-F8 R/O SYS ARC set
   cpm_disk.py delete <disk.img> <file1.com> [...]  # Delete files from disk
   cpm_disk.py extract <disk.img> <file1.com> [...] # Extract files from disk
   cpm_disk.py list --slice 3 <combo.img>           # A combo slice (0-5)
@@ -158,6 +159,57 @@ def cpm_match(pattern_83, filename_83):
         if p != '?' and p != f:
             return False
     return True
+
+
+# A directory entry's name is eleven bytes, and bit 7 of each is an attribute,
+# not part of the name: f1'-f4' are the user attributes MP/M's and CP/M 3's
+# SET [F1=ON] sets, f5'-f8' are reserved, and t1', t2' and t3' are read-only,
+# SYS and archive.  The BDOS compares a name with all eleven stripped, and so
+# does everything here.  Nothing decodes a raw name byte: delete and add used
+# to, and died with UnicodeDecodeError on the first entry with a bit set in
+# its first eight bytes, whichever file they had been asked about.
+ATTRIBUTE_NAMES = ('F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8',
+                   'R/O', 'SYS', 'ARC')
+
+
+def entry_name83(entry):
+    """A directory entry's eleven name bytes with the attribute bits off."""
+    return bytes(b & 0x7F for b in entry[1:12])
+
+
+def entry_attribute_bits(entry):
+    """Bit i set when name byte i+1 of the entry carries its attribute."""
+    bits = 0
+    for i in range(11):
+        if entry[1 + i] & 0x80:
+            bits |= 1 << i
+    return bits
+
+
+def attribute_names(bits):
+    """['F1', 'SYS', ...] for a mask from entry_attribute_bits()."""
+    return [ATTRIBUTE_NAMES[i] for i in range(11) if bits & (1 << i)]
+
+
+def entry_filename(entry):
+    """'NAME.EXT' for a directory entry, or None when its name is not printable
+    ASCII even with the attribute bits off - an unformatted or damaged entry."""
+    n = entry_name83(entry)
+    if not all(0x20 <= b <= 0x7E for b in n):
+        return None
+    name = n[:8].decode('ascii').rstrip()
+    ext = n[8:].decode('ascii').rstrip()
+    return name + '.' + ext if ext else name
+
+
+def filename_to_name83(filename):
+    """The eleven bytes a filename is compared with an entry's as: upper case,
+    both fields space-padded.  A character with no ASCII form becomes '?',
+    which no name on a disk has, so it matches nothing rather than raising."""
+    name, ext = os.path.splitext(filename.upper())
+    name = name[:8].ljust(8)
+    ext = ext[1:4].ljust(3) if ext else '   '
+    return (name + ext).encode('ascii', 'replace')
 
 # Disk format sizes
 HD1K_SINGLE_SIZE = 8388608      # 8 MB
@@ -437,6 +489,14 @@ class SssdDisk:
         name = name[:8].ljust(8)
         ext = ext[1:4].ljust(3) if ext else '   '
 
+        # Replace a file of the same name, as Hd1kDisk.add_file does.  This
+        # did not, so a second add wrote a second extent 0 beside the first,
+        # which `add` then refused in its verify step and wrote nothing.
+        cpm_filename = (name.rstrip() + '.' + ext.rstrip()).rstrip('.')
+        deleted = self.delete_file(cpm_filename, user)
+        if deleted:
+            print(f"  (replaced existing {cpm_filename})")
+
         num_records = (len(file_data) + 127) // 128
         blocks_needed = (num_records + self.RECORDS_PER_BLOCK - 1) // self.RECORDS_PER_BLOCK
 
@@ -518,26 +578,22 @@ class SssdDisk:
             entry = self.read_dir_entry(i)
             user = entry[0]
             if user != 0xE5 and user < 32:
-                # Mask off attribute bits from extension bytes
-                name_bytes = entry[1:9]
-                ext_bytes = bytes([b & 0x7F for b in entry[9:12]])
-                if not all(0x20 <= b <= 0x7E for b in name_bytes):
+                # Attribute bits off, from the name as well as the type: a
+                # file with F1 set was skipped here as unprintable.
+                fullname = entry_filename(entry)
+                if fullname is None:
                     continue
-                if not all(0x20 <= b <= 0x7E for b in ext_bytes):
-                    continue
-
-                name = name_bytes.decode('ascii').rstrip()
-                ext = ext_bytes.decode('ascii').rstrip()
                 extent_lo = entry[12]
                 extent_hi = entry[14]
                 extent = extent_lo + (extent_hi << 5)
                 records = entry[15]
 
-                fullname = f"{name}.{ext}" if ext else name
                 key = (user, fullname)
 
                 if key not in files:
-                    files[key] = {'extents': 0, 'records': 0, 'blocks': []}
+                    files[key] = {'extents': 0, 'records': 0, 'blocks': [],
+                                  'attr_bits': 0}
+                files[key]['attr_bits'] |= entry_attribute_bits(entry)
 
                 files[key]['extents'] = max(files[key]['extents'], extent + 1)
                 if extent == files[key]['extents'] - 1:
@@ -549,28 +605,28 @@ class SssdDisk:
                     if block > 0:
                         files[key]['blocks'].append(block)
 
+        for info in files.values():
+            info['attrs'] = attribute_names(info.pop('attr_bits'))
         return files
 
     def delete_file(self, filename, user=0):
-        """Delete a file from the disk image."""
-        name, ext = os.path.splitext(filename.upper())
-        name = name[:8].ljust(8)
-        ext = ext[1:4].ljust(3) if ext else '   '
+        """Delete a file from the disk image.
+
+        Only byte 0 of each entry changes, so its attribute bits stay on disk
+        as a real ERA leaves them.
+        """
+        want = filename_to_name83(filename)
 
         deleted_count = 0
         for i in range(self.DIR_ENTRIES):
             entry = self.read_dir_entry(i)
             entry_user = entry[0]
-            if entry_user == user:
-                entry_name = bytes(entry[1:9]).decode('ascii')
-                entry_ext_bytes = bytes([b & 0x7F for b in entry[9:12]])
-                entry_ext = entry_ext_bytes.decode('ascii')
-                if entry_name == name and entry_ext == ext:
-                    # Mark entry as deleted
-                    deleted_entry = bytearray(entry)
-                    deleted_entry[0] = 0xE5
-                    self.write_dir_entry(i, deleted_entry)
-                    deleted_count += 1
+            if entry_user == user and entry_name83(entry) == want:
+                # Mark entry as deleted
+                deleted_entry = bytearray(entry)
+                deleted_entry[0] = 0xE5
+                self.write_dir_entry(i, deleted_entry)
+                deleted_count += 1
 
         return deleted_count
 
@@ -579,9 +635,7 @@ class SssdDisk:
 
         Returns the file data as bytes, or None if not found.
         """
-        name, ext = os.path.splitext(filename.upper())
-        name = name[:8].ljust(8)
-        ext = ext[1:4].ljust(3) if ext else '   '
+        want = filename_to_name83(filename)
 
         # Collect all extents for this file
         extents = {}
@@ -589,15 +643,7 @@ class SssdDisk:
             entry = self.read_dir_entry(i)
             entry_user = entry[0]
             if entry_user == user:
-                # Mask off attribute bits from name bytes too (high bit can be set)
-                entry_name_bytes = bytes([b & 0x7F for b in entry[1:9]])
-                entry_ext_bytes = bytes([b & 0x7F for b in entry[9:12]])
-                try:
-                    entry_name = entry_name_bytes.decode('ascii')
-                    entry_ext = entry_ext_bytes.decode('ascii')
-                except UnicodeDecodeError:
-                    continue
-                if entry_name == name and entry_ext == ext:
+                if entry_name83(entry) == want:
                     extent_lo = entry[12]
                     extent_hi = entry[14]
                     extent_num = extent_lo + (extent_hi << 5)
@@ -874,27 +920,24 @@ class Hd1kDisk:
             offset = self.DIR_START + (i * 32)
             user = self.data[offset]
             if user != 0xE5 and user < 32:
-                # Validate filename - must be printable ASCII (0x20-0x7E)
-                # Mask off attribute bits (high bit) from extension bytes
-                name_bytes = self.data[offset+1:offset+9]
-                ext_bytes = bytes([b & 0x7F for b in self.data[offset+9:offset+12]])
-                if not all(0x20 <= b <= 0x7E for b in name_bytes):
+                # Validate filename - printable ASCII once the attribute bits
+                # are off, from the name as well as the type: a file with F1
+                # set was skipped here as unprintable.
+                entry = self.data[offset:offset + 32]
+                fullname = entry_filename(entry)
+                if fullname is None:
                     continue
-                if not all(0x20 <= b <= 0x7E for b in ext_bytes):
-                    continue
-
-                name = name_bytes.decode('ascii').rstrip()
-                ext = ext_bytes.decode('ascii').rstrip()
                 extent_lo = self.data[offset+12]
                 extent_hi = self.data[offset+14]
                 extent = extent_lo + (extent_hi << 5)
                 records = self.data[offset+15]
 
-                fullname = f"{name}.{ext}" if ext else name
                 key = (user, fullname)
 
                 if key not in files:
-                    files[key] = {'extents': 0, 'records': 0, 'blocks': []}
+                    files[key] = {'extents': 0, 'records': 0, 'blocks': [],
+                                  'attr_bits': 0}
+                files[key]['attr_bits'] |= entry_attribute_bits(entry)
 
                 files[key]['extents'] = max(files[key]['extents'], extent + 1)
                 if extent == files[key]['extents'] - 1:
@@ -905,28 +948,26 @@ class Hd1kDisk:
                     if block > 0:
                         files[key]['blocks'].append(block)
 
+        for info in files.values():
+            info['attrs'] = attribute_names(info.pop('attr_bits'))
         return files
 
     def delete_file(self, filename, user=0):
-        """Delete a file from the disk image by marking its directory entries as empty."""
-        # Parse filename (8.3 format)
-        name, ext = os.path.splitext(filename.upper())
-        name = name[:8].ljust(8)
-        ext = ext[1:4].ljust(3) if ext else '   '
+        """Delete a file from the disk image by marking its directory entries as empty.
+
+        Only byte 0 of each entry changes, so its attribute bits stay on disk
+        as a real ERA leaves them.
+        """
+        want = filename_to_name83(filename)
 
         deleted_count = 0
         for i in range(self.DIR_ENTRIES):
             offset = self.DIR_START + (i * 32)
             entry_user = self.data[offset]
-            if entry_user == user:
-                entry_name = bytes(self.data[offset+1:offset+9]).decode('ascii')
-                # Mask off attribute bits (high bit) from extension bytes
-                entry_ext_bytes = bytes([b & 0x7F for b in self.data[offset+9:offset+12]])
-                entry_ext = entry_ext_bytes.decode('ascii')
-                if entry_name == name and entry_ext == ext:
-                    # Mark entry as deleted
-                    self.data[offset] = 0xE5
-                    deleted_count += 1
+            if entry_user == user and entry_name83(self.data[offset:offset + 32]) == want:
+                # Mark entry as deleted
+                self.data[offset] = 0xE5
+                deleted_count += 1
 
         return deleted_count
 
@@ -935,10 +976,7 @@ class Hd1kDisk:
 
         Returns the file data as bytes, or None if not found.
         """
-        # Parse filename (8.3 format)
-        name, ext = os.path.splitext(filename.upper())
-        name = name[:8].ljust(8)
-        ext = ext[1:4].ljust(3) if ext else '   '
+        want = filename_to_name83(filename)
 
         # Collect all extents for this file
         extents = {}  # extent_num -> (records, blocks)
@@ -946,11 +984,7 @@ class Hd1kDisk:
             offset = self.DIR_START + (i * 32)
             entry_user = self.data[offset]
             if entry_user == user:
-                entry_name = bytes(self.data[offset+1:offset+9]).decode('ascii')
-                # Mask off attribute bits (high bit) from extension bytes
-                entry_ext_bytes = bytes([b & 0x7F for b in self.data[offset+9:offset+12]])
-                entry_ext = entry_ext_bytes.decode('ascii')
-                if entry_name == name and entry_ext == ext:
+                if entry_name83(self.data[offset:offset + 32]) == want:
                     extent_lo = self.data[offset+12]
                     extent_hi = self.data[offset+14]
                     extent_num = extent_lo + (extent_hi << 5)
@@ -1240,13 +1274,17 @@ def cmd_list(args):
         print("No files found")
         return 0
 
-    print(f"{'User':<5} {'Filename':<12} {'Size':>8} {'Blocks':>6}")
-    print("-" * 35)
+    # Attributes go last, after the four columns this always printed:
+    # romwbw_emu and romwbw_disks read the name as the second field of each
+    # line after the first two, and that must not move.
+    print(f"{'User':<5} {'Filename':<12} {'Size':>8} {'Blocks':>6}  Attributes")
+    print("-" * 47)
 
     for (user, name), info in sorted(files.items()):
         size = info['records'] * 128
         blocks = len(info['blocks'])
-        print(f"{user:<5} {name:<12} {size:>8} {blocks:>6}")
+        line = f"{user:<5} {name:<12} {size:>8} {blocks:>6}  {' '.join(info['attrs'])}"
+        print(line.rstrip())
 
     return 0
 
@@ -1279,7 +1317,8 @@ def cmd_delete(args):
             if cpm_match(pattern_83, filename_83):
                 deleted = disk.delete_file(fullname, user)
                 if deleted > 0:
-                    print(f"Deleted {fullname} ({deleted} extent(s))")
+                    attrs = f" [{' '.join(info['attrs'])}]" if info['attrs'] else ""
+                    print(f"Deleted {fullname}{attrs} ({deleted} extent(s))")
                     any_deleted = True
                     matched = True
                     del files[(user, fullname)]

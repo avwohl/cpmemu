@@ -72,6 +72,24 @@ is still 128, not the extent's record count.
   `BNKBDOS.SPR` and `RESBDOS.SPR` byte-identical to the ones DRI shipped,
   and RMAC reports no error in any of the nine.
 
+- **`cpm_disk.py delete` and `add` died with `UnicodeDecodeError` on any
+  disk where one directory entry had an attribute bit set in its name.**
+  CP/M keeps a file's attributes in bit 7 of its eleven name bytes - f1'-f4'
+  are what MP/M's and CP/M 3's `SET X.COM [F1=ON]` sets, t1'-t3' are R/O,
+  SYS and archive - and the BDOS compares names with them stripped. `delete`
+  decoded the first eight bytes of every entry for the user as ASCII, so one
+  file with F1 set stopped it whichever file it had been asked about, and
+  `add` on hd1k deletes before it writes. `extract` on hd1k died the same way,
+  and `list` skipped the file as unprintable, as though it were not there.
+  Found by running MP/M's SET and then editing the image. Every command now
+  compares names with the bits stripped and never decodes a raw name byte;
+  nothing it rewrites loses the bits; `list` shows the attributes set, in a
+  column after the four it always printed, so romwbw_emu and romwbw_disks,
+  which read the name as the second field, see the same thing; and `delete`
+  names them. Also: `add` on an SSSD image did not replace a file of the same
+  name, as it does on hd1k, but wrote a second extent 0 beside it, which its
+  own verify then refused.
+
 - **`cpm_disk.py create --sssd` failed its own verify and never wrote an
   image.** The formatter filled the first 2 KB of track 2 with `E5` by
   physical offset. The directory is read through the sector skew, so its 16
