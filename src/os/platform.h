@@ -109,6 +109,32 @@ std::string basename(const std::string& path);
 int change_directory(const char* path);
 
 // ============================================================================
+// Termination
+// ============================================================================
+
+// A text file's change can be held in memory until its FCB is closed (see
+// TextImage in cpmemu.cc), so a signal that ends the process where it stands
+// loses it.  After catch_termination(), SIGHUP, SIGINT and SIGTERM only note
+// that they arrived, and a console read they interrupt returns -1 at once;
+// the emulator then closes its files and calls end_by_signal().  A second one
+// while the first is being dealt with ends the process at once, the terminal
+// put back, as any of them did before.  A signal the process was started
+// ignoring - nohup, a background job - stays ignored.  Call it after
+// enable_raw_mode(), whose handlers for the same signals it replaces.
+//
+// POSIX only.  On Windows these do nothing and termination_requested() is
+// always 0: the console close and logoff events end the process as before.
+void catch_termination();
+
+// The signal that asked the process to end, or 0.
+int termination_requested();
+
+// End the process by `sig`, as though it had not been caught: the terminal put
+// back, the default disposition restored and the signal raised again, so a
+// parent waiting on it sees the signal.  Does not return.
+void end_by_signal(int sig);
+
+// ============================================================================
 // Initialization
 // ============================================================================
 

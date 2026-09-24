@@ -203,6 +203,19 @@ static bool check_ctrl_c_exit(int ch) {
 static int consecutive_console_eof = 0;
 static const int CONSOLE_EOF_LIMIT = 1024;
 
+// A signal asked the process to end, and platform::catch_termination held it
+// until here: close every file, so a text file's change still only in its
+// image reaches the host, and end by that signal.  Reached from the console
+// read the signal interrupted, and from the run loop.  Before this, SIGTERM,
+// SIGHUP and SIGINT ended the process where it stood, and a text file's
+// change that was waiting for its close - see TextImage - was lost.
+static void end_if_terminated() {
+  int sig = platform::termination_requested();
+  if (!sig) return;
+  if (close_guest_files) close_guest_files();
+  platform::end_by_signal(sig);
+}
+
 // Count one read that found end of input, and give up once the guest has asked
 // often enough that nothing is going to change.  Shared, because BDOS 6 hits the
 // same wall as the blocking reads: it called platform::console_getchar()
@@ -212,6 +225,7 @@ static const int CONSOLE_EOF_LIMIT = 1024;
 // against a pty whose master had closed, while the same guest on the same stdin
 // exited cleanly in 0.05s through BDOS 1.
 static void note_console_eof() {
+  end_if_terminated();  // the -1 was a signal, not the end of input
   if (++consecutive_console_eof >= CONSOLE_EOF_LIMIT) {
     // Nothing is going to change: stdin is finished and the guest is still
     // asking.  Leaving is better than spinning, and it is what a warm boot
@@ -412,10 +426,11 @@ struct OpenFile {
 // to where it starts in the host file, from the load and from each write
 // back, so that point is found without reading the host file again.
 //
-// The write back is done at once when it is cheap - the change is in the
-// file's last line, and that line and what follows it are under 64 KB, as an
-// append or a new file being written always is - and otherwise when an FCB
-// on the file closes it, at a disk reset, at the end of the run, at BDOS 48,
+// The write back is done at once when it is cheap - the text from the start
+// of the line the change is in to the end is under 64 KB, as it always is for
+// an append, a new file being written or any change to a small file - and
+// otherwise when an FCB on the file closes it, at a disk reset, at the end of
+// the run or when a signal ends it (platform::catch_termination), at BDOS 48,
 // and before a search, a rename or a file size, which look at host files.
 // Every FCB open on one host file shares one image, so another FCB reading
 // the file sees a change whether or not it has been written back; a make or
@@ -645,13 +660,15 @@ private:
   static std::vector<uint8_t> host_text(TextImage& img, size_t p, uint64_t h);
   static bool host_stays_text(const TextImage& img, uint64_t h, const std::vector<uint8_t>& out);
   static bool write_back_whole(TextImage& img);
-  void flush_text_images();
+  bool flush_text_images();
   void forget_text_image(const std::string& path);
   static void image_write(TextImage& img, uint32_t record, const uint8_t* data);
   // The records a text file with conversion holds, from its image if one is
   // open and by converting it if not.
   uint32_t text_record_count(const std::string& path);
-  void close_open_file(OpenFile& of);
+  // False, said on stderr, if a text file's change could not be written
+  // back to the host file.
+  bool close_open_file(OpenFile& of);
   // Every open file, closed: on a disk reset, and when the program ends, so
   // that a text file's changes still only in its image reach the host.
   void close_all_files();
@@ -1525,8 +1542,10 @@ bool CPMEmulator::write_back_whole(TextImage& img) {
   return true;
 }
 
-void CPMEmulator::flush_text_images() {
-  for (auto& pair : text_images) write_back(*pair.second);
+bool CPMEmulator::flush_text_images() {
+  bool ok = true;
+  for (auto& pair : text_images) ok = write_back(*pair.second) && ok;
+  return ok;
 }
 
 // The records a text file with conversion holds.  Its image's, if an FCB has
@@ -1549,10 +1568,17 @@ uint32_t CPMEmulator::text_record_count(const std::string& path) {
   return records > 0xFFFFFF ? 0xFFFFFF : static_cast<uint32_t>(records);
 }
 
-void CPMEmulator::close_open_file(OpenFile& of) {
+// A text file's change that cannot be written back - the host file made
+// read-only, or its disk full - is lost with its image once the last FCB on
+// it closes.  That was silent, and BDOS 16 answered 0; it answers FFh now,
+// the value 2.2's close has for failing, and it is said on stderr, since a
+// close at the end of the run has nobody else to tell.
+bool CPMEmulator::close_open_file(OpenFile& of) {
+  bool ok = true;
   if (of.img) {
-    write_back(*of.img);
+    ok = write_back(*of.img);
     std::string path = of.img->path;
+    if (!ok) fprintf(stderr, "cpmemu: %s: a change could not be written back\n", path.c_str());
     of.img.reset();
     auto it = text_images.find(path);
     if (it != text_images.end() && it->second.use_count() == 1) text_images.erase(it);
@@ -1561,6 +1587,7 @@ void CPMEmulator::close_open_file(OpenFile& of) {
     fclose(of.fp);
     of.fp = nullptr;
   }
+  return ok;
 }
 
 void CPMEmulator::close_all_files() {
@@ -1597,16 +1624,26 @@ size_t CPMEmulator::read_record(OpenFile& of, uint32_t record, uint8_t* buffer,
 }
 
 // Write record `record` from buffer.  A text file's change reaches the host
-// at once when that is cheap, and at the latest when the file is closed.  A
-// raw image is written whole, so it is cheap when it is 64 KB or less.
+// at once when that is cheap, and at the latest when the file is closed.
+// Cheap is the text from the start of the line the change is in to its end
+// being 64 KB or less; it was the change being in the last line, so a record
+// rewritten at the top of a 40-line file waited for the close, and a kill
+// before it lost the change.  A raw image is written whole, so it is cheap
+// when it is 64 KB or less.
 bool CPMEmulator::write_record(OpenFile& of, uint32_t record, const uint8_t* buffer) {
   if (of.img) {
     TextImage& img = *of.img;
     image_write(img, record, buffer);
-    if (!img.dirty) return true;
+    if (!img.dirty || img.detached) return true;
     if (img.raw) return img.cpm.size() <= 65536 ? write_back(img) : true;
-    size_t last = img.lines.back().first, end = img.text_end();
-    if (img.dirty_from >= last && (end < last || end - last <= 65536)) return write_back(img);
+    size_t end = img.text_end();
+    if (img.dirty_from > end) return write_back(img);  // past the text: nothing to write
+    auto it = std::upper_bound(img.lines.begin(), img.lines.end(), img.dirty_from,
+                               [](size_t v, const std::pair<size_t, uint64_t>& e) {
+                                 return v < e.first;
+                               });
+    size_t line = (it - 1)->first;  // lines[0] is (0, 0)
+    if (end - line <= 65536) return write_back(img);
     return true;
   }
   if (fseek(of.fp, static_cast<long>(record) * 128L, SEEK_SET) != 0) return false;
@@ -2223,9 +2260,9 @@ void CPMEmulator::bdos_call(qkz80_uint8 func) {
 
   case 48: // Flush Buffers (CP/M 3+)
     // Binary files are written as they go; a text file's changes may still
-    // be in its image.
-    flush_text_images();
-    cpu->set_reg8(0, qkz80::reg_A);
+    // be in its image.  FFh, as CP/M 3 answers a failed flush, if one could
+    // not be written.
+    cpu->set_reg8(flush_text_images() ? 0 : 0xFF, qkz80::reg_A);
     break;
 
   default:
@@ -2715,13 +2752,14 @@ void CPMEmulator::bdos_close_file() {
     fprintf(stderr, "Close file: FCB at %04X\n", fcb_addr);
   }
 
+  bool closed = true;
   auto it = open_files.find(fcb_addr);
   if (it != open_files.end()) {
     if (debug || debug_bdos_funcs.count(16)) {
       fprintf(stderr, "Close file: closing '%s'\n", it->second.cpm_name.c_str());
     }
     std::string path = it->second.unix_path;
-    close_open_file(it->second);
+    closed = close_open_file(it->second);
     open_files.erase(it);
     settle_made_file(path, debug || debug_bdos_funcs.count(16));
   } else {
@@ -2729,9 +2767,9 @@ void CPMEmulator::bdos_close_file() {
       fprintf(stderr, "Close file: file not open (OK)\n");
     }
   }
-  // Always return success - CP/M close is idempotent
-  // Only return 0xFF if there's an actual disk error writing the directory
-  cpu->set_reg8(0, qkz80::reg_A);
+  // Success, whether or not the FCB was open - CP/M close is idempotent -
+  // unless what it had written could not be put on the host file.
+  cpu->set_reg8(closed ? 0 : 0xFF, qkz80::reg_A);
 
   if (debug || debug_bdos_funcs.count(16)) {
     fprintf(stderr, "Close file: returning A=%02X\n", cpu->get_reg8(qkz80::reg_A));
@@ -4320,6 +4358,7 @@ int main(int argc, char** argv) {
   // Initialize platform and enable raw mode for console input
   platform::init();
   platform::enable_raw_mode();
+  platform::catch_termination();  // after raw mode: see os/platform.h
 
   // If config file, load it first
   if (is_config) {
@@ -4520,6 +4559,10 @@ int main(int argc, char** argv) {
     cpu.execute();
 
     instruction_count++;
+
+    // A signal to end is acted on here when the guest is not reading the
+    // console; every 4096 instructions, which is well under a millisecond.
+    if ((instruction_count & 0xFFF) == 0) end_if_terminated();
 
     // Progress report (if enabled)
     if (progress_interval > 0 && instruction_count - last_report >= progress_interval) {

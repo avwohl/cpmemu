@@ -131,6 +131,50 @@ static void restore_terminal_and_die(int sig) {
     raise(sig);
 }
 
+// Termination that closes files first: see catch_termination in platform.h.
+// The handler only records the signal - closing files means stdio and the
+// heap, neither of which a handler may touch - and it is installed without
+// SA_RESTART, so a read(2) blocked on the console returns EINTR and
+// console_getchar sees the flag.  A second signal while the first is pending
+// is somebody who does not want to wait, and gets what every one of these
+// signals got before: the terminal back and the process ended.
+static volatile sig_atomic_t pending_termination = 0;
+
+static void note_termination(int sig) {
+    if (pending_termination) {
+        restore_terminal_and_die(sig);
+        return;
+    }
+    pending_termination = sig;
+}
+
+void catch_termination() {
+    static const int sigs[] = { SIGHUP, SIGINT, SIGTERM };
+    for (size_t i = 0; i < sizeof(sigs) / sizeof(sigs[0]); i++) {
+        struct sigaction old;
+        if (sigaction(sigs[i], NULL, &old) == 0 && old.sa_handler == SIG_IGN) {
+            continue;   // started ignoring it, as enable_raw_mode leaves it
+        }
+        struct sigaction sa;
+        memset(&sa, 0, sizeof sa);
+        sa.sa_handler = note_termination;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = 0;    // no SA_RESTART: a console read has to come back
+        sigaction(sigs[i], &sa, NULL);
+    }
+}
+
+int termination_requested() {
+    return pending_termination;
+}
+
+void end_by_signal(int sig) {
+    disable_raw_mode();
+    signal(sig, SIG_DFL);
+    raise(sig);
+    _exit(128 + sig);   // not reached: nothing blocks or ignores sig here
+}
+
 // Suspend and resume.
 //
 // enable_raw_mode() ran once, at startup, and nothing re-applied it.  Both bash
@@ -341,6 +385,10 @@ bool stdin_has_data() {
 // One byte per read leaves the kernel as the only place input is queued.
 int console_getchar() {
     for (;;) {
+        // A signal asking the process to end interrupts the read (see
+        // catch_termination) and answers -1, which the caller takes to its
+        // end_by_signal path rather than to the guest.
+        if (termination_requested()) return -1;
         unsigned char c;
         ssize_t n = read(STDIN_FILENO, &c, 1);
         if (n == 1) return c;

@@ -961,6 +961,64 @@ else
         check_fcb "text: a make over a file open by another spelling of it" \
             ./t.txt ORIMZ0HBJ1K2U3WIRHQWCIC 'ln' t.txt "$tmp/want"
 
+        # A change is on the host at once when the text from its line to the
+        # end is 64 KB or less, which a 40-line file always is: SIGKILL after
+        # it leaves it there.  It waited for the close unless it was in the
+        # last line.  Further from the end it waits, and SIGTERM and SIGHUP
+        # now close the files before they end the process, which dies of the
+        # signal as before.  fcb_io's ! reads a console that never answers:
+        # a FIFO this shell holds open.
+        kill_after_read() {
+            local sig=$1 lines=$2 name=$3 pid i rc
+            fcb_reset
+            for i in $(seq 1 "$lines"); do printf 'line %04d of the file\n' $i; done >"$fcbdir/t.txt"
+            head -c 128 /dev/zero | tr '\0' A >"$tmp/want"
+            mkfifo "$tmp/sigin"
+            exec 8<>"$tmp/sigin"
+            ( cd "$fcbdir" && exec "$emu" "$tmp/fcb_io.com" T.TXT 'OHAWZ0R!' ) \
+                <"$tmp/sigin" >"$tmp/sigout" 2>"$tmp/sigerr" &
+            pid=$!
+            for i in $(seq 1 100); do
+                grep -q A "$tmp/sigout" 2>/dev/null && break
+                sleep 0.1
+            done
+            kill -"$sig" "$pid" 2>/dev/null
+            wait "$pid" 2>/dev/null
+            rc=$?
+            exec 8>&-
+            rm -f "$tmp/sigin"
+            if [ "$(cat "$tmp/sigout")" != A ]; then
+                printf 'FAIL  %s\n        the guest printed %s, not A\n' "$name" "$(cat "$tmp/sigout")"
+                failed=$((failed + 1))
+            elif [ "$rc" -ne $((128 + $(kill -l "$sig"))) ]; then
+                printf 'FAIL  %s\n        exited %d, not by SIG%s\n' "$name" "$rc" "$sig"
+                failed=$((failed + 1))
+            elif ! head -c 128 "$fcbdir/t.txt" | cmp -s - "$tmp/want"; then
+                printf 'FAIL  %s\n        t.txt begins %s\n' "$name" "$(head -c 20 "$fcbdir/t.txt")"
+                failed=$((failed + 1))
+            else
+                printf 'PASS  %s\n' "$name"
+                passed=$((passed + 1))
+            fi
+        }
+        kill_after_read KILL 40 "text: a change to a small file is on the host at once"
+        kill_after_read TERM 4000 "text: SIGTERM writes a waiting change back before it ends the run"
+        kill_after_read HUP 4000 "text: and so does SIGHUP"
+
+        # A change that cannot be written back at the close is lost with the
+        # image, and the close answered 0.  Not as root, which can write it.
+        if [ "$(id -u)" != 0 ]; then
+            fcb_reset
+            for i in $(seq 1 4000); do printf 'line %04d of the file\n' $i; done >"$fcbdir/t.txt"
+            chmod 444 "$fcbdir/t.txt"
+            check_fcb "text: a close that cannot write the change back answers FFh" \
+                T.TXT OHAWC '=FF'
+            chmod 644 "$fcbdir/t.txt"
+        else
+            printf 'PASS  %s\n' "text: a close that cannot write the change back (root: not checked)"
+            passed=$((passed + 1))
+        fi
+
         # Random files: every sequence of calls, against a model of the
         # image.  tests/text_image_prop.py has the definition.
         if command -v python3 >/dev/null 2>&1; then

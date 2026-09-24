@@ -669,6 +669,24 @@ int change_directory(const char* path) {
 }
 
 // ============================================================================
+// Termination
+// ============================================================================
+
+// Nothing here: see platform.h.  console_ctrl_handler above ends the process
+// for the console close, logoff and shutdown events as it did.
+void catch_termination() {
+}
+
+int termination_requested() {
+    return 0;
+}
+
+void end_by_signal(int sig) {
+    disable_raw_mode();
+    std::exit(128 + sig);
+}
+
+// ============================================================================
 // Initialization
 // ============================================================================
 
