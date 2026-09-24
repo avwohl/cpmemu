@@ -417,9 +417,20 @@ struct OpenFile {
 // append or a new file being written always is - and otherwise when an FCB
 // on the file closes it, at a disk reset, at the end of the run, at BDOS 48,
 // and before a search, a rename or a file size, which look at host files.
-// Every FCB open on one host path shares one image, so another FCB reading
+// Every FCB open on one host file shares one image, so another FCB reading
 // the file sees a change whether or not it has been written back; a make or
 // a delete of the path cuts the image loose from the host file.
+//
+// A file that opened as text because of what it holds (`by_content`) has to
+// hold text afterwards, or the next open takes it for binary and reads its
+// host bytes, which are not its records once an LF has become CR LF.  A
+// write that makes its text fail the rule - a record written past the end
+// of text that fills its last record, which leaves NULs in the text, or a
+// control character - makes the host file the image itself (`raw`), CR LF,
+// padding and all, record for record, which the next open reads binary and
+// gets back as it was written.  That is decided again at every write back,
+// so the host file is text again once the text is.  A file a mode rule makes
+// text stays host text.
 //
 // This replaced a converting stream.  Its text was only ever right read or
 // written in order: rewriting a record in place wrote shorter or longer host
@@ -435,13 +446,16 @@ struct TextImage {
   bool eof_pad;      // ... and a ^Z-padded last record
   bool dirty;        // cpm has changed since the host was written
   bool detached;     // deleted or made over: nothing is written back
+  bool by_content;   // text because of what it holds, not by a mode rule
+  bool raw;          // the host file is cpm itself, not text: see above
   size_t dirty_from; // the first CP/M byte changed, SIZE_MAX when none
   uint64_t host_size;
   std::vector<std::pair<size_t, uint64_t> > lines;  // (image, host) line starts
   size_t zpos;       // the first ^Z in cpm, or SIZE_MAX: kept, not searched for
 
   TextImage() : crlf(false), eof_mark(false), eof_pad(false), dirty(false),
-    detached(false), dirty_from(SIZE_MAX), host_size(0), zpos(SIZE_MAX) {}
+    detached(false), by_content(false), raw(false), dirty_from(SIZE_MAX), host_size(0),
+    zpos(SIZE_MAX) {}
   size_t records() const { return cpm.size() / 128; }
   size_t text_end() const { return zpos < cpm.size() ? zpos : cpm.size(); }
 };
@@ -572,8 +586,10 @@ private:
     return text_kind(p, n, size) == TEXT;
   }
   static bool file_looks_like_text(const std::string& unix_path);
+  // `by_content`, if given, is set to whether the mode came from what the
+  // file holds - auto, no mode rule - rather than from a rule or a mapping.
   std::string find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out, bool* eol_out,
-                                qkz80_uint8 fcb_drive);
+                                qkz80_uint8 fcb_drive, bool* by_content = nullptr);
   // Substitute the text a CP/M pattern matched into a '*' on the host side,
   // so `*.BAS = /dir/*.bas` reaches /dir/<stem>.bas rather than a file
   // literally called '*.bas'.
@@ -622,9 +638,13 @@ private:
 
   // Converted text files: see TextImage.  One image per host path, shared.
   std::map<std::string, std::shared_ptr<TextImage> > text_images;
-  std::shared_ptr<TextImage> text_image(const std::string& path, bool empty);
+  std::shared_ptr<TextImage> text_image(const std::string& path, bool empty,
+                                        bool by_content = false);
   static bool load_text_image(TextImage& img, const std::string& path);
   bool write_back(TextImage& img);
+  static std::vector<uint8_t> host_text(TextImage& img, size_t p, uint64_t h);
+  static bool host_stays_text(const TextImage& img, uint64_t h, const std::vector<uint8_t>& out);
+  static bool write_back_whole(TextImage& img);
   void flush_text_images();
   void forget_text_image(const std::string& path);
   static void image_write(TextImage& img, uint32_t record, const uint8_t* data);
@@ -1106,8 +1126,10 @@ std::string CPMEmulator::expand_unix_pattern(const std::string& cpm_pattern,
 }
 
 std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode* mode_out,
-                                           bool* eol_out, qkz80_uint8 fcb_drive) {
+                                           bool* eol_out, qkz80_uint8 fcb_drive,
+                                           bool* by_content) {
   std::string normalized = normalize_cpm_filename(cpm_name);
+  if (by_content) *by_content = false;
 
   // A mapping with no host path is a mode rule rather than a location: it
   // says how a name should be treated wherever it is eventually found.
@@ -1136,6 +1158,7 @@ std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode
         // Auto-detect if needed
         if (*mode_out == MODE_AUTO) {
           *mode_out = detect_file_mode(normalized, target);
+          if (by_content) *by_content = true;
         }
 
         return target;
@@ -1152,6 +1175,7 @@ std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode
     *mode_out = have_mode_rule ? rule_mode : detect_file_mode(normalized, it->second);
     *eol_out = have_mode_rule ? rule_eol : default_eol_convert;
     if (*mode_out == MODE_AUTO) *mode_out = detect_file_mode(normalized, it->second);
+    if (by_content) *by_content = !have_mode_rule || rule_mode == MODE_AUTO;
     return it->second;
   }
 
@@ -1172,6 +1196,7 @@ std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode
         *mode_out = have_mode_rule ? rule_mode : detect_file_mode(normalized, candidates[i]);
         *eol_out = have_mode_rule ? rule_eol : default_eol_convert;
         if (*mode_out == MODE_AUTO) *mode_out = detect_file_mode(normalized, candidates[i]);
+        if (by_content) *by_content = !have_mode_rule || rule_mode == MODE_AUTO;
         return candidates[i];
       }
     }
@@ -1188,6 +1213,7 @@ std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode
     *mode_out = have_mode_rule ? rule_mode : detect_file_mode(normalized, lowercase);
     *eol_out = have_mode_rule ? rule_eol : default_eol_convert;
     if (*mode_out == MODE_AUTO) *mode_out = detect_file_mode(normalized, lowercase);
+    if (by_content) *by_content = !have_mode_rule || rule_mode == MODE_AUTO;
     return lowercase;
   }
 
@@ -1196,6 +1222,7 @@ std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode
     *mode_out = have_mode_rule ? rule_mode : detect_file_mode(normalized, normalized);
     *eol_out = have_mode_rule ? rule_eol : default_eol_convert;
     if (*mode_out == MODE_AUTO) *mode_out = detect_file_mode(normalized, normalized);
+    if (by_content) *by_content = !have_mode_rule || rule_mode == MODE_AUTO;
     return normalized;
   }
 
@@ -1290,7 +1317,8 @@ bool CPMEmulator::load_text_image(TextImage& img, const std::string& path) {
 
 // The image of the text file at `path`, shared by every FCB open on it:
 // loaded from the host file, or empty for one a make has just created.
-std::shared_ptr<TextImage> CPMEmulator::text_image(const std::string& path, bool empty) {
+std::shared_ptr<TextImage> CPMEmulator::text_image(const std::string& path, bool empty,
+                                                   bool by_content) {
   auto it = text_images.find(path);
   if (it != text_images.end()) {
     if (!empty) return it->second;
@@ -1298,6 +1326,7 @@ std::shared_ptr<TextImage> CPMEmulator::text_image(const std::string& path, bool
   }
   std::shared_ptr<TextImage> img = std::make_shared<TextImage>();
   img->path = path;
+  img->by_content = by_content && !empty;
   if (empty) {
     img->lines.assign(1, std::make_pair(static_cast<size_t>(0), static_cast<uint64_t>(0)));
   } else if (!load_text_image(*img, path)) {
@@ -1357,6 +1386,7 @@ void CPMEmulator::image_write(TextImage& img, uint32_t record, const uint8_t* da
 // lines before it left as they are.  See TextImage for the form.
 bool CPMEmulator::write_back(TextImage& img) {
   if (!img.dirty || img.detached) return true;
+  if (img.raw) return write_back_whole(img);
   size_t end = img.text_end();
   if (img.dirty_from > end) {
     // Only past the text's ^Z, which no text reader sees and the host
@@ -1372,21 +1402,12 @@ bool CPMEmulator::write_back(TextImage& img) {
   --it;  // lines[0] is (0, 0)
   size_t p = it->first;
   uint64_t h = it->second;
-  img.lines.erase(it + 1, img.lines.end());
-
-  std::vector<uint8_t> out;
-  out.reserve(end - p + 128);
-  for (size_t i = p; i < end; i++) {
-    uint8_t c = img.cpm[i];
-    if (!img.crlf && c == '\r' && i + 1 < end && img.cpm[i + 1] == '\n') continue;
-    out.push_back(c);
-    if (c == '\n') img.lines.push_back(std::make_pair(i + 1, h + out.size()));
-  }
-  if (img.eof_mark) {
-    out.push_back(CPM_EOF);
-    while (img.eof_pad && (h + out.size()) % 128) out.push_back(CPM_EOF);
-  }
+  std::vector<uint8_t> out = host_text(img, p, h);
   uint64_t size = h + out.size();
+
+  // Not text any more, as the next open would find it: decided on the
+  // whole image, which makes it raw.  See TextImage.
+  if (img.by_content && !host_stays_text(img, h, out)) return write_back_whole(img);
 
   bool ok = false;
   if (size >= img.host_size) {
@@ -1420,6 +1441,85 @@ bool CPMEmulator::write_back(TextImage& img) {
     return false;
   }
   img.host_size = size;
+  img.dirty = false;
+  img.dirty_from = SIZE_MAX;
+  return true;
+}
+
+// The host text for the image from `p`, a line start that is at `h` in the
+// host file, to the end of its text: CR LF to LF unless the file's lines end
+// CR LF, then a ^Z and padding if the file had them.  `lines` past `p` are
+// made again as it goes.
+std::vector<uint8_t> CPMEmulator::host_text(TextImage& img, size_t p, uint64_t h) {
+  auto it = std::upper_bound(img.lines.begin(), img.lines.end(), p,
+                             [](size_t v, const std::pair<size_t, uint64_t>& e) {
+                               return v < e.first;
+                             });
+  img.lines.erase(it, img.lines.end());  // lines[0], (0, 0), stays
+  size_t end = img.text_end();
+  std::vector<uint8_t> out;
+  out.reserve(end > p ? end - p + 128 : 128);
+  for (size_t i = p; i < end; i++) {
+    uint8_t c = img.cpm[i];
+    if (!img.crlf && c == '\r' && i + 1 < end && img.cpm[i + 1] == '\n') continue;
+    out.push_back(c);
+    if (c == '\n') img.lines.push_back(std::make_pair(i + 1, h + out.size()));
+  }
+  if (img.eof_mark) {
+    out.push_back(CPM_EOF);
+    while (img.eof_pad && (h + out.size()) % 128) out.push_back(CPM_EOF);
+  }
+  return out;
+}
+
+// Whether the host file a write back leaves - its first `h` bytes as they
+// are, then `out` - still opens as text, by the rule it opened by.  The bytes
+// before `h` passed it, and only a NUL or a control character in `out` can
+// change the answer, so the rule is run again, on the file's first 64 KB as
+// it will be, only when `out` holds one.
+bool CPMEmulator::host_stays_text(const TextImage& img, uint64_t h,
+                                  const std::vector<uint8_t>& out) {
+  bool suspect = false;
+  for (size_t i = 0; !suspect && i < out.size(); i++) {
+    uint8_t c = out[i];
+    suspect = c < 0x20 && !(c >= 0x08 && c <= 0x0D) && c != 0x1B && c != CPM_EOF;
+  }
+  if (!suspect) return true;
+  const size_t window = 65536;
+  std::vector<uint8_t> head(static_cast<size_t>(std::min<uint64_t>(h, window)));
+  if (!head.empty()) {
+    FILE* fp = fopen(img.path.c_str(), "rb");
+    if (!fp) return true;  // the write back will fail and say so
+    size_t n = fread(head.data(), 1, head.size(), fp);
+    fclose(fp);
+    if (n != head.size()) return true;
+  }
+  head.insert(head.end(), out.begin(), out.begin() + std::min(out.size(), window - head.size()));
+  return bytes_look_like_text(head.data(), head.size(), h + out.size());
+}
+
+// The whole host file written again, as text if the image's text is text
+// and as the image itself - raw - if it is not.  Decided afresh at every
+// write back of a raw image, so a raw file whose NULs have been written over
+// with text, or cut off by a ^Z before them, is host text again, as it would
+// have been had it not been written back in between.
+bool CPMEmulator::write_back_whole(TextImage& img) {
+  std::vector<uint8_t> out = host_text(img, 0, 0);
+  bool text = host_stays_text(img, 0, out);
+  const std::vector<uint8_t>& bytes = text ? out : img.cpm;
+  FILE* fp = fopen(img.path.c_str(), "wb");
+  bool ok = fp != nullptr;
+  if (ok) {
+    ok = bytes.empty() || fwrite(bytes.data(), 1, bytes.size(), fp) == bytes.size();
+    ok = (fclose(fp) == 0) && ok;
+  }
+  if (!ok) {
+    img.dirty = true;
+    img.dirty_from = 0;
+    return false;
+  }
+  img.raw = !text;
+  img.host_size = bytes.size();
   img.dirty = false;
   img.dirty_from = SIZE_MAX;
   return true;
@@ -1497,12 +1597,14 @@ size_t CPMEmulator::read_record(OpenFile& of, uint32_t record, uint8_t* buffer,
 }
 
 // Write record `record` from buffer.  A text file's change reaches the host
-// at once when that is cheap, and at the latest when the file is closed.
+// at once when that is cheap, and at the latest when the file is closed.  A
+// raw image is written whole, so it is cheap when it is 64 KB or less.
 bool CPMEmulator::write_record(OpenFile& of, uint32_t record, const uint8_t* buffer) {
   if (of.img) {
     TextImage& img = *of.img;
     image_write(img, record, buffer);
     if (!img.dirty) return true;
+    if (img.raw) return img.cpm.size() <= 65536 ? write_back(img) : true;
     size_t last = img.lines.back().first, end = img.text_end();
     if (img.dirty_from >= last && (end < last || end - last <= 65536)) return write_back(img);
     return true;
@@ -2463,8 +2565,9 @@ bool CPMEmulator::open_fcb_file(qkz80_uint16 fcb_addr, int func) {
 
   FileMode mode = MODE_BINARY;
   bool eol_convert = false;
+  bool by_content = false;
   std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert,
-                                            cpu->get_mem()[fcb_addr]);
+                                            cpu->get_mem()[fcb_addr], &by_content);
   if (!unix_path.empty()) unix_path = tracked_path(unix_path);
 
   if (trace) {
@@ -2490,7 +2593,8 @@ bool CPMEmulator::open_fcb_file(qkz80_uint16 fcb_addr, int func) {
     settle_made_file(old_path, trace);
     if (old_path == unix_path) {
       // it may be text now, and opens as what it is
-      unix_path = find_unix_file_ex(filename, &mode, &eol_convert, cpu->get_mem()[fcb_addr]);
+      unix_path = find_unix_file_ex(filename, &mode, &eol_convert, cpu->get_mem()[fcb_addr],
+                                    &by_content);
       if (unix_path.empty()) {
         cpu->set_reg8(0xFF, qkz80::reg_A);
         return false;
@@ -2503,9 +2607,28 @@ bool CPMEmulator::open_fcb_file(qkz80_uint16 fcb_addr, int func) {
   // written as it comes, whatever it holds so far; see settle_made_file.
   if (made_by_content.count(unix_path)) mode = MODE_BINARY;
 
+  // One host file, one view of it.  An image another FCB has open is this
+  // FCB's too, whatever the file's bytes say now - a write through it may
+  // have left them not text, or not yet written back - and a file another
+  // FCB reads as a stream is a stream here.  Each FCB decided for itself: a
+  // second FCB opening a file whose image had just become NULs and a record
+  // read host bytes, and wrote them under the first one's image.
+  if (text_images.count(unix_path)) {
+    mode = MODE_TEXT;
+    eol_convert = true;
+  } else if (mode == MODE_TEXT && eol_convert) {
+    for (const auto& pair : open_files) {
+      if (pair.second.fp && pair.second.unix_path == unix_path) {
+        mode = pair.second.mode;
+        eol_convert = pair.second.eol_convert;
+        break;
+      }
+    }
+  }
+
   OpenFile of;
   if (mode == MODE_TEXT && eol_convert) {
-    of.img = text_image(unix_path, false);
+    of.img = text_image(unix_path, false, by_content);
     if (!of.img) {
       cpu->set_reg8(0xFF, qkz80::reg_A);
       return false;
@@ -2834,11 +2957,12 @@ void CPMEmulator::bdos_make_file() {
   // whole file away at that point, so an existing file is opened as it is.
   FILE* fp = nullptr;
   bool extending = false;
+  bool found_by_content = false;
   if ((cpu->get_mem()[fcb_addr + FCB_EX] & 0x1F) != 0) {
     FileMode found_mode;
     bool found_eol;
     std::string found = find_unix_file_ex(filename, &found_mode, &found_eol,
-                                          cpu->get_mem()[fcb_addr]);
+                                          cpu->get_mem()[fcb_addr], &found_by_content);
     if (!found.empty() && (fp = fopen(found.c_str(), "r+b")) != nullptr) {
       extending = true;
       unix_name = tracked_path(found);
@@ -2871,7 +2995,7 @@ void CPMEmulator::bdos_make_file() {
   if (mode == MODE_TEXT && eol_convert) {
     fclose(fp);
     fp = nullptr;
-    img = text_image(unix_name, !extending);
+    img = text_image(unix_name, !extending, found_by_content);
     if (!img) {
       cpu->set_reg8(0xFF, qkz80::reg_A);
       return;
@@ -3050,8 +3174,11 @@ void CPMEmulator::bdos_file_size() {
   // A text file with conversion has the records its image has - the ones a
   // random read reads - not its host bytes / 128: an LF file is short of them
   // by one byte a line, so the record a program took for the last was not.
+  // An image some FCB has open is the file, whatever its bytes now say.
   unix_path = tracked_path(unix_path);
-  if (mode == MODE_TEXT && eol_convert) records = text_record_count(unix_path);
+  if ((mode == MODE_TEXT && eol_convert) || text_images.count(unix_path)) {
+    records = text_record_count(unix_path);
+  }
 
   // Store in FCB bytes 33-35 (r0, r1, r2)
   mem[fcb_addr + 33] = records & 0xFF;

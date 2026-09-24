@@ -921,6 +921,37 @@ else
         check_fcb "text: a record rewritten shorter cuts the text there" \
             T.TXT OHXJ1K2U3WC '' t.txt "$tmp/want"
 
+        # A text file that opened as text for what it holds has to hold text
+        # afterwards, or the next open reads its host bytes binary, and those
+        # are not its records once an LF has become CR LF.  126 x and an LF
+        # fill record 0 with no ^Z, so a record written at 2 leaves record 1
+        # as NULs in the text.  That went to the host as LF text with 128
+        # NULs in it; the next open took it for binary, and record 2 read
+        # back one byte along: H, not Z.  Now the host file is the image, CR
+        # LF and all, and reads back as it was written.
+        x126() { head -c 126 /dev/zero | tr '\0' x; }
+        gaprec() { printf 'ZHHHH\r\n\032'; head -c 120 /dev/zero | tr '\0' H; }
+        fcb_reset; { x126; printf '\n'; } >"$fcbdir/t.txt"
+        { x126; printf '\r\n'; head -c 128 /dev/zero; gaprec; } >"$tmp/want"
+        check_fcb "text: a write that leaves NULs in the text keeps its records" \
+            T.TXT OHHV0ZJ5K6U7N2PCON2G 'Z' t.txt "$tmp/want"
+        # A second FCB opening the file then read the host bytes too, and
+        # wrote them under the first one's image: every FCB shares the image.
+        fcb_reset; { x126; printf '\n'; } >"$fcbdir/t.txt"
+        check_fcb "text: a second FCB on the file reads the first one's image" \
+            T.TXT OHHV0ZJ5K6U7N2PIN2G 'Z'
+        # Decided at every write back, not once: the NULs written over with
+        # text before the close, it is LF host text again.
+        fcb_reset; { x126; printf '\n'; } >"$fcbdir/t.txt"
+        { x126; printf '\n'; head -c 126 /dev/zero | tr '\0' Q; printf '\nZHHHH\n'; } >"$tmp/want"
+        check_fcb "text: and host text again once the NULs are written over" \
+            T.TXT OHHV0ZJ5K6U7N2PHQJ126K127N1PC '' t.txt "$tmp/want"
+        # A control character is the other way text stops being text.  The
+        # host file was A BEL LF, which opened binary as A BEL LF: no CR.
+        fcb_reset; printf 'a\nb\n' >"$fcbdir/t.txt"
+        check_fcb "text: a control character written into it keeps its records" \
+            T.TXT $'OHAV1\aJ2K3U4WCZ0OL' 'A?<>~'
+
         # A make over a file another FCB has open under another spelling of
         # its path - ./t.txt on the command line, t.txt to make - left that
         # FCB's image tied to the host file, and its close wrote the old text
