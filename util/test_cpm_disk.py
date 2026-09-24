@@ -624,7 +624,8 @@ class TestFailedReplace(unittest.TestCase):
         ok, out = self.add_quietly(disk, "A.BIN", b"b" * 20 * 1024)
         self.assertFalse(ok)
         self.assertNotIn("replaced", out)
-        self.assertIn("needs 2 directory entries and only 1 are free", out)
+        self.assertIn("needs 2 directory entries and only 1 are free, counting the "
+                      "directory entries of the A.BIN it would replace", out)
         self.assertEqual(bytes(disk.extract_file("A.BIN")), b"a" * 1024)
         self.assertEqual(verify_disk(disk, data, 'sssd')[0], [])
 

@@ -273,14 +273,17 @@ def refusal(filename, cpm_filename, replacing, blocks, blocks_needed, free_block
     which add does not write back after an error.  The directory check was
     made while the entries were being written, after the data blocks.
     """
-    also = (f", counting the blocks of the {cpm_filename} it would replace, "
-            f"which is left as it was") if replacing else ""
+    def also(what):
+        if not replacing:
+            return ""
+        return (f", counting the {what} of the {cpm_filename} it would replace, "
+                f"which is left as it was")
     if blocks is None:
         return (f"Error: {filename} needs {blocks_needed} blocks and only "
-                f"{free_blocks} are free{also}")
+                f"{free_blocks} are free{also('blocks')}")
     if entries_needed > free_entries:
         return (f"Error: {filename} needs {entries_needed} directory entries and only "
-                f"{free_entries} are free{also}")
+                f"{free_entries} are free{also('directory entries')}")
     return None
 
 
