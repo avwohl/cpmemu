@@ -65,7 +65,14 @@ is still 128, not the extent's record count.
   file with the CR at byte 127 came back as CR CR LF. Writing, a CR LF split
   across two records reached the host as CR LF rather than LF. And a text
   record that begins with `^Z` - a text file's last record, often - wrote no
-  bytes and was answered 0xFF. All four hold their state between records now.
+  bytes and was answered 0xFF. All four hold their state between records now,
+  and so does a record rewritten in place: where a host LF converted into
+  the CR ending one record and the LF opening the next, the classic append -
+  read to the end, back up one record, write it again from its `^Z` - wrote
+  that LF a second time, a blank line, and writing back the record ending in
+  the CR put a CR over the host LF, losing the line end. A CR held at a
+  record's end also reaches the file when the run ends at the end of its
+  input, on five ^C or at the watchdog; those exits dropped it.
   Measured with DRI's own tools on MP/M's sources, which are CR LF text:
   under e4f7fd5 RMAC reported errors in all nine modules it assembled, 104
   lines of them for `BNKBDOS` alone. Now PIP, RMAC and LINK rebuild

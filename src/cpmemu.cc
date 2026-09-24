@@ -93,6 +93,14 @@ static uint16_t save_memory_start = 0x0000;
 static uint16_t save_memory_end = 0x0000;  // 0 = full 64K
 static qkz80* save_memory_cpu = nullptr;
 
+// Close every file the guest has open, for the three ways out that are not
+// the program finishing: five ^C, the give-up at end of input, and the
+// instruction-limit watchdog.  The text writer holds a record's closing CR
+// until it knows whether an LF follows, and those exits dropped it; BDOS 0,
+// WBOOT and a jump to 0000h have closed every file first since the branch
+// that added the hold.  Set by main() once the emulator exists.
+static void (*close_guest_files)() = nullptr;
+
 static void do_save_memory() {
   if (!save_memory_file || !save_memory_cpu) return;
 
@@ -170,6 +178,7 @@ static bool check_ctrl_c_exit(int ch) {
   if (consecutive_ctrl_c >= CTRL_C_EXIT_COUNT) {
     if (ctrl_c_exit_enabled) {
       fprintf(stderr, "\n[Exiting: %d consecutive ^C received]\n", CTRL_C_EXIT_COUNT);
+      if (close_guest_files) close_guest_files();
       do_save_memory();
       platform::disable_raw_mode();
       exit(0);
@@ -208,6 +217,7 @@ static void note_console_eof() {
     // amounts to here anyway.
     fprintf(stderr, "\n[Exiting: %d console reads past end of input]\n",
             consecutive_console_eof);
+    if (close_guest_files) close_guest_files();
     do_save_memory();
     platform::disable_raw_mode();
     exit(0);
@@ -370,7 +380,7 @@ struct OpenFile {
   FileMode mode;
   bool eol_convert;
   bool eof_seen;        // text reader: host end of file, or a ^Z, reached
-  bool last_was_cr;     // text reader: the last byte delivered was CR
+  bool last_was_cr;     // text: the CP/M byte before the stream position is CR
   bool pending_lf;      // text reader: a bare LF became CR LF across a record end
   bool pending_cr;      // text writer: a record ended in CR; it may start a CR LF
   bool stream_valid;    // text: stream_record is where the host stream is
@@ -487,6 +497,9 @@ public:
 
   // Debug mode
   void set_debug(bool d) { debug = d; }
+
+  // Every open file closed, for an exit that is not the program's own.
+  void close_files_at_exit() { close_all_files(); }
 
 private:
   // File I/O helpers
@@ -1060,6 +1073,10 @@ bool CPMEmulator::write_with_conversion(OpenFile& of, const uint8_t* buffer, siz
   // in \r cannot yet say whether it is half of a \r\n, so the \r is held in
   // the OpenFile until the next record, or the close, shows which.  Deciding
   // inside the record wrote \r\n to the host whenever the pair straddled two.
+  //
+  // last_was_cr follows the CP/M bytes written, as the reader's does the bytes
+  // it delivers, so a read that follows a write on this stream knows whether
+  // the host \n it meets next is the second half of a CR LF already given.
   size_t i = 0;
   if (of.pending_cr) {
     of.pending_cr = false;
@@ -1076,6 +1093,7 @@ bool CPMEmulator::write_with_conversion(OpenFile& of, const uint8_t* buffer, siz
       break;
     }
 
+    of.last_was_cr = (ch == '\r');
     if (ch == '\r') {
       if (i + 1 == size) {
         of.pending_cr = true;  // the next record decides
@@ -1100,11 +1118,25 @@ void CPMEmulator::pad_to_128(uint8_t* buffer, size_t actual_size) {
 }
 
 // A \r held back by write_with_conversion goes out where the stream is now,
-// before anything moves it.  Nothing follows it, so it was a lone \r.
+// before anything moves it: no record written after it decides what it was.
+// What is already in the file does.  If the host byte here is \n, the text
+// read back from the top is ... CR LF with the CR exactly here, so the \r
+// the guest wrote is already there and writing it would destroy the line
+// end - which is what a record rewritten in place looks like when a host \n
+// converted across its end: the reader gave CR as the record's last byte and
+// the LF as the next one's first.  It used to write \r over that \n
+// unconditionally, so rewriting such a record unchanged turned the host's
+// "a\nb" into "a\rb".  Anything else here, or the end of the file, and the
+// \r is written: it was a lone CR.
 void CPMEmulator::flush_pending_cr(OpenFile& of) {
   if (!of.pending_cr) return;
   of.pending_cr = false;
-  fputc('\r', of.fp);
+  // ISO C 7.21.5.3: write_with_conversion ended with an fflush, so this read
+  // may follow it, and the fseek puts the stream back before any write.
+  long here = ftell(of.fp);
+  int next = here < 0 ? EOF : fgetc(of.fp);
+  if (here < 0 || fseek(of.fp, here, SEEK_SET) != 0) return;
+  if (next != '\n') fputc('\r', of.fp);
   fflush(of.fp);
 }
 
@@ -1154,13 +1186,22 @@ bool CPMEmulator::text_seek(OpenFile& of, uint32_t record, FileOp op) {
   if (op != of.last_op) {
     // ISO C 7.21.5.3: output may not follow input, or input output, on one
     // stream without a positioning call between them.  Nothing issued one.
-    if (fseek(of.fp, 0, SEEK_CUR) != 0) return false;
-    if (op == OP_READ) {
-      of.eof_seen = false;
-      of.last_was_cr = false;
-    }
-    // A write replaces the record from its first byte, so an LF owed to it
-    // by the reader is not owed any more.
+    //
+    // An LF the reader owes this record is the second half of a host \n it
+    // turned into CR LF across the record boundary: the CR went out as the
+    // last byte of the record before, and the stream is past the \n.  A
+    // write of this record starts at that \n instead, with the CR held as if
+    // the writer had just written it, so the record's own first byte decides
+    // the pair - LF, and the host \n is written back as it was; anything
+    // else, and the \n becomes the lone CR it now is.  This used to drop the
+    // debt and write from past the \n, so the record's LF was written a
+    // second time: the classic append - read to the end, back up a record,
+    // write it again from its ^Z - added a blank line whenever a line ended
+    // at byte 127.
+    long back = (op == OP_WRITE && of.pending_lf) ? -1 : 0;
+    if (fseek(of.fp, back, SEEK_CUR) != 0) return false;
+    if (back) of.pending_cr = true;
+    if (op == OP_READ) of.eof_seen = false;
     of.pending_lf = false;
     of.last_op = op;
   }
@@ -3498,6 +3539,9 @@ int main(int argc, char** argv) {
 
   // Create emulator
   CPMEmulator cpm(&cpu, false);
+  static CPMEmulator* running_emulator;
+  running_emulator = &cpm;
+  close_guest_files = [] { running_emulator->close_files_at_exit(); };
 
   // Initialize platform and enable raw mode for console input
   platform::init();
@@ -3722,6 +3766,7 @@ int main(int argc, char** argv) {
   // one or saying it had not.  Not reachable from the test suite - the limit is
   // nine billion instructions, about eight minutes here - so it is checked by
   // reading rather than by running.
+  if (close_guest_files) close_guest_files();
   do_save_memory();
   return 0;
 }

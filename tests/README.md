@@ -193,13 +193,15 @@ and what should come back is `MANUAL_CHECKS.md` in the repo root.
 ### File Call Tests
 - **fcb_io.asm** - runs a script of BDOS file calls against one FCB and prints
   what came back: `FCB_IO <file> <script>`, where the script is a string of
-  one-letter commands - open, make, close, sequential and random reads and
-  writes, BDOS 35 and 36, setting `EX`, `S2`, `CR` or `R0`-`R2`, filling the
-  DMA buffer - listed in the source's header. A read prints the first byte of
-  the record it got, a failed call prints `=` and the status, and `L` dumps a
-  text file to its `^Z`. `tests/run_tests.sh` builds the host file each check
-  starts from and compares the file each check ends with as well as the output.
-  Assembled at test time; no `.com` is committed.
+  one-letter commands - open, make, close, delete, rename, search, disk reset,
+  sequential and random reads and writes, BDOS 35 and 36, setting `EX`, `S2`,
+  `CR` or `R0`-`R2`, filling the DMA buffer, working on a copy of the FCB -
+  listed in the source's header. A read prints the first byte of the record it
+  got, a failed call prints `=` and the status, a search prints the entry's
+  `[EX,S2,RC]`, and `L` dumps a text file to its `^Z`. `tests/run_tests.sh`
+  builds the host file each check starts from and compares the file each check
+  ends with as well as the output. Assembled at test time; no `.com` is
+  committed.
 
 ### Flag Verification Tests
 - **test_n_flag.asm** - Verifies N flag is set/cleared correctly
@@ -426,7 +428,7 @@ The drive mapping sources, the two console end-of-input programs, `cli_tail.asm`
 `adm3a.asm`, `savemem.asm`, `bios_disk.asm`, `sectran.asm` and `fcb_io.asm` are assembled at
 test time instead, so no binary for them is committed. `tests/run_tests.sh` assembles them with
 **`um80` and `ul80`**, this project's own assembler and linker, and skips the
-whole group - 62 checks - when they are not on `PATH`:
+whole group - 66 checks - when they are not on `PATH`:
 ```bash
 pip install um80           # any platform; provides um80 and ul80
 ```
@@ -495,7 +497,7 @@ What is left is coverage of everything they do not reach:
    four terminal programs to try, and the bytes each key should print, are in
    `MANUAL_CHECKS.md` in the repo root.
 2. The drive mapping group needs an assembler. It takes `um80` and nothing
-   else, so on a machine without it 62 checks skip - about half the
+   else, so on a machine without it 66 checks skip - more than half the
    suite. CI installs it with `pip install um80` on both runners and runs with
    `--require`, so the gate can no longer hide there; a local run on a machine
    without it still skips them, and committing those fourteen `.com` files as

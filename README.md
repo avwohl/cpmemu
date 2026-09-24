@@ -352,7 +352,7 @@ make -C src unit            # 8080-mode CPU unit tests, under a second
 make -C src test            # three quick tests, eyeball only, never fails
 ```
 
-`tests/run_tests.sh` is the one that can fail. 62 checks assemble their guests
+`tests/run_tests.sh` is the one that can fail. 66 checks assemble their guests
 at test time and skip unless `um80` and `ul80` are on `PATH`
 (`pip install um80`); with `x86_64-w64-mingw32-g++` present the suite also
 cross-compiles the Windows half of the platform layer. Both skip quietly and

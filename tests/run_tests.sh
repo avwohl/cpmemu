@@ -71,7 +71,7 @@ skipped=0
 
 # Every skip that means "this machine is missing a tool" registers itself here,
 # so --require can turn the lot into one failure at the end.  Registering is
-# separate from printing because the count behind a gate is not always one: 62
+# separate from printing because the count behind a gate is not always one: 66
 # checks sit behind the assembler.
 # Each takes a token so a caller can allow one by name: CPMEMU_SKIP_OK is a
 # space or comma separated list of tokens that --require lets through.  The
@@ -339,9 +339,9 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 62 checks live behind this gate, not the 6 an earlier version counted
-    skipped=$((skipped + 62))
-    soft_skip assembler "drive mapping tests: 62 checks, no assembler (pip install um80)"
+    # 66 checks live behind this gate, not the 6 an earlier version counted
+    skipped=$((skipped + 66))
+    soft_skip assembler "drive mapping tests: 66 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1
@@ -835,6 +835,37 @@ else
         fcb_reset; : >"$tmp/want"
         check_fcb "files: a text record that starts with ^Z is written" \
             T.TXT MHAU0WC '' t.txt "$tmp/want"
+
+        # A record rewritten in place where the converter split a host LF
+        # into the CR ending one record and the LF opening the next.  The
+        # classic append - read to the end, back up a record, write it again
+        # from its ^Z - wrote that LF a second time, a blank line; writing
+        # back the record that ends in the CR put a CR over the host LF.
+        fcb_reset; printf '%s\nb\n' "$a127" >"$fcbdir/t.txt"; cp "$fcbdir/t.txt" "$tmp/want"
+        check_fcb "files: rewriting the record after a split line end changes nothing" \
+            T.TXT ORRRZ1WC $'a\n=01' t.txt "$tmp/want"
+        fcb_reset; printf '%s\nb\n' "$a127" >"$fcbdir/t.txt"; printf '%s\nb\nC\n' "$a127" >"$tmp/want"
+        check_fcb "files: an append after a split line end adds no blank line" \
+            T.TXT ORRRZ1V4CJ5K6U7WC $'a\n=01' t.txt "$tmp/want"
+        fcb_reset; printf '%s\nb\n' "$a127" >"$fcbdir/t.txt"; cp "$fcbdir/t.txt" "$tmp/want"
+        check_fcb "files: rewriting the record that ends in a split CR keeps the LF" \
+            T.TXT ORZ0WLC "a>b<>~" t.txt "$tmp/want"
+
+        # A CR the text writer holds at a record's end reaches the file when
+        # the run ends at the end of its input, not only when the program
+        # finishes: that exit, the five-^C one and the watchdog closed nothing.
+        fcb_reset; { head -c 127 /dev/zero | tr '\0' A; printf '\r'; } >"$tmp/want"
+        (cd "$fcbdir" && "$emu" "$tmp/fcb_io.com" T.TXT 'MHAJ127W!' </dev/null >/dev/null 2>&1)
+        if cmp -s "$fcbdir/t.txt" "$tmp/want"; then
+            printf 'PASS  %s\n' "files: a held CR is written when input runs out"
+            passed=$((passed + 1))
+        else
+            printf 'FAIL  %s\n        t.txt is %s bytes, not the 128 expected\n' \
+                "files: a held CR is written when input runs out" \
+                "$(wc -c <"$fcbdir/t.txt" | tr -d ' ')"
+            failed=$((failed + 1))
+        fi
+
     fi
 fi
 

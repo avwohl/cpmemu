@@ -13,12 +13,23 @@
 ;   F  file size (35), prints #r2r1r0
 ;   T  set random record (36), prints #r2r1r0
 ;   S  prints the FCB's (EX,S2,CR)
+;   @  prints @ and the FCB's RC
 ;   L  read seq to end of file, printing every byte up to a ^Z: CR prints
 ;      as <, LF as >, ^Z as ~ and ends the dump, other control bytes as ?
 ;   Hc fill the DMA buffer with the character c
 ;   Jn Kn Un  put CR, LF or ^Z at byte n of the DMA buffer
 ;   Zn Xn Yn  set the FCB's CR, EX or S2 byte to n
 ;   Nn set R0-R2 to n, up to 16777215
+;   Vnc put the character c at byte n of the DMA buffer
+;   #n run the command after it n times in all
+;   E  delete (19)       B  reset disk (13), then the DMA buffer again
+;   D  search first (17) A  search next (18): both print the entry they
+;      return as [EX,S2,RC]
+;   >name;  rename (23) the FCB's file to name, which ends at the ;
+;   I  copy the FCB, all 36 bytes, to a second one at another address and
+;      use that from here on; a second I copies it back and switches back
+;   !  read the console (BDOS 1) for ever, closing nothing: the run ends
+;      when the emulator gives up at the end of its input
 ;
 ; A read that succeeds prints the first byte of the record it read.  Any call
 ; that fails prints = and the status in A as two hex digits, so a read at end
@@ -71,7 +82,15 @@ copied:	xor	a
 	ld	hl,script
 	ld	(ip),hl
 
-next:	call	getch
+next:	ld	hl,(repc)	; a # count still running: the same command again
+	ld	a,h
+	or	l
+	jr	z,next1
+	dec	hl
+	ld	(repc),hl
+	ld	hl,(repip)
+	ld	(ip),hl
+next1:	call	getch
 	or	a
 	jp	z,finish
 	cp	'O'
@@ -114,6 +133,26 @@ next:	call	getch
 	jp	z,c_sets2
 	cp	'N'
 	jp	z,c_setr
+	cp	'V'
+	jp	z,c_putch
+	cp	'#'
+	jp	z,c_rep
+	cp	'E'
+	jp	z,c_dele
+	cp	'B'
+	jp	z,c_reset
+	cp	'D'
+	jp	z,c_srch1
+	cp	'A'
+	jp	z,c_srchn
+	cp	'>'
+	jp	z,c_ren
+	cp	'I'
+	jp	z,c_other
+	cp	'@'
+	jp	z,c_rc
+	cp	'!'
+	jp	z,c_hang
 	push	af		; unknown: print ? and the letter, and go on
 	ld	a,'?'
 	call	putc
@@ -128,6 +167,8 @@ finish:	ld	c,0
 c_open:	ld	c,15
 	jr	dirop
 c_make:	ld	c,22
+	jr	dirop
+c_dele:	ld	c,19
 	jr	dirop
 c_close:ld	c,16
 dirop:	call	callf
@@ -164,25 +205,31 @@ c_setrr:ld	c,36
 	call	callf
 showr:	ld	a,'#'
 	call	putc
-	ld	a,(fcb+35)
+	ld	ix,(cur)
+	ld	a,(ix+35)
 	call	hexbyte
-	ld	a,(fcb+34)
+	ld	ix,(cur)
+	ld	a,(ix+34)
 	call	hexbyte
-	ld	a,(fcb+33)
+	ld	ix,(cur)
+	ld	a,(ix+33)
 	call	hexbyte
 	jp	next
 
-c_show:	ld	a,'('
+c_show:	ld	ix,(cur)
+	ld	a,'('
 	call	putc
-	ld	a,(fcb+12)
+	ld	a,(ix+12)
 	call	hexbyte
 	ld	a,','
 	call	putc
-	ld	a,(fcb+14)
+	ld	ix,(cur)
+	ld	a,(ix+14)
 	call	hexbyte
 	ld	a,','
 	call	putc
-	ld	a,(fcb+32)
+	ld	ix,(cur)
+	ld	a,(ix+32)
 	call	hexbyte
 	ld	a,')'
 	call	putc
@@ -246,26 +293,145 @@ putdma:	push	bc
 	jp	next
 
 c_setcr:call	getnum
-	ld	a,l
-	ld	(fcb+32),a
+	ld	ix,(cur)
+	ld	(ix+32),l
 	jp	next
 c_setex:call	getnum
-	ld	a,l
-	ld	(fcb+12),a
+	ld	ix,(cur)
+	ld	(ix+12),l
 	jp	next
 c_sets2:call	getnum
-	ld	a,l
-	ld	(fcb+14),a
+	ld	ix,(cur)
+	ld	(ix+14),l
 	jp	next
 c_setr:	call	getnum
-	ld	(fcb+33),hl
-	ld	a,e
-	ld	(fcb+35),a
+	ld	ix,(cur)
+	ld	(ix+33),l
+	ld	(ix+34),h
+	ld	(ix+35),e
+	jp	next
+
+c_putch:call	getnum		; Vnc
+	push	hl
+	call	getch
+	pop	hl
+	ld	h,0
+	ld	de,dma
+	add	hl,de
+	ld	(hl),a
+	jp	next
+
+c_rep:	call	getnum		; #n: n - 1 more after this one
+	dec	hl
+	ld	(repc),hl
+	ld	hl,(ip)
+	ld	(repip),hl
+	jp	next1
+
+c_reset:ld	c,13		; the reset sets the DMA back to 0080h
+	call	bdos
+	ld	de,dma
+	ld	c,26
+	call	bdos
+	jp	next
+
+c_srch1:ld	c,17
+	jr	srch
+c_srchn:ld	c,18
+srch:	call	callf
+	cp	0FFh
+	jp	z,fail
+	add	a,a		; the entry is at dma + 32 * A
+	add	a,a
+	add	a,a
+	add	a,a
+	add	a,a
+	ld	e,a
+	ld	d,0
+	ld	ix,dma
+	add	ix,de
+	ld	a,'['
+	call	putc
+	ld	a,(ix+12)
+	call	hexbyte
+	ld	a,','
+	call	putc
+	ld	a,(ix+14)
+	call	hexbyte
+	ld	a,','
+	call	putc
+	ld	a,(ix+15)
+	call	hexbyte
+	ld	a,']'
+	call	putc
+	jp	next
+
+c_hang:	ld	c,1
+	call	bdos
+	jr	c_hang
+
+c_rc:	ld	a,'@'
+	call	putc
+	ld	ix,(cur)
+	ld	a,(ix+15)
+	call	hexbyte
+	jp	next
+
+; >name;  The old name is bytes 0-11 of the FCB, the new one goes in 16-27.
+c_ren:	ld	hl,(cur)
+	ld	de,16
+	add	hl,de
+	ld	(hl),0		; drive: the same one
+	inc	hl
+	ld	b,11
+rblank:	ld	(hl),' '
+	inc	hl
+	djnz	rblank
+	ld	hl,(cur)
+	ld	de,17
+	add	hl,de		; HL: where the next name byte goes
+	ld	c,8		; bytes left in this part
+rname:	push	hl
+	call	getch
+	pop	hl
+	or	a
+	jr	z,rdone
+	cp	';'
+	jr	z,rdone
+	cp	'.'
+	jr	z,rdot
+	inc	c		; a byte past the part's end is dropped
+	dec	c
+	jr	z,rname
+	ld	(hl),a
+	inc	hl
+	dec	c
+	jr	rname
+rdot:	ld	hl,(cur)
+	ld	de,25
+	add	hl,de
+	ld	c,3
+	jr	rname
+rdone:	ld	c,23
+	jp	dirop
+
+; I: copy the FCB in use to the other one, and use that one.
+c_other:ld	hl,(cur)
+	ld	de,fcb
+	or	a
+	sbc	hl,de
+	ld	hl,fcb
+	ld	de,fcb2
+	jr	z,other1
+	ex	de,hl
+other1:	ld	(cur),de
+	ld	bc,36
+	ldir
 	jp	next
 
 ; --- helpers -----------------------------------------------------------------
-; Call BDOS function C on the FCB.
-callf:	ld	de,fcb
+; Call BDOS function C on the FCB in use.
+callf:	ld	de,(cur)
 	jp	bdos
 
 ; A failed call: print = and the status byte.
@@ -362,9 +528,13 @@ dig:	add	a,'0'
 	jp	putc
 
 ip:	defw	0
+cur:	defw	fcb		; the FCB in use: fcb, or fcb2 after an I
+repc:	defw	0
+repip:	defw	0
 tlo:	defw	0
 thi:	defb	0
 fcb:	defs	36
+fcb2:	defs	36
 dma:	defs	128
 script:	defs	130
 	defs	64
