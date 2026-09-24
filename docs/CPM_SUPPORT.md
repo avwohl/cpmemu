@@ -34,15 +34,18 @@ What this emulator implements of CP/M 2.2, and the memory map a guest sees.
 | 38 | Access Free Space | Stub (returns success) |
 | 39 | Free Space | Stub (no-op) |
 | 40 | Write Random Zero Fill | Supported |
-| 48 | Flush Buffers | Supported (writes go straight to the host file, so this is a no-op) |
+| 48 | Flush Buffers | Supported (writes back text file changes not yet written; binary writes go straight to the host file) |
 
 A file's position is its FCB's, as in CP/M: BDOS 20 and 21 read and write
 record CR of logical extent EX of module S2, which is the record BDOS 36
 reports, and a random read or write leaves CR, EX and S2 at its record, so the
 next sequential call reads it again or writes it again. Open keeps the EX it is
-given and does not touch CR, so a program zeroes both itself. A text file's
-records are counted after conversion - LF to CR LF, ending at `^Z` - except by
-BDOS 17, 18, 33, 34, 35 and 40, which see the host file's raw bytes.
+given and does not touch CR, so a program zeroes both itself. A text file with
+conversion is held as the file a disk would hold - its host text converted, LF
+to CR LF, ending at `^Z`, padded with `^Z` to a record - and every call reads,
+writes and counts that, except BDOS 17 and 18, whose directory entries are
+sized from the host file. It is written back as host text in the file's own
+style; `docs/file_handling_notes.md` says how.
 
 The disk this emulates has 2 KB blocks and `EXM` = 0, so a directory entry is
 one logical extent of 128 records. Open fails, `FFh`, for an extent the file
@@ -72,6 +75,13 @@ Where this differs from 2.2 on purpose:
   answers 1; an end-of-file read at an extent boundary leaves the FCB there
   rather than on the next extent. Both only make an append succeed that 2.2
   would have refused.
+- **A text file holds its text.** A text file with conversion is kept on the
+  host as text, which ends at the first `^Z`, so what a program writes after
+  that `^Z` is read back while the file stays open and is gone once it is
+  closed and opened again. No text reader sees it on a disk either. A record
+  written past the end leaves the records before it, if any are missing, as
+  NULs, which is what a new block holds here rather than what a disk left in
+  it.
 - **An FCB that runs past FFFFh** - the bytes the call uses, 36 for BDOS 33-36
   and 40, 33 for 20 and 21, fewer for the others - is refused with `FFh`
   rather than wrapping to 0000h. No CP/M program keeps an FCB there, above

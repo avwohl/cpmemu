@@ -18,6 +18,7 @@
 #include <errno.h>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -366,33 +367,83 @@ static void fcb_set_record(qkz80_uint8* f, uint32_t record) {
 //
 // A CP/M file has no position of its own: every read and write names its
 // record in the FCB, and the guest may change EX, S2 and CR between any two
-// calls.  So the host stream is only a cache of where the last call left it.
+// calls.
 //
-// A binary file is 128 host bytes to a record and is simply sought to
-// record * 128 on every call.  A text file (MODE_TEXT) goes through the
-// converter - LF becomes CR LF, and ^Z is the end - so its records are not a
-// fixed number of host bytes, and one is found by converting from the top.
-// `stream_record` is the record the stream is positioned at, so the ordinary
-// case of one record after another never re-reads anything.
-enum FileOp { OP_NONE, OP_READ, OP_WRITE };
+// A binary file is 128 host bytes to a record and is sought to record * 128
+// on every call.  So is a text file without EOL conversion, whose sequential
+// reads stop at a ^Z.
+//
+// A text file with conversion is not: LF becomes CR LF and a ^Z ends it, so
+// the host bytes of record n depend on every record before it, and rewriting
+// one record can make the host text shorter or longer than what it replaces.
+// It is held as a TextImage - the whole file as a CP/M disk would hold it,
+// records of converted text padded with ^Z - and every read and write is a
+// read or write of that image, which is then written back to the host as
+// text.  See TextImage.
+struct TextImage;
 
 struct OpenFile {
-  FILE* fp;
+  FILE* fp;             // binary, and text without conversion
+  std::shared_ptr<TextImage> img;  // text with conversion
   std::string unix_path;
   std::string cpm_name;
   FileMode mode;
   bool eol_convert;
-  bool eof_seen;        // text reader: host end of file, or a ^Z, reached
-  bool last_was_cr;     // text: the CP/M byte before the stream position is CR
-  bool pending_lf;      // text reader: a bare LF became CR LF across a record end
-  bool pending_cr;      // text writer: a record ended in CR; it may start a CR LF
-  bool stream_valid;    // text: stream_record is where the host stream is
-  uint32_t stream_record;
-  FileOp last_op;       // C wants a seek between a read and a write
 
-  OpenFile() : fp(nullptr), mode(MODE_BINARY), eol_convert(false),
-    eof_seen(false), last_was_cr(false), pending_lf(false), pending_cr(false),
-    stream_valid(true), stream_record(0), last_op(OP_NONE) {}
+  OpenFile() : fp(nullptr), mode(MODE_BINARY), eol_convert(false) {}
+  bool is_open() const { return fp != nullptr || img != nullptr; }
+};
+
+// A converted text file, as CP/M holds it.
+//
+// `cpm` is the host text converted - an LF with no CR before it becomes CR LF,
+// and the text ends at a ^Z - padded with ^Z to a whole record, and then
+// whatever records the guest writes, 128 bytes each, as a disk would take
+// them: a record past the end extends it, the gap as NULs.  Reading and
+// writing are indexing.
+//
+// The host file is that image as text: the bytes up to its first ^Z, in the
+// host file's own line-end style - CR LF kept as it is if the file's lines
+// ended CR LF when it was opened, CR LF to LF otherwise (a lone CR or LF is
+// written as it is) - and a ^Z after them if the file had one, padded to a
+// record if it was a whole number of records.  Only the text from the line
+// the first change is in to the end is written back; the lines before it
+// keep their host bytes.  `lines` maps where each line starts in the image
+// to where it starts in the host file, from the load and from each write
+// back, so that point is found without reading the host file again.
+//
+// The write back is done at once when it is cheap - the change is in the
+// file's last line, and that line and what follows it are under 64 KB, as an
+// append or a new file being written always is - and otherwise when an FCB
+// on the file closes it, at a disk reset, at the end of the run, at BDOS 48,
+// and before a search, a rename or a file size, which look at host files.
+// Every FCB open on one host path shares one image, so another FCB reading
+// the file sees a change whether or not it has been written back; a make or
+// a delete of the path cuts the image loose from the host file.
+//
+// This replaced a converting stream.  Its text was only ever right read or
+// written in order: rewriting a record in place wrote shorter or longer host
+// text over the old and left stale bytes after it, or ran into the next
+// record's - the append idiom, read to the end, back up a record and write
+// it again from its ^Z, left the old last lines after the appended text in a
+// CR LF file - and a random read or write was raw host bytes at record * 128.
+struct TextImage {
+  std::string path;
+  std::vector<uint8_t> cpm;
+  bool crlf;         // host lines end CR LF: written back as they are
+  bool eof_mark;     // host text ended at a ^Z: written back with one
+  bool eof_pad;      // ... and a ^Z-padded last record
+  bool dirty;        // cpm has changed since the host was written
+  bool detached;     // deleted or made over: nothing is written back
+  size_t dirty_from; // the first CP/M byte changed, SIZE_MAX when none
+  uint64_t host_size;
+  std::vector<std::pair<size_t, uint64_t> > lines;  // (image, host) line starts
+  size_t zpos;       // the first ^Z in cpm, or SIZE_MAX: kept, not searched for
+
+  TextImage() : crlf(false), eof_mark(false), eof_pad(false), dirty(false),
+    detached(false), dirty_from(SIZE_MAX), host_size(0), zpos(SIZE_MAX) {}
+  size_t records() const { return cpm.size() / 128; }
+  size_t text_end() const { return zpos < cpm.size() ? zpos : cpm.size(); }
 };
 
 class CPMEmulator {
@@ -548,19 +599,29 @@ private:
     return d + "/" + leaf;
   }
 
-  // EOL and EOF handling
-  size_t read_with_conversion(OpenFile& of, uint8_t* buffer, size_t size);
-  bool write_with_conversion(OpenFile& of, const uint8_t* buffer, size_t size);
   void pad_to_128(uint8_t* buffer, size_t actual_size);
 
-  // Record I/O.  `record` is absolute, from the FCB; see OpenFile.
-  size_t read_record(OpenFile& of, uint32_t record, uint8_t* buffer);
+  // Record I/O.  `record` is absolute, from the FCB; see OpenFile.  A read
+  // returns the bytes it got, 0 at the end of the file, and the caller pads
+  // a short record with ^Z.  `sequential` stops a text file without
+  // conversion at its ^Z; a random read of one is raw, as it always was.
+  size_t read_record(OpenFile& of, uint32_t record, uint8_t* buffer, bool sequential);
   bool write_record(OpenFile& of, uint32_t record, const uint8_t* buffer);
-  bool text_seek(OpenFile& of, uint32_t record, FileOp op);
-  void flush_pending_cr(OpenFile& of);
+
+  // Converted text files: see TextImage.  One image per host path, shared.
+  std::map<std::string, std::shared_ptr<TextImage> > text_images;
+  std::shared_ptr<TextImage> text_image(const std::string& path, bool empty);
+  static bool load_text_image(TextImage& img, const std::string& path);
+  bool write_back(TextImage& img);
+  void flush_text_images();
+  void forget_text_image(const std::string& path);
+  static void image_write(TextImage& img, uint32_t record, const uint8_t* data);
+  // The records a text file with conversion holds, from its image if one is
+  // open and by converting it if not.
+  uint32_t text_record_count(const std::string& path);
   void close_open_file(OpenFile& of);
   // Every open file, closed: on a disk reset, and when the program ends, so
-  // that a CR the text writer is holding back still reaches the file.
+  // that a text file's changes still only in its image reach the host.
   void close_all_files();
   // Open the host file an FCB names into open_files, without touching the
   // FCB.  Returns false, having set A = 0xFF, when it cannot.
@@ -634,9 +695,9 @@ private:
   void bdos_get_dpb();
   void bdos_reset_drive();
   void bdos_write_random_zero_fill();
-  // Take R0-R2 for BDOS 33/34/40: point the FCB at the record and the host
-  // stream at its bytes.  False, with A set, when the record cannot be used.
-  bool random_position(OpenFile& of, qkz80_uint16 fcb_addr, uint32_t* record);
+  // Take R0-R2 for BDOS 33/34/40 and point the FCB at the record.  False,
+  // with A set, when no FCB can name it.
+  bool random_position(qkz80_uint16 fcb_addr, uint32_t* record);
 
   // BIOS functions
   void bios_call(int offset);
@@ -1112,141 +1173,6 @@ std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode
   return "";  // Not found
 }
 
-size_t CPMEmulator::read_with_conversion(OpenFile& of, uint8_t* buffer, size_t size) {
-  size_t out_pos = 0;
-
-  // The LF of a CR LF this converter made out of a bare LF, when the CR was
-  // the last byte of the previous record.  It is the first byte of this one.
-  // This used to be an ungetc of the LF and a record cut short at 127 bytes,
-  // which the caller then padded with ^Z - so a reader that stops at ^Z, as
-  // every text reader does, took the file to end there.
-  if (of.pending_lf && size > 0) {
-    of.pending_lf = false;
-    buffer[out_pos++] = '\n';
-  }
-
-  if (of.eof_seen) {
-    return out_pos;
-  }
-
-  if (of.mode == MODE_BINARY || !of.eol_convert) {
-    // Binary mode or no conversion - read directly
-    size_t nread = fread(buffer, 1, size, of.fp);
-
-    // Check for ^Z EOF in text mode
-    if (of.mode == MODE_TEXT) {
-      for (size_t i = 0; i < nread; i++) {
-        if (buffer[i] == CPM_EOF) {
-          of.eof_seen = true;
-          return i;  // Return only data up to ^Z
-        }
-      }
-    }
-
-    // If we got less than requested, we're at EOF
-    if (nread < size) {
-      of.eof_seen = true;
-    }
-
-    return nread;
-  }
-
-  // Text mode with EOL conversion: Unix \n -> CP/M \r\n
-  // But don't double-convert files that already have \r\n.  Whether the byte
-  // before a \n was \r is kept in the OpenFile rather than here, because the
-  // two can be in different records: a local copy started every record at
-  // false, so the \n opening a record after a \r closed the previous one was
-  // taken for a bare \n and given a second \r.
-  while (out_pos < size) {
-    int ch = fgetc(of.fp);
-
-    if (ch == EOF) {
-      of.eof_seen = true;
-      break;
-    }
-
-    if (ch == '\n') {
-      if (of.last_was_cr) {
-        // File already has \r\n - don't add another \r
-        buffer[out_pos++] = '\n';
-      } else {
-        // Bare \n - convert to \r\n, the \n into the next record if the \r
-        // fills this one
-        buffer[out_pos++] = '\r';
-        if (out_pos < size) {
-          buffer[out_pos++] = '\n';
-        } else {
-          of.pending_lf = true;
-        }
-      }
-      of.last_was_cr = false;
-    } else if (ch == CPM_EOF) {
-      // EOF marker
-      of.eof_seen = true;
-      break;
-    } else {
-      buffer[out_pos++] = (uint8_t)ch;
-      of.last_was_cr = (ch == '\r');
-    }
-  }
-
-  return out_pos;
-}
-
-// Write a record, converting CP/M text to host text if this file is text.
-// Returns false only for a host I/O error.  A text record that starts with ^Z
-// writes no bytes at all and is not a failure - a text file's last record is
-// often exactly that - where this used to return the byte count, which made
-// that record's BDOS 21 answer 0xFF.
-bool CPMEmulator::write_with_conversion(OpenFile& of, const uint8_t* buffer, size_t size) {
-  if (of.mode == MODE_BINARY || !of.eol_convert) {
-    // Binary mode - write directly
-    size_t n = fwrite(buffer, 1, size, of.fp);
-    fflush(of.fp);
-    return n == size;
-  }
-
-  // Text mode with EOL conversion: CP/M \r\n -> Unix \n.  A record that ends
-  // in \r cannot yet say whether it is half of a \r\n, so the \r is held in
-  // the OpenFile until the next record, or the close, shows which.  Deciding
-  // inside the record wrote \r\n to the host whenever the pair straddled two.
-  //
-  // last_was_cr follows the CP/M bytes written, as the reader's does the bytes
-  // it delivers, so a read that follows a write on this stream knows whether
-  // the host \n it meets next is the second half of a CR LF already given.
-  size_t i = 0;
-  if (of.pending_cr) {
-    of.pending_cr = false;
-    if (size == 0 || buffer[0] != '\n') {
-      if (fputc('\r', of.fp) == EOF) return false;
-    }
-  }
-
-  for (; i < size; i++) {
-    uint8_t ch = buffer[i];
-
-    if (ch == CPM_EOF) {
-      // Stop at ^Z in text files
-      break;
-    }
-
-    of.last_was_cr = (ch == '\r');
-    if (ch == '\r') {
-      if (i + 1 == size) {
-        of.pending_cr = true;  // the next record decides
-        continue;
-      }
-      if (buffer[i + 1] == '\n') {
-        continue;  // Skip the \r of a \r\n
-      }
-    }
-    if (fputc(ch, of.fp) == EOF) return false;
-  }
-
-  fflush(of.fp);
-  return !ferror(of.fp);
-}
-
 void CPMEmulator::pad_to_128(uint8_t* buffer, size_t actual_size) {
   if (actual_size < 128) {
     // Pad with ^Z for CP/M compatibility
@@ -1254,34 +1180,225 @@ void CPMEmulator::pad_to_128(uint8_t* buffer, size_t actual_size) {
   }
 }
 
-// A \r held back by write_with_conversion goes out where the stream is now,
-// before anything moves it: no record written after it decides what it was.
-// What is already in the file does.  If the host byte here is \n, the text
-// read back from the top is ... CR LF with the CR exactly here, so the \r
-// the guest wrote is already there and writing it would destroy the line
-// end - which is what a record rewritten in place looks like when a host \n
-// converted across its end: the reader gave CR as the record's last byte and
-// the LF as the next one's first.  It used to write \r over that \n
-// unconditionally, so rewriting such a record unchanged turned the host's
-// "a\nb" into "a\rb".  Anything else here, or the end of the file, and the
-// \r is written: it was a lone CR.
-void CPMEmulator::flush_pending_cr(OpenFile& of) {
-  if (!of.pending_cr) return;
-  of.pending_cr = false;
-  // ISO C 7.21.5.3: write_with_conversion ended with an fflush, so this read
-  // may follow it, and the fseek puts the stream back before any write.
-  long here = ftell(of.fp);
-  int next = here < 0 ? EOF : fgetc(of.fp);
-  if (here < 0 || fseek(of.fp, here, SEEK_SET) != 0) return;
-  if (next != '\n') fputc('\r', of.fp);
-  fflush(of.fp);
+// Read a host text file into `img`: LF with no CR before it to CR LF, the
+// text ending at a ^Z, padded with ^Z to a record.  Records its line starts
+// and the style it will be written back in.  False if it cannot be read.
+bool CPMEmulator::load_text_image(TextImage& img, const std::string& path) {
+  FILE* fp = fopen(path.c_str(), "rb");
+  if (!fp) return false;
+  std::vector<uint8_t> host;
+  std::vector<uint8_t> chunk(65536);
+  size_t n;
+  while ((n = fread(chunk.data(), 1, chunk.size(), fp)) > 0) {
+    host.insert(host.end(), chunk.begin(), chunk.begin() + n);
+  }
+  fclose(fp);
+
+  img.cpm.clear();
+  img.cpm.reserve(host.size() + host.size() / 16 + 128);
+  img.lines.assign(1, std::make_pair(static_cast<size_t>(0), static_cast<uint64_t>(0)));
+  img.crlf = false;
+  img.eof_mark = false;
+  bool seen_lf = false, prev_cr = false;
+  for (size_t h = 0; h < host.size(); h++) {
+    uint8_t c = host[h];
+    if (c == CPM_EOF) {
+      img.eof_mark = true;
+      break;
+    }
+    if (c == '\n') {
+      if (!seen_lf) img.crlf = prev_cr;  // the first line end sets the style
+      seen_lf = true;
+      if (!prev_cr) img.cpm.push_back('\r');
+      img.cpm.push_back('\n');
+      img.lines.push_back(std::make_pair(img.cpm.size(), static_cast<uint64_t>(h + 1)));
+    } else {
+      img.cpm.push_back(c);
+    }
+    prev_cr = (c == '\r');
+  }
+  img.eof_pad = img.eof_mark && host.size() % 128 == 0;
+  img.host_size = host.size();
+  img.zpos = img.cpm.size() % 128 ? img.cpm.size() : SIZE_MAX;
+  while (img.cpm.size() % 128) img.cpm.push_back(CPM_EOF);
+  img.dirty = false;
+  img.dirty_from = SIZE_MAX;
+  return true;
+}
+
+// The image of the text file at `path`, shared by every FCB open on it:
+// loaded from the host file, or empty for one a make has just created.
+std::shared_ptr<TextImage> CPMEmulator::text_image(const std::string& path, bool empty) {
+  auto it = text_images.find(path);
+  if (it != text_images.end()) {
+    if (!empty) return it->second;
+    forget_text_image(path);  // made over: that image is no longer this file
+  }
+  std::shared_ptr<TextImage> img = std::make_shared<TextImage>();
+  img->path = path;
+  if (empty) {
+    img->lines.assign(1, std::make_pair(static_cast<size_t>(0), static_cast<uint64_t>(0)));
+  } else if (!load_text_image(*img, path)) {
+    return nullptr;
+  }
+  text_images[path] = img;
+  return img;
+}
+
+// The host file at `path` is gone or has been made over.  An FCB still open
+// on it keeps reading the image it had, as one on a deleted CP/M file keeps
+// reading its blocks, and nothing it writes reaches the host.
+void CPMEmulator::forget_text_image(const std::string& path) {
+  auto it = text_images.find(path);
+  if (it == text_images.end()) return;
+  it->second->detached = true;
+  text_images.erase(it);
+}
+
+// Record `record` of the image becomes `data`, as a disk takes a record: the
+// image grows to hold it, a gap before it as NULs.  Marks where the first
+// changed byte is, and keeps zpos.
+void CPMEmulator::image_write(TextImage& img, uint32_t record, const uint8_t* data) {
+  size_t at = static_cast<size_t>(record) * 128;
+  if (at + 128 > img.cpm.size()) {
+    img.dirty = true;
+    img.dirty_from = std::min(img.dirty_from, img.cpm.size());
+    img.cpm.resize(at + 128, 0);
+  }
+  size_t k = 0;
+  while (k < 128 && img.cpm[at + k] == data[k]) k++;
+  if (k == 128) return;
+  img.dirty = true;
+  img.dirty_from = std::min(img.dirty_from, at + k);
+  memcpy(&img.cpm[at], data, 128);
+
+  if (img.zpos != SIZE_MAX && img.zpos < at) return;  // a ^Z before it is still first
+  for (size_t j = 0; j < 128; j++) {
+    if (data[j] == CPM_EOF) {
+      img.zpos = at + j;
+      return;
+    }
+  }
+  if (img.zpos == SIZE_MAX || img.zpos >= at + 128) return;  // the first is after it
+  // The first ^Z was in this record and has been written over: the next one.
+  img.zpos = SIZE_MAX;
+  for (size_t j = at + 128; j < img.cpm.size(); j++) {
+    if (img.cpm[j] == CPM_EOF) {
+      img.zpos = j;
+      break;
+    }
+  }
+}
+
+// Write what has changed in the image back to the host file as text: from
+// the start of the line the first change is in to the end of the text, the
+// lines before it left as they are.  See TextImage for the form.
+bool CPMEmulator::write_back(TextImage& img) {
+  if (!img.dirty || img.detached) return true;
+  size_t end = img.text_end();
+  if (img.dirty_from > end) {
+    // Only past the text's ^Z, which no text reader sees and the host
+    // file does not hold.
+    img.dirty = false;
+    img.dirty_from = SIZE_MAX;
+    return true;
+  }
+  auto it = std::upper_bound(img.lines.begin(), img.lines.end(), img.dirty_from,
+                             [](size_t v, const std::pair<size_t, uint64_t>& e) {
+                               return v < e.first;
+                             });
+  --it;  // lines[0] is (0, 0)
+  size_t p = it->first;
+  uint64_t h = it->second;
+  img.lines.erase(it + 1, img.lines.end());
+
+  std::vector<uint8_t> out;
+  out.reserve(end - p + 128);
+  for (size_t i = p; i < end; i++) {
+    uint8_t c = img.cpm[i];
+    if (!img.crlf && c == '\r' && i + 1 < end && img.cpm[i + 1] == '\n') continue;
+    out.push_back(c);
+    if (c == '\n') img.lines.push_back(std::make_pair(i + 1, h + out.size()));
+  }
+  if (img.eof_mark) {
+    out.push_back(CPM_EOF);
+    while (img.eof_pad && (h + out.size()) % 128) out.push_back(CPM_EOF);
+  }
+  uint64_t size = h + out.size();
+
+  bool ok = false;
+  if (size >= img.host_size) {
+    FILE* fp = fopen(img.path.c_str(), "r+b");
+    if (fp) {
+      ok = fseek(fp, static_cast<long>(h), SEEK_SET) == 0 &&
+           (out.empty() || fwrite(out.data(), 1, out.size(), fp) == out.size());
+      ok = (fclose(fp) == 0) && ok;
+    }
+  } else {
+    // Shorter than it was, and C has no truncate: the whole file, the lines
+    // kept read back from it first.
+    std::vector<uint8_t> head(static_cast<size_t>(h));
+    FILE* fp = fopen(img.path.c_str(), "rb");
+    if (fp) {
+      ok = head.empty() || fread(head.data(), 1, head.size(), fp) == head.size();
+      fclose(fp);
+    }
+    if (ok && (fp = fopen(img.path.c_str(), "wb")) != nullptr) {
+      ok = (head.empty() || fwrite(head.data(), 1, head.size(), fp) == head.size()) &&
+           (out.empty() || fwrite(out.data(), 1, out.size(), fp) == out.size());
+      ok = (fclose(fp) == 0) && ok;
+    } else {
+      ok = false;
+    }
+  }
+  if (!ok) {
+    // Where the lines start is no longer known past p: the next write back
+    // starts there.
+    img.dirty_from = p;
+    return false;
+  }
+  img.host_size = size;
+  img.dirty = false;
+  img.dirty_from = SIZE_MAX;
+  return true;
+}
+
+void CPMEmulator::flush_text_images() {
+  for (auto& pair : text_images) write_back(*pair.second);
+}
+
+// The records a text file with conversion holds.  Its image's, if an FCB has
+// it open; otherwise counted by converting it, without keeping anything.
+uint32_t CPMEmulator::text_record_count(const std::string& path) {
+  auto it = text_images.find(path);
+  if (it != text_images.end()) return static_cast<uint32_t>(it->second->records());
+  FILE* fp = fopen(path.c_str(), "rb");
+  if (!fp) return 0;
+  uint64_t bytes = 0;
+  bool cr = false;
+  int ch;
+  while ((ch = fgetc(fp)) != EOF && ch != CPM_EOF) {
+    if (ch == '\n' && !cr) bytes++;
+    bytes++;
+    cr = (ch == '\r');
+  }
+  fclose(fp);
+  uint64_t records = (bytes + 127) / 128;
+  return records > 0xFFFFFF ? 0xFFFFFF : static_cast<uint32_t>(records);
 }
 
 void CPMEmulator::close_open_file(OpenFile& of) {
-  if (!of.fp) return;
-  flush_pending_cr(of);
-  fclose(of.fp);
-  of.fp = nullptr;
+  if (of.img) {
+    write_back(*of.img);
+    std::string path = of.img->path;
+    of.img.reset();
+    auto it = text_images.find(path);
+    if (it != text_images.end() && it->second.use_count() == 1) text_images.erase(it);
+  }
+  if (of.fp) {
+    fclose(of.fp);
+    of.fp = nullptr;
+  }
 }
 
 void CPMEmulator::close_all_files() {
@@ -1289,95 +1406,49 @@ void CPMEmulator::close_all_files() {
     close_open_file(pair.second);
   }
   open_files.clear();
+  text_images.clear();
   std::set<std::string> made = made_by_content;
   for (const auto& path : made) settle_made_file(path, debug);
 }
 
-// Position a text file's stream at `record` for `op`.
-//
-// The records of a converted file are not a fixed number of host bytes, so
-// when the guest asks for any record but the one the stream is already at,
-// the stream goes back to the top and converts forward, discarding, until it
-// gets there.  That is linear in the file, and only paid when the guest moves
-// its position itself; one record after another costs nothing extra.
-//
-// A write past the end of the text lands at the end of it: a text file has no
-// holes for the records in between to be.
-bool CPMEmulator::text_seek(OpenFile& of, uint32_t record, FileOp op) {
-  flush_pending_cr(of);
-
-  if (!(of.stream_valid && of.stream_record == record)) {
-    if (fseek(of.fp, 0, SEEK_SET) != 0) return false;
-    of.eof_seen = false;
-    of.last_was_cr = false;
-    of.pending_lf = false;
-    of.stream_valid = true;
-    of.stream_record = 0;
-    of.last_op = OP_READ;
-    uint8_t scratch[128];
-    while (of.stream_record < record) {
-      if (read_with_conversion(of, scratch, 128) == 0) break;  // text ends first
-      of.stream_record++;
+// Read record `record` into buffer.
+size_t CPMEmulator::read_record(OpenFile& of, uint32_t record, uint8_t* buffer,
+                                bool sequential) {
+  if (of.img) {
+    const TextImage& img = *of.img;
+    size_t at = static_cast<size_t>(record) * 128;
+    if (at >= img.cpm.size()) return 0;
+    memcpy(buffer, &img.cpm[at], 128);
+    return 128;
+  }
+  // A seek on every call: the record is the FCB's, not the stream's.  It
+  // also clears the stream's end-of-file indicator, which would otherwise go
+  // on answering end of file after another FCB had written more.
+  if (fseek(of.fp, static_cast<long>(record) * 128L, SEEK_SET) != 0) return 0;
+  size_t n = fread(buffer, 1, 128, of.fp);
+  if (sequential && of.mode == MODE_TEXT) {
+    for (size_t i = 0; i < n; i++) {
+      if (buffer[i] == CPM_EOF) return i;
     }
-    of.stream_record = record;
   }
-
-  if (op != of.last_op) {
-    // ISO C 7.21.5.3: output may not follow input, or input output, on one
-    // stream without a positioning call between them.  Nothing issued one.
-    //
-    // An LF the reader owes this record is the second half of a host \n it
-    // turned into CR LF across the record boundary: the CR went out as the
-    // last byte of the record before, and the stream is past the \n.  A
-    // write of this record starts at that \n instead, with the CR held as if
-    // the writer had just written it, so the record's own first byte decides
-    // the pair - LF, and the host \n is written back as it was; anything
-    // else, and the \n becomes the lone CR it now is.  This used to drop the
-    // debt and write from past the \n, so the record's LF was written a
-    // second time: the classic append - read to the end, back up a record,
-    // write it again from its ^Z - added a blank line whenever a line ended
-    // at byte 127.
-    long back = (op == OP_WRITE && of.pending_lf) ? -1 : 0;
-    if (fseek(of.fp, back, SEEK_CUR) != 0) return false;
-    if (back) of.pending_cr = true;
-    if (op == OP_READ) of.eof_seen = false;
-    of.pending_lf = false;
-    of.last_op = op;
-  }
-  return true;
-}
-
-// Read the record `record` into buffer.  Returns the bytes read, 0 at the end
-// of the file; the caller pads a short record.
-size_t CPMEmulator::read_record(OpenFile& of, uint32_t record, uint8_t* buffer) {
-  if (of.mode != MODE_TEXT) {
-    // A seek on every call: the record is the FCB's, not the stream's.  It
-    // also clears the stream's end-of-file indicator, which would otherwise
-    // go on answering end of file after another FCB had written more.
-    if (fseek(of.fp, static_cast<long>(record) * 128L, SEEK_SET) != 0) return 0;
-    of.last_op = OP_READ;
-    return fread(buffer, 1, 128, of.fp);
-  }
-  if (!(of.stream_valid && of.stream_record == record && of.last_op == OP_READ)) {
-    if (!text_seek(of, record, OP_READ)) return 0;
-  }
-  size_t n = read_with_conversion(of, buffer, 128);
-  if (n > 0) of.stream_record = record + 1;
   return n;
 }
 
+// Write record `record` from buffer.  A text file's change reaches the host
+// at once when that is cheap, and at the latest when the file is closed.
 bool CPMEmulator::write_record(OpenFile& of, uint32_t record, const uint8_t* buffer) {
-  if (of.mode != MODE_TEXT) {
-    if (fseek(of.fp, static_cast<long>(record) * 128L, SEEK_SET) != 0) return false;
-    of.last_op = OP_WRITE;
-    return write_with_conversion(of, buffer, 128);
+  if (of.img) {
+    TextImage& img = *of.img;
+    image_write(img, record, buffer);
+    if (!img.dirty) return true;
+    size_t last = img.lines.back().first, end = img.text_end();
+    if (img.dirty_from >= last && (end < last || end - last <= 65536)) return write_back(img);
+    return true;
   }
-  if (!(of.stream_valid && of.stream_record == record && of.last_op == OP_WRITE)) {
-    if (!text_seek(of, record, OP_WRITE)) return false;
-  }
-  bool ok = write_with_conversion(of, buffer, 128);
-  of.stream_record = record + 1;
-  return ok;
+  if (fseek(of.fp, static_cast<long>(record) * 128L, SEEK_SET) != 0) return false;
+  size_t n = fwrite(buffer, 1, 128, of.fp);
+  fflush(of.fp);
+  return n == 128 && !ferror(of.fp);
 }
 
 bool CPMEmulator::load_config_file(const std::string& cfg_path) {
@@ -1815,6 +1886,10 @@ void CPMEmulator::bdos_call(qkz80_uint8 func) {
     return;
   }
 
+  // A call that looks at host files sees every text file's changes.  A
+  // write that was not cheap to write back at once is still in its image.
+  if (func == 17 || func == 23 || func == 35) flush_text_images();
+
   switch (func) {
   case 0:  // System Reset
     close_all_files();
@@ -1983,7 +2058,9 @@ void CPMEmulator::bdos_call(qkz80_uint8 func) {
     break;
 
   case 48: // Flush Buffers (CP/M 3+)
-    // Our emulator writes directly to files, so just return success
+    // Binary files are written as they go; a text file's changes may still
+    // be in its image.
+    flush_text_images();
     cpu->set_reg8(0, qkz80::reg_A);
     break;
 
@@ -2358,17 +2435,21 @@ bool CPMEmulator::open_fcb_file(qkz80_uint16 fcb_addr, int func) {
     }
   }
 
-  FILE* fp = fopen(unix_path.c_str(), "r+b");
-  if (!fp) {
-    fp = fopen(unix_path.c_str(), "rb");
-    if (!fp) {
+  OpenFile of;
+  if (mode == MODE_TEXT && eol_convert) {
+    of.img = text_image(unix_path, false);
+    if (!of.img) {
+      cpu->set_reg8(0xFF, qkz80::reg_A);
+      return false;
+    }
+  } else {
+    of.fp = fopen(unix_path.c_str(), "r+b");
+    if (!of.fp) of.fp = fopen(unix_path.c_str(), "rb");
+    if (!of.fp) {
       cpu->set_reg8(0xFF, qkz80::reg_A);
       return false;
     }
   }
-
-  OpenFile of;
-  of.fp = fp;
   of.unix_path = unix_path;
   of.cpm_name = filename;
   of.mode = mode;
@@ -2378,11 +2459,10 @@ bool CPMEmulator::open_fcb_file(qkz80_uint16 fcb_addr, int func) {
 }
 
 // The records a guest reading this file sequentially finds in it.  A binary
-// file is its host size in 128-byte records.  A text file is what the
-// converter makes of it - an LF with no CR before it gains one, and the text
-// ends at the first ^Z - which is not the host size, so it is counted by
-// reading the file through a stream of its own.
+// file is its host size in 128-byte records.  A text file with conversion is
+// its image's, and one without is its host bytes up to the first ^Z.
 uint32_t CPMEmulator::cpm_record_count(const OpenFile& of) {
+  if (of.img) return static_cast<uint32_t>(of.img->records());
   if (of.mode != MODE_TEXT) {
     int64_t size = platform::get_file_size(of.unix_path.c_str());
     if (size <= 0) return 0;
@@ -2392,13 +2472,8 @@ uint32_t CPMEmulator::cpm_record_count(const OpenFile& of) {
   FILE* fp = fopen(of.unix_path.c_str(), "rb");
   if (!fp) return 0;
   uint64_t bytes = 0;
-  bool cr = false;
   int ch;
-  while ((ch = fgetc(fp)) != EOF && ch != CPM_EOF) {
-    if (ch == '\n' && !cr && of.eol_convert) bytes++;
-    bytes++;
-    cr = (ch == '\r');
-  }
+  while ((ch = fgetc(fp)) != EOF && ch != CPM_EOF) bytes++;
   fclose(fp);
   uint64_t records = (bytes + 127) / 128;
   return records > 0xFFFFFF ? 0xFFFFFF : static_cast<uint32_t>(records);
@@ -2530,7 +2605,7 @@ void CPMEmulator::bdos_read_sequential() {
   uint8_t buffer[128];
   size_t nread = 0;
   if (cr <= 128 && record < FCB_MAX_RECORDS) {
-    nread = read_record(*of, record, buffer);
+    nread = read_record(*of, record, buffer, true);
   }
 
   // CP/M convention: return A=0 (success) when data is available,
@@ -2720,6 +2795,18 @@ void CPMEmulator::bdos_make_file() {
     if (kind == MAKE_GUESSED) made_guessed.insert(unix_name);
     if (kind == MAKE_BY_CONTENT) made_by_content.insert(unix_name);
   }
+  std::shared_ptr<TextImage> img;
+  if (mode == MODE_TEXT && eol_convert) {
+    fclose(fp);
+    fp = nullptr;
+    img = text_image(unix_name, !extending);
+    if (!img) {
+      cpu->set_reg8(0xFF, qkz80::reg_A);
+      return;
+    }
+  } else if (!extending) {
+    forget_text_image(unix_name);  // an FCB still open on the old file keeps it
+  }
 
   auto old = open_files.find(fcb_addr);
   if (old != open_files.end()) {
@@ -2731,6 +2818,7 @@ void CPMEmulator::bdos_make_file() {
 
   OpenFile of;
   of.fp = fp;
+  of.img = img;
   of.unix_path = unix_name;
   of.cpm_name = filename;
   of.mode = mode;
@@ -2775,6 +2863,7 @@ void CPMEmulator::bdos_delete_file() {
   } else {
     made_guessed.erase(unix_path);
     made_by_content.erase(unix_path);
+    forget_text_image(unix_path);
     cpu->set_reg8(0, qkz80::reg_A);  // Success
   }
 }
@@ -2785,11 +2874,10 @@ void CPMEmulator::bdos_delete_file() {
 // 2.2 does and what its manual promises.  They used to leave the FCB alone and
 // the host stream one record on, so the sequential call went to the next one.
 //
-// The bytes are raw, text file or not: a random record of a text file is 128
-// host bytes at record * 128, as it has always been here.  A text file's
-// sequential stream is converted, so it cannot be trusted across a random
-// call and is found again from the FCB by the next sequential one.
-bool CPMEmulator::random_position(OpenFile& of, qkz80_uint16 fcb_addr, uint32_t* record) {
+// A record of a text file with conversion is the same record a sequential
+// call reads, from its image.  It was 128 raw host bytes at record * 128,
+// which is not where that record's text is once an LF has become CR LF.
+bool CPMEmulator::random_position(qkz80_uint16 fcb_addr, uint32_t* record) {
   qkz80_uint8* f = &cpu->get_mem()[fcb_addr];
   *record = static_cast<uint32_t>(f[FCB_R0] | (f[FCB_R1] << 8) | (f[FCB_R2] << 16));
   if (*record >= FCB_MAX_RECORDS) {
@@ -2797,13 +2885,6 @@ bool CPMEmulator::random_position(OpenFile& of, qkz80_uint16 fcb_addr, uint32_t*
     return false;
   }
   fcb_set_record(f, *record);
-
-  flush_pending_cr(of);
-  of.stream_valid = false;
-  if (fseek(of.fp, static_cast<long>(*record) * 128L, SEEK_SET) != 0) {
-    cpu->set_reg8(0xFF, qkz80::reg_A);  // Error: seek failed
-    return false;
-  }
   return true;
 }
 
@@ -2814,12 +2895,10 @@ void CPMEmulator::bdos_read_random() {
   if (!of) return;  // A = 0xFF: no such file
 
   uint32_t record_num;
-  if (!random_position(*of, fcb_addr, &record_num)) return;
+  if (!random_position(fcb_addr, &record_num)) return;
 
-  // Read 128 bytes to DMA
   uint8_t buffer[128];
-  of->last_op = OP_READ;
-  size_t nread = fread(buffer, 1, 128, of->fp);
+  size_t nread = read_record(*of, record_num, buffer, false);
 
   if (debug || debug_bdos_funcs.count(33)) {
     fprintf(stderr, "Read random: FCB %04X file '%s' record %u read %zu bytes\n",
@@ -2829,10 +2908,7 @@ void CPMEmulator::bdos_read_random() {
   if (nread == 0) {
     cpu->set_reg8(1, qkz80::reg_A);  // EOF
   } else {
-    // Pad with ^Z if less than 128 bytes
-    if (nread < 128) {
-      memset(buffer + nread, 0x1A, 128 - nread);
-    }
+    pad_to_128(buffer, nread);
     dma_put(buffer, 128);
     cpu->set_reg8(0, qkz80::reg_A);  // Success
   }
@@ -2845,25 +2921,17 @@ void CPMEmulator::bdos_write_random() {
   if (!of) return;  // A = 0xFF: no such file
 
   uint32_t record_num;
-  if (!random_position(*of, fcb_addr, &record_num)) return;
+  if (!random_position(fcb_addr, &record_num)) return;
 
-  // Write 128 bytes from DMA
   uint8_t buffer[128];
   dma_get(buffer, 128);
-  of->last_op = OP_WRITE;
-  size_t nwritten = fwrite(buffer, 1, 128, of->fp);
-  fflush(of->fp);
+  bool ok = write_record(*of, record_num, buffer);
 
   if (debug || debug_bdos_funcs.count(34)) {
-    fprintf(stderr, "Write random: FCB %04X file '%s' record %u wrote %zu bytes\n",
-            fcb_addr, of->cpm_name.c_str(), record_num, nwritten);
+    fprintf(stderr, "Write random: FCB %04X file '%s' record %u %s\n",
+            fcb_addr, of->cpm_name.c_str(), record_num, ok ? "written" : "FAILED");
   }
-
-  if (nwritten != 128) {
-    cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
-  } else {
-    cpu->set_reg8(0, qkz80::reg_A);  // Success
-  }
+  cpu->set_reg8(ok ? 0 : 0xFF, qkz80::reg_A);
 }
 
 void CPMEmulator::bdos_file_size() {
@@ -2904,6 +2972,10 @@ void CPMEmulator::bdos_file_size() {
   int64_t records64 = (file_size + 127) / 128;
   if (records64 > 0xFFFFFF) records64 = 0xFFFFFF;
   uint32_t records = static_cast<uint32_t>(records64);
+  // A text file with conversion has the records its image has - the ones a
+  // random read reads - not its host bytes / 128: an LF file is short of them
+  // by one byte a line, so the record a program took for the last was not.
+  if (mode == MODE_TEXT && eol_convert) records = text_record_count(unix_path);
 
   // Store in FCB bytes 33-35 (r0, r1, r2)
   mem[fcb_addr + 33] = records & 0xFF;
@@ -2992,6 +3064,18 @@ void CPMEmulator::bdos_rename_file() {
       file_map[normalize_cpm_filename(new_name)] = new_path;
     }
     renamed_made_file(old_path, new_name, new_path);
+    // An FCB still open on the file follows it, as a CP/M FCB does: its
+    // image, and the path its host file is found by, are the new name's.
+    if (new_path != old_path) forget_text_image(new_path);  // the file it replaced
+    auto moved = text_images.find(old_path);
+    if (moved != text_images.end() && new_path != old_path) {
+      moved->second->path = new_path;
+      text_images[new_path] = moved->second;
+      text_images.erase(moved);
+    }
+    for (auto& pair : open_files) {
+      if (pair.second.unix_path == old_path) pair.second.unix_path = new_path;
+    }
     cpu->set_reg8(0, qkz80::reg_A);  // Success
   }
 }
@@ -3028,7 +3112,7 @@ void CPMEmulator::renamed_made_file(const std::string& old_path, const std::stri
   // file the conversion replaced.  CP/M lets a program rename an open file;
   // none of the three above does.
   for (const auto& pair : open_files) {
-    if (pair.second.fp && pair.second.unix_path == old_path) {
+    if (pair.second.is_open() && pair.second.unix_path == old_path) {
       if (trace) fprintf(stderr, "Rename: %s still open, left as written\n", new_path.c_str());
       return;
     }
@@ -3040,7 +3124,7 @@ void CPMEmulator::settle_made_file(const std::string& path, bool trace) {
   auto it = made_by_content.find(path);
   if (it == made_by_content.end()) return;
   for (const auto& pair : open_files) {
-    if (pair.second.fp && pair.second.unix_path == path) return;  // not its last close
+    if (pair.second.is_open() && pair.second.unix_path == path) return;  // not its last close
   }
   made_by_content.erase(it);
   convert_made_file_to_text(path, "Close", trace);

@@ -29,14 +29,15 @@
 #           CPMEMU_REQUIRE_ALL=1.  A skip exits 0, so on a machine missing an
 #           assembler this suite still reports 0 failed and a green tick while
 #           roughly two fifths of its checks never ran - which is what the
-#           first CI job to run it did.  Under this flag the three skips a
+#           first CI job to run it did.  Under this flag the four skips a
 #           machine can fix by installing something - no assembler, no mingw,
-#           a .com that has gone missing - fail instead.  The two platform
+#           a .com that has gone missing, no python3 for the random text file
+#           check - fail instead.  The two platform
 #           skips do not: the pty harness cannot run on Windows and the console
 #           harness cannot run anywhere else, and no install changes that.  Nor
 #           do the exercisers, which are opt-in above by design.
 #           CPMEMU_SKIP_OK allows named ones through: a space or comma
-#           separated list of "assembler", "mingw", "missing-com",
+#           separated list of "assembler", "mingw", "missing-com", "python3",
 #           "posix-console" and "windows-console".  The macOS CI job passes
 #           "mingw" and nothing else.  The last two cover skips the pty and
 #           console sub-harnesses print themselves, which are skips of this
@@ -71,7 +72,7 @@ skipped=0
 
 # Every skip that means "this machine is missing a tool" registers itself here,
 # so --require can turn the lot into one failure at the end.  Registering is
-# separate from printing because the count behind a gate is not always one: 101
+# separate from printing because the count behind a gate is not always one: 109
 # checks sit behind the assembler.
 # Each takes a token so a caller can allow one by name: CPMEMU_SKIP_OK is a
 # space or comma separated list of tokens that --require lets through.  The
@@ -339,14 +340,14 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 101 checks live behind this gate, not the 6 an earlier version counted
-    skipped=$((skipped + 101))
-    soft_skip assembler "drive mapping tests: 101 checks, no assembler (pip install um80)"
+    # 109 checks live behind this gate, not the 6 an earlier version counted
+    skipped=$((skipped + 109))
+    soft_skip assembler "drive mapping tests: 109 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1
     for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren cli_tail cli_fcb con_eof con_spin \
-               adm3a savemem bios_disk sectran fcb_io mem_top; do
+               adm3a savemem bios_disk sectran fcb_io mem_top text_ops; do
         if ! assemble "$root/tests/$src.asm" "$tmp/$src.com" >"$tmp/asm.log" 2>&1; then
             echo "FAIL  assembling tests/$src.asm"
             sed 's/^/        /' <"$tmp/asm.log"
@@ -878,6 +879,67 @@ else
         fcb_reset; printf '%s\nb\n' "$a127" >"$fcbdir/t.txt"; cp "$fcbdir/t.txt" "$tmp/want"
         check_fcb "files: rewriting the record that ends in a split CR keeps the LF" \
             T.TXT ORZ0WLC "a>b<>~" t.txt "$tmp/want"
+
+        # A text file is held as its CP/M image and written back as host
+        # text, so a record rewritten in place gives the file a CP/M disk would
+        # hold.  The converting stream wrote the new record's host text over
+        # the old: the classic append - read to the end, back up a record, and
+        # write it again from its ^Z - on a CR LF file wrote APPENDED LF, and
+        # left the last 4 of the 25 "ab" lines after it (the reviewers' repro,
+        # with append.com; this is the same calls through fcb_io).  The file
+        # keeps its CR LF.
+        c1() { head -c 126 /dev/zero | tr '\0' x; printf '\r\n'
+               for i in $(seq 1 25); do printf 'ab\r\n'; done; }
+        appendix=ORRRZ1RZ1V100AV101PV102PV103EV104NV105DV106EV107DJ108K109WC
+        fcb_reset; c1 >"$fcbdir/c1.txt"; { c1; printf 'APPENDED\r\n'; } >"$tmp/want"
+        check_fcb "text: the append idiom on a CR LF file leaves nothing stale" \
+            C1.TXT "$appendix" 'xa=01a' c1.txt "$tmp/want"
+        # The same on the LF copy of it, which ends LF.
+        fcb_reset; c1 | tr -d '\r' >"$fcbdir/c1.txt"
+        { c1 | tr -d '\r'; printf 'APPENDED\n'; } >"$tmp/want"
+        check_fcb "text: the append idiom on an LF file" C1.TXT "$appendix" 'xa=01a' c1.txt "$tmp/want"
+        # And on CP/M's own form, ^Z-padded to a record: it keeps the padding.
+        fcb_reset; { c1; printf '\032'; head -c 27 /dev/zero | tr '\0' '\032'; } >"$fcbdir/c1.txt"
+        { c1; printf 'APPENDED\r\n\032'; head -c 17 /dev/zero | tr '\0' '\032'; } >"$tmp/want"
+        check_fcb "text: the append idiom on a ^Z-padded CR LF file" \
+            C1.TXT "$appendix" 'xa=01a' c1.txt "$tmp/want"
+        # A random record of a text file is the record a sequential read
+        # reads, and the file size counts those records; both were the host's
+        # raw bytes, which is not where the text is once LF has become CR LF.
+        fcb_reset; { head -c 126 /dev/zero | tr '\0' a; printf '\nbc\n'; } >"$fcbdir/t.txt"
+        check_fcb "text: a random read reads the converted record" T.TXT ON1G 'b'
+        fcb_reset; for i in $(seq 1 200); do printf 'a\n'; done >"$fcbdir/t.txt"
+        check_fcb "text: file size counts the converted records" T.TXT F '#000005'
+        fcb_reset; { head -c 126 /dev/zero | tr '\0' a; printf '\nbc\n'; } >"$fcbdir/t.txt"
+        { head -c 126 /dev/zero | tr '\0' a; printf '\nQ\n'; } >"$tmp/want"
+        check_fcb "text: a random write writes the converted record" \
+            T.TXT ON1HQJ1K2U3PC '' t.txt "$tmp/want"
+        # A shorter record in place: the text ends where the new ^Z is, and
+        # the host file is cut there.  The stream left the old text after it.
+        fcb_reset; for i in $(seq 1 100); do printf 'line %d\n' $i; done >"$fcbdir/t.txt"
+        printf 'X\n' >"$tmp/want"
+        check_fcb "text: a record rewritten shorter cuts the text there" \
+            T.TXT OHXJ1K2U3WC '' t.txt "$tmp/want"
+
+        # Random files: every sequence of calls, against a model of the
+        # image.  tests/text_image_prop.py has the definition.
+        if command -v python3 >/dev/null 2>&1; then
+            got=$(cd "$fcbdir" && python3 "$root/tests/text_image_prop.py" "$emu" \
+                  "$tmp/text_ops.com" --cases 300 2>&1)
+            if [ $? -eq 0 ]; then
+                printf 'PASS  text: %s, and the host file they leave\n' \
+                    "reads and writes of random text files match the image ($got)"
+                passed=$((passed + 1))
+            else
+                printf 'FAIL  text: reads and writes of random text files match the image\n'
+                printf '%s\n' "$got" | head -40 | sed 's/^/        /'
+                failed=$((failed + 1))
+            fi
+        else
+            echo "SKIP  text: the random text file check (no python3)"
+            skipped=$((skipped + 1))
+            soft_skip python3 "text: the random text file check, no python3"
+        fi
 
         # PIP, ED and WordStar write NAME.$$$ and rename it at the end.  $$$
         # is on neither extension list, so make writes it as it comes, and the

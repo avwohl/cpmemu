@@ -60,30 +60,49 @@ around 20 and 21 were brought into line with them:
 - a read after a write, or a write after a read, on one stream now has the
   seek between them that ISO C requires and nothing issued.
 
-A text file (`MODE_TEXT`) is converted, so its records are not 128 host
-bytes; CR = n is found by converting from the top of the file, and only when
-the guest moves its own position. Two limits remain, both older than this:
-a random read or write on a text file is still raw bytes at `record * 128`,
-and rewriting a text file in place with shorter text leaves the old tail
-after it, since the host file cannot be truncated there.
+A text file with conversion is not 128 host bytes to a record; how its
+records are found, read and written back is the first entry under Fixed.
 
 ### Fixed
 
-- **The text converter's output depended on where the 128-byte record
-  boundaries fell.** A bare LF that converted at byte 127 ended the record
-  there, and the caller padded it with `^Z` - so every text reader, which
-  stops at `^Z`, took the file to end at that line. A CR LF already in the
-  file with the CR at byte 127 came back as CR CR LF. Writing, a CR LF split
-  across two records reached the host as CR LF rather than LF. And a text
-  record that begins with `^Z` - a text file's last record, often - wrote no
-  bytes and was answered 0xFF. All four hold their state between records now,
-  and so does a record rewritten in place: where a host LF converted into
-  the CR ending one record and the LF opening the next, the classic append -
-  read to the end, back up one record, write it again from its `^Z` - wrote
-  that LF a second time, a blank line, and writing back the record ending in
-  the CR put a CR over the host LF, losing the line end. A CR held at a
-  record's end also reaches the file when the run ends at the end of its
-  input, on five ^C or at the watchdog; those exits dropped it.
+- **A text file's records depended on where its host bytes fell, and a
+  record rewritten in place corrupted the file.** Reading, a bare LF that
+  converted at byte 127 ended the record there and the caller padded it with
+  `^Z`, so every text reader took the file to end at that line; a CR LF with
+  the CR at byte 127 came back as CR CR LF. Writing, a CR LF split across two
+  records reached the host as CR LF, and a record that begins with `^Z` - a
+  text file's last record, often - wrote no bytes and was answered 0xFF. And
+  a record written anywhere but at the end put its host text over the old,
+  shorter or longer: the classic append - read to the end, back up a record,
+  write it again from its `^Z` - on a CR LF file wrote `APPENDED` LF and left
+  the old last four lines after it (repro: 126 x, CR LF, 25 lines of `ab` CR
+  LF); a record rewritten with less text left the rest of the old text after
+  the new; a random read or write of a text file was raw host bytes at
+  `record * 128`, which is not where that record's text is once LF has become
+  CR LF; and BDOS 35 counted host bytes, so the record a program took for
+  the last one was not.
+
+  A text file with conversion is now held as the file a CP/M disk would hold
+  - the host text converted, LF to CR LF, ending at the first `^Z`, padded
+  with `^Z` to a record - and every read and write, sequential or random, is
+  of that image; BDOS 35 counts its records. It is written back as host text:
+  the lines before the first change keep their host bytes, and the rest is
+  written in the file's own style - CR LF kept for a file whose lines ended
+  CR LF, a `^Z` kept for a file that had one, and `^Z` padding to a record
+  for a file that was a whole number of records. That happens at once when
+  the change is in the last line and cheap to write, as an append or a new
+  file always is, and otherwise at the file's close, at a disk reset, at the
+  end of the run, at BDOS 48, and before a search, a rename or a file size.
+  Two things follow that a disk would do differently, both in
+  `docs/CPM_SUPPORT.md`: what a program writes after a text file's first
+  `^Z` is gone once the file is closed and opened again, as no text reader
+  sees it anyway, and a record written past the end leaves NULs in the gap.
+  `tests/text_image_prop.py` checks every call against that definition over
+  random LF, CR LF, `^Z`-ended and `^Z`-padded files whose line ends fall at
+  every place around a record boundary, with new guest `tests/text_ops.asm`:
+  300 cases in the suite, and 6,400 across four seeds when this was written.
+  Of its first 400 cases e497958 fails 310 and 4.9.0 372, and of 400 made of
+  sequential calls alone, 231 and 331.
   Measured with DRI's own tools on MP/M's sources, which are CR LF text:
   under e4f7fd5 RMAC reported errors in all nine modules it assembled, 104
   lines of them for `BNKBDOS` alone. Now PIP, RMAC and LINK rebuild

@@ -46,7 +46,7 @@ Two things about the dialect, both of which have already cost time:
 
 - **`.z80` before the first Z80 instruction, always.** Without it `um80` is an
   8080 assembler and the first `LD` fails the file - `Unknown instruction or
-  directive: LD`. All 16 sources the suite assembles carry it; in every one it
+  directive: LD`. All 17 sources the suite assembles carry it; in every one it
   sits after the comment header and is tab-indented, not on line 1 - the
   requirement is that it precede the first `LD`, not that it open the file.
 - **Never write `org 0100h` in a `.COM` source.** `ul80` bases a relocatable

@@ -34,6 +34,31 @@
 - Convert `\r\n` -> `\n` when writing CP/M text files to Unix
 - Only apply to text files, not binary (controlled by `eol_convert`)
 
+### 3. Rewriting text in place
+
+A CP/M program may read and write a text file's records in any order - the
+classic append reads to the end, backs up a record and writes it again from
+its `^Z`. Host text is shorter or longer than the CP/M text it stands for, so
+the emulator does not write records into the host file where they fall. A
+text file with conversion is held as the file a CP/M disk would hold - the
+host text converted, padded with `^Z` to a record - and read and written as
+that, sequentially or at random. What changes is written back to the host file
+as text:
+
+- the lines before the one the first change is in keep their host bytes;
+- the rest, to the first `^Z`, is written in the file's own style: CR LF left
+  as it is if the file's first line ended CR LF, CR LF to LF otherwise (a lone
+  CR or LF is written as it is);
+- a file that had a `^Z` gets one after its text, and one that was a whole
+  number of records gets `^Z` padding to a record, as CP/M writes it.
+
+The write happens at once when the change is in the file's last line and that
+line and what follows are under 64 KB, as an append or a new file always is,
+and otherwise when the file is closed, at a disk reset or BDOS 48, before a
+directory search, rename or file size, and when the program ends. What a
+program writes after the text's first `^Z` is not text, and does not reach the
+host file.
+
 ## Configuration File Format
 
 Configuration files (`.cfg`) specify program settings, file mappings, and modes.
