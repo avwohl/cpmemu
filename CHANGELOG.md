@@ -82,9 +82,9 @@ records are found, read and written back is the first entry under Fixed.
   CR LF; and BDOS 35 counted host bytes, so the record a program took for
   the last one was not.
 
-  A text file with conversion is now held as the file a CP/M disk would hold
-  - the host text converted, LF to CR LF, ending at the first `^Z`, padded
-  with `^Z` to a record - and every read and write, sequential or random, is
+  A text file with conversion is now held as the file a CP/M disk would
+  hold: the host text converted, LF to CR LF, ending at the first `^Z`, padded
+  with `^Z` to a record. Every read and write, sequential or random, is
   of that image; BDOS 35 counts its records. It is written back as host text:
   the lines before the first change keep their host bytes, and the rest is
   written in the file's own style - CR LF kept for a file whose lines ended
@@ -146,9 +146,11 @@ records are found, read and written back is the first entry under Fixed.
   `assembler.cfg`, whose M80 workflow writes `.REL` files through BDOS 22.
   `auto` means "guess from the extension", which is what `README.md` says and
   what BDOS 15 does for the same name, and make does that now, after any mode
-  rule for the name; a config that says `default_mode = binary` or `text` gets
-  what it asks for as before. New guest `tests/fcb_io.asm` runs a script of
-  BDOS file calls against one FCB, and every check for this section uses it.
+  rule for the name - a name on the text list by what is written in it, as
+  the next entry says; a config that says `default_mode = binary` or `text`
+  gets what it asks for as before. New guest `tests/fcb_io.asm` runs a script
+  of BDOS file calls against one FCB, and every check for this section uses
+  it.
 
   PIP, ED and WordStar make `NAME.$$$` and rename it when they are done, and
   `$$$` is on neither extension list, so the file is written as it comes and
@@ -181,12 +183,12 @@ records are found, read and written back is the first entry under Fixed.
   the config said `*.LIB = binary`. Under `auto` a name on the text list now
   opens as text only when what it holds is text - no NUL but trailing
   padding, no control character but BS, TAB, LF, VT, FF, CR and ESC, the
-  text ending in the last record, and UTF-8 unless its lines end in bare LFs - and
-  opens binary otherwise, which loses nothing: the guest reads the bytes that
-  are there. Of 3,796 distinct files on the RomWBW, MP/M II and CP/M tool
-  disks, every REL file and REL library, tokenized program, WordStar document
-  and Aztec C or ISIS library opens binary, and every one of DRI's macro
-  libraries opens as text. `docs/file_handling_notes.md` has the rule. Made
+  text ending in the last record, and UTF-8 unless its lines end in bare
+  LFs - and opens binary otherwise, which loses nothing: the guest reads the
+  bytes that are there. Of 3,796 distinct files on the RomWBW, MP/M II and
+  CP/M tool disks, every REL file and REL library, tokenized program, WordStar
+  document and Aztec C or ISIS library opens binary, and every one of DRI's
+  macro libraries opens as text. `docs/file_handling_notes.md` has the rule. Made
   under such a name, a file is written as it comes, like a `$$$` file, and at
   its last close, at a disk reset or at the end of the run it becomes host
   text if it is text by the same rule - and, if any of it was written at
@@ -202,6 +204,12 @@ records are found, read and written back is the first entry under Fixed.
   MP/M II's NUCLEUS sources byte-identical to DRI's, and RMAC reads an LF copy
   of DRI's `Z80.LIB` as the macro library it is. A mode rule for the name
   still decides without looking.
+
+  **Changed on the host:** MBASIC writes even a sequential file with BDOS 34,
+  and a random write was raw, so the `SEQ.TXT` a program writes with `PRINT #`
+  was CP/M text on the host under 4.9.0 and e497958 - 512 bytes of CR LF and
+  `^Z` for 50 short lines. It is host text at its close now, 441 bytes of LF,
+  and `LINE INPUT #` reads the same 50 lines back.
 
 - **Search First and Next returned one directory entry per file, with EX = 0
   and RC at most 128, whatever the FCB asked for.** A CP/M directory has an
@@ -267,8 +275,10 @@ records are found, read and written back is the first entry under Fixed.
   same. Both names are blank now when not given, and a `*` fills the rest of
   its field with `?`, as CONVERT does; it became `_`, with a warning. CP/M
   2.2's ED.COM now edits a file that did not exist and one that did, and its
-  `NAME.$$$` renamed over the original is host text. New guest
-  `tests/cli_fcb.asm`.
+  `NAME.$$$` renamed over the original is host text. `STAT *.*` answered
+  `Invalid File Indicator` for the same reason, DRI's STAT taking the NULs of
+  the second name for an indicator it did not know; it lists the files now.
+  New guest `tests/cli_fcb.asm`.
 
 - **`cpm_disk.py add` said it had replaced a file it then failed to add.**
   On a disk too full for the new copy, `add` printed `(replaced existing
