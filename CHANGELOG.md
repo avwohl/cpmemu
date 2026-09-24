@@ -72,6 +72,16 @@ is still 128, not the extent's record count.
   `BNKBDOS.SPR` and `RESBDOS.SPR` byte-identical to the ones DRI shipped,
   and RMAC reports no error in any of the nine.
 
+- **`cpm_disk.py create --sssd` failed its own verify and never wrote an
+  image.** The formatter filled the first 2 KB of track 2 with `E5` by
+  physical offset. The directory is read through the sector skew, so its 16
+  logical sectors are spread over the whole track, and the ones outside that
+  2 KB read back as zeros - user 0, a name of NULs - in 20 of the 64
+  entries, which `verify` reported as 220 errors. Every sector after the boot tracks is `E5` now, as a real FORMAT
+  leaves it. romwbw_emu's `docs/DISK_FORMATS.md` and `docs/disk-images.md`
+  and ioscpm's `KNOWN_PROBLEMS.md` say not to use it, and are out of date once
+  this ships.
+
 - **A file a guest created was written as text, whatever its name.** BDOS 22
   took `default_mode` as it stood, and `auto` is not `binary`, so the text
   converter ran on everything a program made: each record stopped at its first

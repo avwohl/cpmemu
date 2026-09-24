@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """Unit tests for cpm_disk.py"""
 
+import os
+import shutil
 import struct
+import subprocess
+import sys
+import tempfile
 import unittest
 
 from cpm_disk import (
     Hd1kDisk,
     ComboDisk,
+    SssdDisk,
     create_hd1k_disk,
     create_sssd_disk,
     detect_disk_format,
@@ -15,6 +21,8 @@ from cpm_disk import (
     verify_disk,
     BLOCK_SIZE,
 )
+
+CPM_DISK = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cpm_disk.py')
 
 
 class TestDiskAllocation(unittest.TestCase):
@@ -363,6 +371,46 @@ class TestComboGuards(unittest.TestCase):
         """
         self.assertTrue(issubclass(SliceError, ValueError))
         self.assertFalse(issubclass(UnicodeDecodeError, SliceError))
+
+
+def dir_entries(disk):
+    """(index, raw 32 bytes) of every directory entry, for either geometry."""
+    if isinstance(disk, SssdDisk):
+        return [(i, bytearray(disk.read_dir_entry(i))) for i in range(disk.DIR_ENTRIES)]
+    return [(i, bytearray(disk.data[disk.DIR_START + i * 32:disk.DIR_START + i * 32 + 32]))
+            for i in range(disk.DIR_ENTRIES)]
+
+
+class TestSssdCreate(unittest.TestCase):
+    """`create --sssd` failed its own verify and so never wrote an image.
+
+    format_sssd_disk filled 2 KB at the directory's physical offset with E5,
+    but the directory is read through the sector skew: its sixteen logical
+    sectors are spread over the whole of track 2, and the ones that fell
+    outside that 2 KB read back as zeros - user 0, a name of NULs.
+    """
+
+    def test_a_new_sssd_image_passes_verify(self):
+        data = create_sssd_disk()
+        for skew in (True, False):
+            with self.subTest(skew=skew):
+                disk = SssdDisk(data, use_skew=skew)
+                self.assertEqual(verify_disk(disk, data, 'sssd')[0], [])
+                self.assertEqual(disk.list_files(), {})
+                self.assertTrue(all(e[0] == 0xE5 for i, e in dir_entries(disk)))
+
+    def test_create_sssd_writes_the_image(self):
+        d = tempfile.mkdtemp()
+        try:
+            img = os.path.join(d, 's.img')
+            p = subprocess.run([sys.executable, CPM_DISK, 'create', '--sssd', img],
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               universal_newlines=True)
+            self.assertEqual(p.returncode, 0, p.stdout)
+            self.assertEqual(os.path.getsize(img), 256256)
+        finally:
+            shutil.rmtree(d)
+
 
 
 if __name__ == '__main__':

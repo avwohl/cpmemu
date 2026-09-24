@@ -178,10 +178,14 @@ def format_sssd_disk(data):
 
     Directory starts at track 2, sector 0
     """
-    dir_size = SSSD_DIR_ENTRIES * 32
-
-    # Initialize directory with 0xE5 (CP/M empty directory marker)
-    data[SSSD_DIR_START:SSSD_DIR_START + dir_size] = bytes([0xE5] * dir_size)
+    # Every sector after the boot tracks is 0xE5, the CP/M empty directory
+    # marker, as a real FORMAT leaves it.  This used to fill the first 2 KB
+    # of track 2 by physical offset, which is the directory's size but not
+    # where it is: the directory is read through the sector skew, so its
+    # sixteen logical sectors are spread over the whole track, and the half of
+    # them outside those 2 KB read back as zeros - user 0, a name of NULs.
+    # `create --sssd` failed its own verify on those and never wrote a file.
+    data[SSSD_DIR_START:SSSD_SIZE] = bytes([0xE5] * (SSSD_SIZE - SSSD_DIR_START))
 
 
 def create_sssd_disk():
