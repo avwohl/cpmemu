@@ -465,6 +465,8 @@ private:
   size_t read_with_conversion(OpenFile& of, uint8_t* buffer, size_t size);
   size_t write_with_conversion(OpenFile& of, const uint8_t* buffer, size_t size);
   void pad_to_128(uint8_t* buffer, size_t actual_size);
+  // The mode and conversion a file created by BDOS 22 gets.
+  void make_file_mode(const std::string& filename, FileMode* mode, bool* eol);
 
 private:
   // BDOS functions
@@ -2070,6 +2072,25 @@ void CPMEmulator::bdos_write_sequential() {
   mem[fcb_addr + 32]++;
 }
 
+// The mode a file BDOS 22 creates is written in: a mode rule for the name if
+// there is one, else default_mode, and `auto` - the default - guesses from the
+// extension, which is what the README says auto does and what BDOS 15 does
+// for the same name.  Make used default_mode as it stood, and auto is not
+// binary, so it was converted as text: every file a guest created, a .COM or
+// a .REL included, lost each ^Z record tail and had its CR LFs collapsed.
+void CPMEmulator::make_file_mode(const std::string& filename, FileMode* mode, bool* eol) {
+  std::string normalized = normalize_cpm_filename(filename);
+  *mode = default_mode;
+  *eol = default_eol_convert;
+  for (const auto& mapping : file_mappings) {
+    if (mapping.unix_pattern.empty() && match_pattern(mapping.cpm_pattern, normalized)) {
+      *mode = mapping.mode;
+      *eol = mapping.eol_convert;
+    }
+  }
+  if (*mode == MODE_AUTO) *mode = detect_file_mode(normalized, normalized);
+}
+
 void CPMEmulator::bdos_make_file() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
 
@@ -2083,8 +2104,13 @@ void CPMEmulator::bdos_make_file() {
 
   std::string filename = fcb_to_filename(fcb_addr);
 
+  FileMode mode;
+  bool eol_convert;
+  make_file_mode(filename, &mode, &eol_convert);
+
   if (debug || debug_bdos_funcs.count(22)) {
-    fprintf(stderr, "Make file: %s\n", filename.c_str());
+    fprintf(stderr, "Make file: %s (mode: %s)\n", filename.c_str(),
+            mode == MODE_TEXT ? "text" : "binary");
   }
 
   // Convert to lowercase for Unix
@@ -2112,8 +2138,8 @@ void CPMEmulator::bdos_make_file() {
   of.fp = fp;
   of.unix_path = unix_name;
   of.cpm_name = filename;
-  of.mode = default_mode;
-  of.eol_convert = default_eol_convert;
+  of.mode = mode;
+  of.eol_convert = eol_convert;
   of.position = 0;
   of.eof_seen = false;
   of.write_mode = true;

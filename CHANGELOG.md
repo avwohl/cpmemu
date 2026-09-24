@@ -10,6 +10,23 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
+## [Unreleased]
+
+### Fixed
+
+- **A file a guest created was written as text, whatever its name.** BDOS 22
+  took `default_mode` as it stood, and `auto` is not `binary`, so the text
+  converter ran on everything a program made: each record stopped at its first
+  `^Z` and each CR LF became an LF. A 128-byte record of `A CR LF ^Z A...`
+  written to a new `MK.COM` left a 2-byte host file, `A LF`. `auto` is the
+  default, and five of the seven `examples/*.cfg` run with it - among them
+  `assembler.cfg`, whose M80 workflow writes `.REL` files through BDOS 22.
+  `auto` means "guess from the extension", which is what `README.md` says and
+  what BDOS 15 does for the same name, and make does that now, after any mode
+  rule for the name; a config that says `default_mode = binary` or `text` gets
+  what it asks for as before. New guest `tests/fcb_io.asm` runs a script of
+  BDOS file calls against one FCB, for this check and the ones below.
+
 ## [4.9.0] - 2026-09-17
 
 **`tests/test_results_final.txt` claimed the 8080 core fails its own

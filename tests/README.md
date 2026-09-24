@@ -190,6 +190,17 @@ and what should come back is `MANUAL_CHECKS.md` in the repo root.
   deleted unnoticed, and `A` because the accumulator is the half of the old
   bug no HL check can see. Assembled at test time; no `.com` is committed.
 
+### File Call Tests
+- **fcb_io.asm** - runs a script of BDOS file calls against one FCB and prints
+  what came back: `FCB_IO <file> <script>`, where the script is a string of
+  one-letter commands - open, make, close, sequential and random reads and
+  writes, BDOS 35 and 36, setting `EX`, `S2`, `CR` or `R0`-`R2`, filling the
+  DMA buffer - listed in the source's header. A read prints the first byte of
+  the record it got, a failed call prints `=` and the status, and `L` dumps a
+  text file to its `^Z`. `tests/run_tests.sh` builds the host file each check
+  starts from and compares the file each check ends with as well as the output.
+  Assembled at test time; no `.com` is committed.
+
 ### Flag Verification Tests
 - **test_n_flag.asm** - Verifies N flag is set/cleared correctly
   - Expected output: `20 02 00`
@@ -412,10 +423,10 @@ of them ever needs rebuilding, assemble it with `um80` and compare, rather than
 reaching for z88dk again.
 
 The drive mapping sources, the two console end-of-input programs, `cli_tail.asm`,
-`adm3a.asm`, `savemem.asm`, `bios_disk.asm` and `sectran.asm` are assembled at
+`adm3a.asm`, `savemem.asm`, `bios_disk.asm`, `sectran.asm` and `fcb_io.asm` are assembled at
 test time instead, so no binary for them is committed. `tests/run_tests.sh` assembles them with
 **`um80` and `ul80`**, this project's own assembler and linker, and skips the
-whole group - 42 checks - when they are not on `PATH`:
+whole group - 43 checks - when they are not on `PATH`:
 ```bash
 pip install um80           # any platform; provides um80 and ul80
 ```
@@ -484,10 +495,10 @@ What is left is coverage of everything they do not reach:
    four terminal programs to try, and the bytes each key should print, are in
    `MANUAL_CHECKS.md` in the repo root.
 2. The drive mapping group needs an assembler. It takes `um80` and nothing
-   else, so on a machine without it 42 checks skip - about two fifths of the
+   else, so on a machine without it 43 checks skip - about two fifths of the
    suite. CI installs it with `pip install um80` on both runners and runs with
    `--require`, so the gate can no longer hide there; a local run on a machine
-   without it still skips them, and committing those thirteen `.com` files as
+   without it still skips them, and committing those fourteen `.com` files as
    byte arrays the way `tests/con_guests.h` does would de-gate it entirely.
 3. `.github/workflows/ci.yml` now runs this suite on `ubuntu-latest` and
    `macos-latest` and `tests\win_console.bat` on `windows-latest`, on every

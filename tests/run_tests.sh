@@ -71,7 +71,7 @@ skipped=0
 
 # Every skip that means "this machine is missing a tool" registers itself here,
 # so --require can turn the lot into one failure at the end.  Registering is
-# separate from printing because the count behind a gate is not always one: 42
+# separate from printing because the count behind a gate is not always one: 43
 # checks sit behind the assembler.
 # Each takes a token so a caller can allow one by name: CPMEMU_SKIP_OK is a
 # space or comma separated list of tokens that --require lets through.  The
@@ -339,14 +339,14 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 42 checks live behind this gate, not the 6 an earlier version counted
-    skipped=$((skipped + 42))
-    soft_skip assembler "drive mapping tests: 42 checks, no assembler (pip install um80)"
+    # 43 checks live behind this gate, not the 6 an earlier version counted
+    skipped=$((skipped + 43))
+    soft_skip assembler "drive mapping tests: 43 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1
     for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren cli_tail con_eof con_spin adm3a \
-               savemem bios_disk sectran; do
+               savemem bios_disk sectran fcb_io; do
         if ! assemble "$root/tests/$src.asm" "$tmp/$src.com" >"$tmp/asm.log" 2>&1; then
             echo "FAIL  assembling tests/$src.asm"
             sed 's/^/        /' <"$tmp/asm.log"
@@ -687,6 +687,56 @@ else
         # accumulator, and a real SECTRAN leaves it alone.
         check_sectran "sectran: the table index wraps at FFFF"     ok    W 0009
         check_sectran "sectran: A is left alone"                   fail  A 5A
+
+        # --- BDOS file calls, through tests/fcb_io.asm -----------------------
+        # tests/fcb_io.asm runs a script of BDOS file calls against one FCB -
+        # its header lists the letters - and prints the first byte of every
+        # record it reads, and = and the status for any call that fails.
+        #
+        # fcb_file <host-name> <letters>: one 128-byte record per letter,
+        # each filled with that letter.
+        fcbdir=$tmp/fcb
+        fcb_file() {
+            local out=$1 letters=$2 i
+            : >"$out"
+            for ((i = 0; i < ${#letters}; i++)); do
+                head -c 128 /dev/zero | tr '\0' "${letters:i:1}" >>"$out"
+            done
+        }
+        # check_fcb <name> <CP/M name> <script> <expected stdout>
+        #           [<host file> <file holding the bytes it must end as>]
+        # Runs in $fcbdir, which the caller has populated.
+        check_fcb() {
+            local name=$1 file=$2 script=$3 want=$4 host=${5-} want_file=${6-} got rc
+            got=$(cd "$fcbdir" && "$emu" "$tmp/fcb_io.com" "$file" "$script" 2>"$tmp/fcberr")
+            rc=$?
+            if [ $rc -ne 0 ]; then
+                printf 'FAIL  %s\n        emulator exited %d\n' "$name" "$rc"
+                sed 's/^/        /' <"$tmp/fcberr"
+                failed=$((failed + 1))
+            elif [ "$got" != "$want" ]; then
+                printf 'FAIL  %s\n        script %s\n        expected %s\n        got      %s\n' \
+                    "$name" "$script" "$want" "$got"
+                failed=$((failed + 1))
+            elif [ -n "$host" ] && ! cmp -s "$fcbdir/$host" "$want_file"; then
+                printf 'FAIL  %s\n        %s is %s bytes, not the %s expected:\n' "$name" "$host" \
+                    "$(wc -c <"$fcbdir/$host" | tr -d ' ')" "$(wc -c <"$want_file" | tr -d ' ')"
+                od -An -c "$fcbdir/$host" | head -8 | sed 's/^/        /'
+                failed=$((failed + 1))
+            else
+                printf 'PASS  %s\n' "$name"
+                passed=$((passed + 1))
+            fi
+        }
+        fcb_reset() { rm -rf "$fcbdir"; mkdir -p "$fcbdir"; }
+
+        # Make had no mode of its own: default_mode is auto unless the config
+        # says otherwise, and auto was taken for text, so a .COM a program
+        # created went through the converter.  128 bytes in, 2 on disk.
+        fcb_reset
+        { printf 'A\r\n\032'; head -c 124 /dev/zero | tr '\0' A; } >"$tmp/want"
+        check_fcb "files: make gives a .COM the binary mode open gives it" \
+            MK.COM MHAJ1K2U3WC '' mk.com "$tmp/want"
     fi
 fi
 
