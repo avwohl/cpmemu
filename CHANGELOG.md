@@ -120,6 +120,34 @@ is still 128, not the extent's record count.
   what it asks for as before. New guest `tests/fcb_io.asm` runs a script of
   BDOS file calls against one FCB, and every check for this section uses it.
 
+  PIP, ED and WordStar make `NAME.$$$` and rename it when they are done, and
+  `$$$` is on neither extension list, so the file is written as it comes and
+  its real name arrives at BDOS 23. A rename to a name that opens as text now
+  turns the host copy into host text - CR LF to LF, ending at the `^Z` - when
+  that loses nothing a text open would read back and the file is plainly text
+  (no NUL, no whole record after its `^Z`); anything else, such as DRI LIB's
+  binary `X.$$$` renamed `X.LIB`, is left exactly as written. Without this,
+  `PIP U.TXT=T.TXT` of a two-line Unix file left 128 bytes of CR LF and `^Z`
+  where 4.9.0 left the 12 it was given; now it is 12 again, and a 900-line
+  file comes out byte-identical to its source.
+
+  **Changed on the host, and deliberate:** a file a guest makes directly under
+  an extension on neither list - `.HEX` from ASM, `.SYM` from RMAC, `.XRF`
+  from XREF, members an unarchiver extracts as `.1ST` or `.CFG` - is now
+  written as the guest wrote it, CR LF and `^Z` padding, and is read back
+  that way. 4.9.0 wrote it as host text and read it back raw, so a binary
+  under such a name - a `.$$$` temporary file, `$$$.SUB`, an archive member
+  that was a program - was corrupted. A mode rule such as `*.HEX = text`
+  gets host text for a name that is known to be text. `.LIB` is on the text
+  list and stays there, which is right for MAC's and M80's macro libraries
+  and wrong for a REL library: building one with DRI LIB or Microsoft LIB-80
+  under `auto` still needs `*.LIB = binary`, as it did in 4.9.0.
+
+- **A mode rule did not apply to a file named on the command line or renamed
+  by the guest.** Both are found through a table that took the mode from the
+  extension alone, so under `*.TXT = binary` such an `X.TXT` opened as text
+  and every other one binary.
+
 ### Changed
 
 - **`cpm_disk.py add` pads a file's last block with NUL, not `^Z`.** The bytes

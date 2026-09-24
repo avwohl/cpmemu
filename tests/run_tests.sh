@@ -71,7 +71,7 @@ skipped=0
 
 # Every skip that means "this machine is missing a tool" registers itself here,
 # so --require can turn the lot into one failure at the end.  Registering is
-# separate from printing because the count behind a gate is not always one: 66
+# separate from printing because the count behind a gate is not always one: 71
 # checks sit behind the assembler.
 # Each takes a token so a caller can allow one by name: CPMEMU_SKIP_OK is a
 # space or comma separated list of tokens that --require lets through.  The
@@ -339,9 +339,9 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 66 checks live behind this gate, not the 6 an earlier version counted
-    skipped=$((skipped + 66))
-    soft_skip assembler "drive mapping tests: 66 checks, no assembler (pip install um80)"
+    # 71 checks live behind this gate, not the 6 an earlier version counted
+    skipped=$((skipped + 71))
+    soft_skip assembler "drive mapping tests: 71 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1
@@ -705,10 +705,13 @@ else
         }
         # check_fcb <name> <CP/M name> <script> <expected stdout>
         #           [<host file> <file holding the bytes it must end as>]
-        # Runs in $fcbdir, which the caller has populated.
+        # Runs in $fcbdir, which the caller has populated.  With fcb_cfg set,
+        # the emulator is given that config, whose program is fcb_io.com,
+        # instead of the program itself.
         check_fcb() {
             local name=$1 file=$2 script=$3 want=$4 host=${5-} want_file=${6-} got rc
-            got=$(cd "$fcbdir" && "$emu" "$tmp/fcb_io.com" "$file" "$script" 2>"$tmp/fcberr")
+            got=$(cd "$fcbdir" && "$emu" "${fcb_cfg:-$tmp/fcb_io.com}" "$file" "$script" \
+                  2>"$tmp/fcberr")
             rc=$?
             if [ $rc -ne 0 ]; then
                 printf 'FAIL  %s\n        emulator exited %d\n' "$name" "$rc"
@@ -850,6 +853,36 @@ else
         fcb_reset; printf '%s\nb\n' "$a127" >"$fcbdir/t.txt"; cp "$fcbdir/t.txt" "$tmp/want"
         check_fcb "files: rewriting the record that ends in a split CR keeps the LF" \
             T.TXT ORZ0WLC "a>b<>~" t.txt "$tmp/want"
+
+        # PIP, ED and WordStar write NAME.$$$ and rename it at the end.  $$$
+        # is on neither extension list, so make writes it as it comes, and the
+        # rename is where its real name arrives: a text name turns the host
+        # copy into host text, as though it had been made under that name.
+        # It stayed CP/M text, CR LF and ^Z padding, which is what a text
+        # copy through PIP left on the host.  Anything that is not plainly
+        # text - here a record of NULs - is left exactly as written, and so is
+        # a file renamed to another name the lists do not know.
+        fcb_reset; printf 'A\nB\n' >"$tmp/want"
+        check_fcb "files: a text file made as X.\$\$\$ and renamed X.TXT is host text" \
+            'U.$$$' 'MHAJ1K2V3BJ4K5U6WC>U.TXT;' '' u.txt "$tmp/want"
+        fcb_reset; head -c 128 /dev/zero >"$tmp/want"
+        check_fcb "files: a binary file renamed to a text name is left as written" \
+            'U.$$$' 'MWC>U.TXT;' '' u.txt "$tmp/want"
+        fcb_reset; { printf 'A\r\n\032'; head -c 124 /dev/zero | tr '\0' A; } >"$tmp/want"
+        check_fcb "files: a file renamed to a name auto cannot place is left as written" \
+            'U.$$$' 'MHAJ1K2U3WC>U.BAK;' '' u.bak "$tmp/want"
+        # A mode rule decides for the new name as it would for any other.
+        { echo "program = $tmp/fcb_io.com"; echo "*.TXT = binary"; } >"$tmp/fcbbin.cfg"
+        fcb_reset; { printf 'A\r\n\032'; head -c 124 /dev/zero | tr '\0' A; } >"$tmp/want"
+        fcb_cfg=$tmp/fcbbin.cfg check_fcb "files: a rename under *.TXT = binary is left as written" \
+            'U.$$$' 'MHAJ1K2U3WC>U.TXT;' '' u.txt "$tmp/want"
+        # A renamed file, and a file named on the command line, is found
+        # through a table that took the mode from the extension alone and
+        # ignored the rule; T.TXT is on the command line here because it is a
+        # file.  Binary, its LFs are not given CRs.
+        fcb_reset; printf 'a\nb\n' >"$fcbdir/T.TXT"
+        fcb_cfg=$tmp/fcbbin.cfg check_fcb "files: a mode rule applies to a file named on the command line" \
+            T.TXT OL 'a>b>~'
 
         # A CR the text writer holds at a record's end reaches the file when
         # the run ends at the end of its input, not only when the program

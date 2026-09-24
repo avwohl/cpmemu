@@ -170,7 +170,21 @@ When `default_mode = auto`, the emulator checks the file extension:
 **Known text extensions:** .BAS, .MAC, .ASM, .TXT, .DOC, .LST, .PRN, .Z80, .LIB
 **Known binary extensions:** .COM, .EXE, .OVL, .OVR, .SYS, .BIN, .DAT, .SPR, .REL, .PRL, .RSP
 
-Files with unrecognized extensions default to binary.
+Files with unrecognized extensions default to binary: read and written as
+they are, so a text file a program makes under such a name - `.HEX` from ASM,
+`.SYM` from RMAC - keeps CP/M's CR LF line ends and `^Z` padding on the host.
+Add a mode rule (`*.HEX = text`) for a name you know is text.
+
+A file a program makes under an unrecognized name and then renames is decided
+by the name it ends up with. PIP, ED and WordStar write `NAME.$$$` and rename
+it when they are done; when the new name is a text one, the host file is
+turned into host text at the rename - if it is plainly text and the
+conversion loses nothing a text open would read back. A binary file renamed to
+a text name is left as it was written.
+
+`.LIB` is a text extension, which suits MAC's and M80's macro libraries. A REL
+library built by DRI LIB or Microsoft LIB-80 is binary under the same name, so
+a config that builds one needs `*.LIB = binary`.
 
 ## File Search Order
 
