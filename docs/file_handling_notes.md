@@ -225,9 +225,9 @@ must also read back exactly as it was written, since a random file's records
 have to stay where they are; a file written in sequence is converted as a
 text file always was, a bare LF becoming a line end like any other. Until
 something has been written in it, it stays undecided: opened again, by the FCB
-that made it or another, it is still written as it comes. So a listing or an ASCII `SAVE "X",A` lands as host text, and
-a tokenized `SAVE "X"` or a library written directly under a `.LIB` name keeps
-its bytes.
+that made it or another, it is still written as it comes. So a listing or an
+ASCII `SAVE "X",A` lands as host text, and a tokenized `SAVE "X"` or a library
+written directly under a `.LIB` name keeps its bytes.
 
 Files with unrecognized extensions default to binary: read and written as
 they are, so a text file a program makes under such a name - `.HEX` from ASM,
@@ -237,7 +237,8 @@ Add a mode rule (`*.HEX = text`) for a name you know is text.
 A file a program makes under an unrecognized name and then renames is decided
 by the name it ends up with. PIP, ED and WordStar write `NAME.$$$` and rename
 it when they are done; when the new name is a text one, the host file is
-turned into host text at the rename, by the same test as at a close. A binary
+turned into host text at the rename, by the same test as at the close of a
+file written at random. A binary
 file renamed to a text name - DRI LIB's `X.$$$` renamed `X.LIB` - is left as
 it was written.
 
