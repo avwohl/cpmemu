@@ -302,20 +302,84 @@ struct FCB {
   qkz80_uint8 r0, r1, r2;   // Random record number
 };
 
+// FCB byte offsets for the fields the file calls position with.
+enum {
+  FCB_EX = 12,  // logical extent, 0-31: 128 records each
+  FCB_S1 = 13,
+  FCB_S2 = 14,  // module: 32 extents each.  Bit 7 is the BDOS's own flag.
+  FCB_RC = 15,
+  FCB_CR = 32,  // record within the extent, 0-127, or 128 after its last
+  FCB_R0 = 33, FCB_R1 = 34, FCB_R2 = 35
+};
+
+// Records an FCB can address.  S2:EX:CR is 6 + 5 + 7 bits, 2^18 records or
+// 32 MB, which is CP/M 3's limit; CP/M 2.2's sixteen modules are inside it.
+// A random record past it is error 6, which both BDOSes answer, because no
+// FCB could say where the sequential calls after it should go.
+static const uint32_t FCB_MAX_RECORDS = 1u << 18;
+
+// The record the extent an FCB is in starts at: the numbering BDOS 33-36 use,
+// so a sequential call and a random one agree on what record N is.
+static uint32_t fcb_extent_base(const qkz80_uint8* f) {
+  return (static_cast<uint32_t>(f[FCB_S2] & 0x3F) << 12) |
+         (static_cast<uint32_t>(f[FCB_EX] & 0x1F) << 7);
+}
+
+// Step an FCB to record 0 of the next logical extent, EX carrying into S2 the
+// way 2.2's GETNEXT does.  False, and the FCB untouched, at the last extent.
+static bool fcb_next_extent(qkz80_uint8* f) {
+  if (fcb_extent_base(f) + 128 >= FCB_MAX_RECORDS) return false;
+  qkz80_uint8 ex = static_cast<qkz80_uint8>((f[FCB_EX] + 1) & 0x1F);
+  f[FCB_EX] = ex;
+  if (ex == 0) f[FCB_S2] = static_cast<qkz80_uint8>((f[FCB_S2] & 0x3F) + 1);
+  f[FCB_CR] = 0;
+  return true;
+}
+
+// Point an FCB at an absolute record, as a random read or write leaves it:
+// CR is the record, and EX and S2 are rewritten only when the extent differs,
+// which is 2.2's POSITION (it compares S2 without the flag bit).
+static void fcb_set_record(qkz80_uint8* f, uint32_t record) {
+  qkz80_uint8 ex = static_cast<qkz80_uint8>((record >> 7) & 0x1F);
+  qkz80_uint8 s2 = static_cast<qkz80_uint8>((record >> 12) & 0x3F);
+  if (f[FCB_EX] != ex || ((f[FCB_S2] ^ s2) & 0x3F) != 0) {
+    f[FCB_EX] = ex;
+    f[FCB_S2] = s2;
+  }
+  f[FCB_CR] = static_cast<qkz80_uint8>(record & 0x7F);
+}
+
 // Open file tracking
+//
+// A CP/M file has no position of its own: every read and write names its
+// record in the FCB, and the guest may change EX, S2 and CR between any two
+// calls.  So the host stream is only a cache of where the last call left it.
+//
+// A binary file is 128 host bytes to a record and is simply sought to
+// record * 128 on every call.  A text file (MODE_TEXT) goes through the
+// converter - LF becomes CR LF, and ^Z is the end - so its records are not a
+// fixed number of host bytes, and one is found by converting from the top.
+// `stream_record` is the record the stream is positioned at, so the ordinary
+// case of one record after another never re-reads anything.
+enum FileOp { OP_NONE, OP_READ, OP_WRITE };
+
 struct OpenFile {
   FILE* fp;
   std::string unix_path;
   std::string cpm_name;
   FileMode mode;
   bool eol_convert;
-  int position;  // Current record position
-  bool eof_seen;
-  bool write_mode;
-  std::vector<uint8_t> write_buffer;  // Buffer for EOL conversion on write
+  bool eof_seen;        // text reader: host end of file, or a ^Z, reached
+  bool last_was_cr;     // text reader: the last byte delivered was CR
+  bool pending_lf;      // text reader: a bare LF became CR LF across a record end
+  bool pending_cr;      // text writer: a record ended in CR; it may start a CR LF
+  bool stream_valid;    // text: stream_record is where the host stream is
+  uint32_t stream_record;
+  FileOp last_op;       // C wants a seek between a read and a write
 
   OpenFile() : fp(nullptr), mode(MODE_BINARY), eol_convert(false),
-    position(0), eof_seen(false), write_mode(false) {}
+    eof_seen(false), last_was_cr(false), pending_lf(false), pending_cr(false),
+    stream_valid(true), stream_record(0), last_op(OP_NONE) {}
 };
 
 class CPMEmulator {
@@ -463,8 +527,21 @@ private:
 
   // EOL and EOF handling
   size_t read_with_conversion(OpenFile& of, uint8_t* buffer, size_t size);
-  size_t write_with_conversion(OpenFile& of, const uint8_t* buffer, size_t size);
+  bool write_with_conversion(OpenFile& of, const uint8_t* buffer, size_t size);
   void pad_to_128(uint8_t* buffer, size_t actual_size);
+
+  // Record I/O.  `record` is absolute, from the FCB; see OpenFile.
+  size_t read_record(OpenFile& of, uint32_t record, uint8_t* buffer);
+  bool write_record(OpenFile& of, uint32_t record, const uint8_t* buffer);
+  bool text_seek(OpenFile& of, uint32_t record, FileOp op);
+  void flush_pending_cr(OpenFile& of);
+  void close_open_file(OpenFile& of);
+  // Every open file, closed: on a disk reset, and when the program ends, so
+  // that a CR the text writer is holding back still reaches the file.
+  void close_all_files();
+  // Open the host file an FCB names into open_files, without touching the
+  // FCB.  Returns false, having set A = 0xFF, when it cannot.
+  bool open_fcb_file(qkz80_uint16 fcb_addr, int func);
   // The mode and conversion a file created by BDOS 22 gets.
   void make_file_mode(const std::string& filename, FileMode* mode, bool* eol);
 
@@ -509,6 +586,9 @@ private:
   void bdos_get_dpb();
   void bdos_reset_drive();
   void bdos_write_random_zero_fill();
+  // Take R0-R2 for BDOS 33/34/40: point the FCB at the record and the host
+  // stream at its bytes.  False, with A set, when the record cannot be used.
+  bool random_position(OpenFile& of, qkz80_uint16 fcb_addr, uint32_t* record);
 
   // BIOS functions
   void bios_call(int offset);
@@ -883,8 +963,20 @@ std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode
 }
 
 size_t CPMEmulator::read_with_conversion(OpenFile& of, uint8_t* buffer, size_t size) {
+  size_t out_pos = 0;
+
+  // The LF of a CR LF this converter made out of a bare LF, when the CR was
+  // the last byte of the previous record.  It is the first byte of this one.
+  // This used to be an ungetc of the LF and a record cut short at 127 bytes,
+  // which the caller then padded with ^Z - so a reader that stops at ^Z, as
+  // every text reader does, took the file to end there.
+  if (of.pending_lf && size > 0) {
+    of.pending_lf = false;
+    buffer[out_pos++] = '\n';
+  }
+
   if (of.eof_seen) {
-    return 0;
+    return out_pos;
   }
 
   if (of.mode == MODE_BINARY || !of.eol_convert) {
@@ -910,10 +1002,11 @@ size_t CPMEmulator::read_with_conversion(OpenFile& of, uint8_t* buffer, size_t s
   }
 
   // Text mode with EOL conversion: Unix \n -> CP/M \r\n
-  // But don't double-convert files that already have \r\n
-  size_t out_pos = 0;
-  bool last_was_cr = false;
-
+  // But don't double-convert files that already have \r\n.  Whether the byte
+  // before a \n was \r is kept in the OpenFile rather than here, because the
+  // two can be in different records: a local copy started every record at
+  // false, so the \n opening a record after a \r closed the previous one was
+  // taken for a bare \n and given a second \r.
   while (out_pos < size) {
     int ch = fgetc(of.fp);
 
@@ -923,44 +1016,59 @@ size_t CPMEmulator::read_with_conversion(OpenFile& of, uint8_t* buffer, size_t s
     }
 
     if (ch == '\n') {
-      if (last_was_cr) {
+      if (of.last_was_cr) {
         // File already has \r\n - don't add another \r
         buffer[out_pos++] = '\n';
       } else {
-        // Bare \n - convert to \r\n
-        if (out_pos + 1 < size) {
-          buffer[out_pos++] = '\r';
+        // Bare \n - convert to \r\n, the \n into the next record if the \r
+        // fills this one
+        buffer[out_pos++] = '\r';
+        if (out_pos < size) {
           buffer[out_pos++] = '\n';
         } else {
-          // Not enough space, put back
-          ungetc(ch, of.fp);
-          break;
+          of.pending_lf = true;
         }
       }
-      last_was_cr = false;
+      of.last_was_cr = false;
     } else if (ch == CPM_EOF) {
       // EOF marker
       of.eof_seen = true;
       break;
     } else {
       buffer[out_pos++] = (uint8_t)ch;
-      last_was_cr = (ch == '\r');
+      of.last_was_cr = (ch == '\r');
     }
   }
 
   return out_pos;
 }
 
-size_t CPMEmulator::write_with_conversion(OpenFile& of, const uint8_t* buffer, size_t size) {
+// Write a record, converting CP/M text to host text if this file is text.
+// Returns false only for a host I/O error.  A text record that starts with ^Z
+// writes no bytes at all and is not a failure - a text file's last record is
+// often exactly that - where this used to return the byte count, which made
+// that record's BDOS 21 answer 0xFF.
+bool CPMEmulator::write_with_conversion(OpenFile& of, const uint8_t* buffer, size_t size) {
   if (of.mode == MODE_BINARY || !of.eol_convert) {
     // Binary mode - write directly
-    return fwrite(buffer, 1, size, of.fp);
+    size_t n = fwrite(buffer, 1, size, of.fp);
+    fflush(of.fp);
+    return n == size;
   }
 
-  // Text mode with EOL conversion: CP/M \r\n -> Unix \n
-  size_t written = 0;
+  // Text mode with EOL conversion: CP/M \r\n -> Unix \n.  A record that ends
+  // in \r cannot yet say whether it is half of a \r\n, so the \r is held in
+  // the OpenFile until the next record, or the close, shows which.  Deciding
+  // inside the record wrote \r\n to the host whenever the pair straddled two.
+  size_t i = 0;
+  if (of.pending_cr) {
+    of.pending_cr = false;
+    if (size == 0 || buffer[0] != '\n') {
+      if (fputc('\r', of.fp) == EOF) return false;
+    }
+  }
 
-  for (size_t i = 0; i < size; i++) {
+  for (; i < size; i++) {
     uint8_t ch = buffer[i];
 
     if (ch == CPM_EOF) {
@@ -969,21 +1077,19 @@ size_t CPMEmulator::write_with_conversion(OpenFile& of, const uint8_t* buffer, s
     }
 
     if (ch == '\r') {
-      // Skip \r if next char is \n
-      if (i + 1 < size && buffer[i + 1] == '\n') {
-        continue;  // Skip the \r
+      if (i + 1 == size) {
+        of.pending_cr = true;  // the next record decides
+        continue;
       }
-      // Otherwise write it
-      if (fputc(ch, of.fp) == EOF) break;
-      written++;
-    } else {
-      if (fputc(ch, of.fp) == EOF) break;
-      written++;
+      if (buffer[i + 1] == '\n') {
+        continue;  // Skip the \r of a \r\n
+      }
     }
+    if (fputc(ch, of.fp) == EOF) return false;
   }
 
   fflush(of.fp);
-  return written;
+  return !ferror(of.fp);
 }
 
 void CPMEmulator::pad_to_128(uint8_t* buffer, size_t actual_size) {
@@ -991,6 +1097,107 @@ void CPMEmulator::pad_to_128(uint8_t* buffer, size_t actual_size) {
     // Pad with ^Z for CP/M compatibility
     memset(buffer + actual_size, CPM_EOF, 128 - actual_size);
   }
+}
+
+// A \r held back by write_with_conversion goes out where the stream is now,
+// before anything moves it.  Nothing follows it, so it was a lone \r.
+void CPMEmulator::flush_pending_cr(OpenFile& of) {
+  if (!of.pending_cr) return;
+  of.pending_cr = false;
+  fputc('\r', of.fp);
+  fflush(of.fp);
+}
+
+void CPMEmulator::close_open_file(OpenFile& of) {
+  if (!of.fp) return;
+  flush_pending_cr(of);
+  fclose(of.fp);
+  of.fp = nullptr;
+}
+
+void CPMEmulator::close_all_files() {
+  for (auto& pair : open_files) {
+    close_open_file(pair.second);
+  }
+  open_files.clear();
+}
+
+// Position a text file's stream at `record` for `op`.
+//
+// The records of a converted file are not a fixed number of host bytes, so
+// when the guest asks for any record but the one the stream is already at,
+// the stream goes back to the top and converts forward, discarding, until it
+// gets there.  That is linear in the file, and only paid when the guest moves
+// its position itself; one record after another costs nothing extra.
+//
+// A write past the end of the text lands at the end of it: a text file has no
+// holes for the records in between to be.
+bool CPMEmulator::text_seek(OpenFile& of, uint32_t record, FileOp op) {
+  flush_pending_cr(of);
+
+  if (!(of.stream_valid && of.stream_record == record)) {
+    if (fseek(of.fp, 0, SEEK_SET) != 0) return false;
+    of.eof_seen = false;
+    of.last_was_cr = false;
+    of.pending_lf = false;
+    of.stream_valid = true;
+    of.stream_record = 0;
+    of.last_op = OP_READ;
+    uint8_t scratch[128];
+    while (of.stream_record < record) {
+      if (read_with_conversion(of, scratch, 128) == 0) break;  // text ends first
+      of.stream_record++;
+    }
+    of.stream_record = record;
+  }
+
+  if (op != of.last_op) {
+    // ISO C 7.21.5.3: output may not follow input, or input output, on one
+    // stream without a positioning call between them.  Nothing issued one.
+    if (fseek(of.fp, 0, SEEK_CUR) != 0) return false;
+    if (op == OP_READ) {
+      of.eof_seen = false;
+      of.last_was_cr = false;
+    }
+    // A write replaces the record from its first byte, so an LF owed to it
+    // by the reader is not owed any more.
+    of.pending_lf = false;
+    of.last_op = op;
+  }
+  return true;
+}
+
+// Read the record `record` into buffer.  Returns the bytes read, 0 at the end
+// of the file; the caller pads a short record.
+size_t CPMEmulator::read_record(OpenFile& of, uint32_t record, uint8_t* buffer) {
+  if (of.mode != MODE_TEXT) {
+    // A seek on every call: the record is the FCB's, not the stream's.  It
+    // also clears the stream's end-of-file indicator, which would otherwise
+    // go on answering end of file after another FCB had written more.
+    if (fseek(of.fp, static_cast<long>(record) * 128L, SEEK_SET) != 0) return 0;
+    of.last_op = OP_READ;
+    return fread(buffer, 1, 128, of.fp);
+  }
+  if (!(of.stream_valid && of.stream_record == record && of.last_op == OP_READ)) {
+    if (!text_seek(of, record, OP_READ)) return 0;
+  }
+  size_t n = read_with_conversion(of, buffer, 128);
+  if (n > 0) of.stream_record = record + 1;
+  return n;
+}
+
+bool CPMEmulator::write_record(OpenFile& of, uint32_t record, const uint8_t* buffer) {
+  if (of.mode != MODE_TEXT) {
+    if (fseek(of.fp, static_cast<long>(record) * 128L, SEEK_SET) != 0) return false;
+    of.last_op = OP_WRITE;
+    return write_with_conversion(of, buffer, 128);
+  }
+  if (!(of.stream_valid && of.stream_record == record && of.last_op == OP_WRITE)) {
+    if (!text_seek(of, record, OP_WRITE)) return false;
+  }
+  bool ok = write_with_conversion(of, buffer, 128);
+  of.stream_record = record + 1;
+  return ok;
 }
 
 bool CPMEmulator::load_config_file(const std::string& cfg_path) {
@@ -1374,6 +1581,7 @@ void CPMEmulator::filename_to_fcb(const std::string& filename, qkz80_uint16 fcb_
 bool CPMEmulator::handle_pc(qkz80_uint16 pc) {
   // Check for JMP 0 (exit)
   if (pc == 0) {
+    close_all_files();
     program_exit("Program exit via JMP 0");
   }
 
@@ -1409,6 +1617,7 @@ void CPMEmulator::bdos_call(qkz80_uint8 func) {
 
   switch (func) {
   case 0:  // System Reset
+    close_all_files();
     program_exit("System reset");
     break;
 
@@ -1900,33 +2109,33 @@ void CPMEmulator::bdos_get_set_user() {
   }
 }
 
-void CPMEmulator::bdos_open_file() {
-  qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
+bool CPMEmulator::open_fcb_file(qkz80_uint16 fcb_addr, int func) {
+  bool trace = debug || debug_bdos_funcs.count(func);
 
   if (!validate_fcb_name(cpu->get_mem(), fcb_addr)) {
-    if (debug || debug_bdos_funcs.count(15)) {
+    if (trace) {
       fprintf(stderr, "BDOS Open: rejected invalid FCB filename\n");
     }
     cpu->set_reg8(0xFF, qkz80::reg_A);
-    return;
+    return false;
   }
 
   std::string filename = fcb_to_filename(fcb_addr);
 
-  FileMode mode;
-  bool eol_convert;
+  FileMode mode = MODE_BINARY;
+  bool eol_convert = false;
   std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert,
                                             cpu->get_mem()[fcb_addr]);
 
-  if (debug || debug_bdos_funcs.count(15)) {
+  if (trace) {
     fprintf(stderr, "BDOS Open: '%s' -> '%s' (mode: %s)\n", filename.c_str(),
             unix_path.empty() ? "(not found)" : unix_path.c_str(),
-            mode == MODE_TEXT ? "text" : "binary");
+            unix_path.empty() ? "none" : mode == MODE_TEXT ? "text" : "binary");
   }
 
   if (unix_path.empty()) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // File not found
-    return;
+    return false;
   }
 
   FILE* fp = fopen(unix_path.c_str(), "r+b");
@@ -1934,8 +2143,16 @@ void CPMEmulator::bdos_open_file() {
     fp = fopen(unix_path.c_str(), "rb");
     if (!fp) {
       cpu->set_reg8(0xFF, qkz80::reg_A);
-      return;
+      return false;
     }
+  }
+
+  // Opening an FCB that is already open replaces it; close the old stream
+  // rather than leaking it, and start the new one clean.
+  auto old = open_files.find(fcb_addr);
+  if (old != open_files.end()) {
+    close_open_file(old->second);
+    open_files.erase(old);
   }
 
   OpenFile of;
@@ -1944,15 +2161,21 @@ void CPMEmulator::bdos_open_file() {
   of.cpm_name = filename;
   of.mode = mode;
   of.eol_convert = eol_convert;
-  of.position = 0;
-  of.eof_seen = false;
-  of.write_mode = false;
   open_files[fcb_addr] = of;
+  return true;
+}
 
-  // Clear extent and record count
+void CPMEmulator::bdos_open_file() {
+  qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
+  if (!open_fcb_file(fcb_addr, 15)) return;
+
+  // EX is left as the caller set it: 2.2's OPENFIL opens the extent the FCB
+  // names, and a sequential call then starts in it.  This used to force EX
+  // to 0.  S2 is cleared, as OPENFIL does first.  RC is not the extent's
+  // record count, which a directory would give; it has always been 128 here.
   qkz80_uint8* mem = cpu->get_mem();
-  mem[fcb_addr + 12] = 0;  // EX
-  mem[fcb_addr + 15] = 0x80;  // RC (128 records max per extent)
+  mem[fcb_addr + FCB_S2] = 0;
+  mem[fcb_addr + FCB_RC] = 0x80;
 
   cpu->set_reg8(0, qkz80::reg_A);  // Success
 }
@@ -1966,16 +2189,10 @@ void CPMEmulator::bdos_close_file() {
 
   auto it = open_files.find(fcb_addr);
   if (it != open_files.end()) {
-    // Flush any pending writes
-    if (it->second.write_mode && it->second.write_buffer.size() > 0) {
-      write_with_conversion(it->second, it->second.write_buffer.data(),
-                            it->second.write_buffer.size());
-    }
-
     if (debug || debug_bdos_funcs.count(16)) {
       fprintf(stderr, "Close file: closing '%s'\n", it->second.cpm_name.c_str());
     }
-    fclose(it->second.fp);
+    close_open_file(it->second);
     open_files.erase(it);
   } else {
     if (debug || debug_bdos_funcs.count(16)) {
@@ -1991,85 +2208,126 @@ void CPMEmulator::bdos_close_file() {
   }
 }
 
+// BDOS 20 and 21 read and write the record EX, S2 and CR name - CR within
+// logical extent EX of module S2 - which is the record BDOS 36 would report
+// for the same FCB.  They used to read and write wherever the host stream had
+// got to and only count CR up, so a guest that set CR back to 0 and wrote,
+// as MP/M's GENSYS does with SYSTEM.DAT, appended instead of rewriting.
+//
+// CR = 128 is what reading an extent's last record leaves, and the call
+// after it goes to record 0 of the next extent.  2.2 does that for a read;
+// for a write it answers error 1, and this takes the record the numbering
+// says instead.  A CR above 128 names no record: end of file for a read,
+// error 1 for a write, both as 2.2 answers.
 void CPMEmulator::bdos_read_sequential() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
   qkz80_uint8* mem = cpu->get_mem();
+  qkz80_uint8* f = &mem[fcb_addr];
+  bool trace = debug || debug_bdos_funcs.count(20);
 
   auto it = open_files.find(fcb_addr);
   if (it == open_files.end()) {
-    if (debug || debug_bdos_funcs.count(20)) {
+    if (trace) {
       fprintf(stderr, "Read sequential: FCB %04X not open\n", fcb_addr);
     }
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error: file not open
     return;
   }
 
-  // Read 128 bytes to DMA with conversion
+  qkz80_uint8 cr = f[FCB_CR];
+  uint32_t record = fcb_extent_base(f) + cr;
   uint8_t buffer[128];
-  size_t nread = read_with_conversion(it->second, buffer, 128);
+  size_t nread = 0;
+  if (cr <= 128 && record < FCB_MAX_RECORDS) {
+    nread = read_record(it->second, record, buffer);
+  }
 
   // CP/M convention: return A=0 (success) when data is available,
   // return A=1 (EOF) only when no more data can be read.
   // For partial records at end of file, return success with Ctrl-Z padding.
+  // At the end the FCB is left alone - it used to step CR anyway, so an
+  // append written after it landed one record past the end.
   if (nread == 0) {
     cpu->set_reg8(1, qkz80::reg_A);  // EOF - no data available
-    if (debug || debug_bdos_funcs.count(20)) {
-      fprintf(stderr, "Read sequential: FCB %04X file '%s' -> EOF (no data)\n", fcb_addr, it->second.cpm_name.c_str());
+    if (trace) {
+      fprintf(stderr, "Read sequential: FCB %04X file '%s' record %u -> EOF (no data)\n",
+              fcb_addr, it->second.cpm_name.c_str(), record);
     }
-  } else {
-    // Pad to 128 bytes if needed
-    if (nread < 128) {
-      pad_to_128(buffer, nread);
-    }
-
-    // Copy to DMA
-    memcpy(&mem[current_dma], buffer, 128);
-    cpu->set_reg8(0, qkz80::reg_A);  // Success
-
-    if (debug || debug_bdos_funcs.count(20)) {
-      fprintf(stderr, "Read sequential: FCB %04X file '%s' read %zu bytes, returning A=0\n",
-              fcb_addr, it->second.cpm_name.c_str(), nread);
-    }
+    return;
   }
 
-  // Update current record in FCB
-  mem[fcb_addr + 32]++;
+  // Pad to 128 bytes if needed
+  if (nread < 128) {
+    pad_to_128(buffer, nread);
+  }
+
+  // Copy to DMA
+  memcpy(&mem[current_dma], buffer, 128);
+  cpu->set_reg8(0, qkz80::reg_A);  // Success
+
+  if (trace) {
+    fprintf(stderr, "Read sequential: FCB %04X file '%s' record %u read %zu bytes, returning A=0\n",
+            fcb_addr, it->second.cpm_name.c_str(), record, nread);
+  }
+
+  // The record after: CR + 1, so CR = 128 after an extent's last record.  A
+  // read at CR = 128 was record 0 of the next extent, so the FCB moves there.
+  if (cr == 128) {
+    fcb_next_extent(f);
+    cr = 0;
+  }
+  f[FCB_CR] = static_cast<qkz80_uint8>(cr + 1);
 }
 
 void CPMEmulator::bdos_write_sequential() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
   qkz80_uint8* mem = cpu->get_mem();
+  qkz80_uint8* f = &mem[fcb_addr];
+  bool trace = debug || debug_bdos_funcs.count(21);
 
   auto it = open_files.find(fcb_addr);
   if (it == open_files.end()) {
-    // File not open - try to open it for writing
-    if (debug || debug_bdos_funcs.count(21)) {
+    // File not open - try to open it for writing.  Not through BDOS 15,
+    // which would clear S2: the FCB already says where this record goes.
+    if (trace) {
       fprintf(stderr, "Write sequential: FCB %04X not open, trying to open\n", fcb_addr);
     }
-    bdos_open_file();
-    it = open_files.find(fcb_addr);
-    if (it == open_files.end()) {
-      if (debug || debug_bdos_funcs.count(21)) {
+    if (!open_fcb_file(fcb_addr, 21)) {
+      if (trace) {
         fprintf(stderr, "Write sequential: FCB %04X failed to open\n", fcb_addr);
       }
-      cpu->set_reg8(0xFF, qkz80::reg_A);
-      return;
+      return;  // A = 0xFF
     }
+    it = open_files.find(fcb_addr);
   }
 
-  it->second.write_mode = true;
+  qkz80_uint8 cr = f[FCB_CR];
+  uint32_t record = fcb_extent_base(f) + cr;
+  if (cr > 128 || record >= FCB_MAX_RECORDS) {
+    cpu->set_reg8(1, qkz80::reg_A);  // no such record: 2.2's error 1
+    return;
+  }
 
-  // Write 128 bytes from DMA with conversion
-  size_t nwritten = write_with_conversion(it->second, (uint8_t*)&mem[current_dma], 128);
-
-  if (nwritten > 0) {
-    cpu->set_reg8(0, qkz80::reg_A);  // Success
-  } else {
+  bool ok = write_record(it->second, record, &mem[current_dma]);
+  if (trace) {
+    fprintf(stderr, "Write sequential: FCB %04X file '%s' record %u %s\n", fcb_addr,
+            it->second.cpm_name.c_str(), record, ok ? "written" : "FAILED");
+  }
+  if (!ok) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
+    return;
   }
+  cpu->set_reg8(0, qkz80::reg_A);  // Success
 
-  // Update current record in FCB
-  mem[fcb_addr + 32]++;
+  // The record after.  Writing an extent's last record moves the FCB to the
+  // next extent at once, EX + 1 and CR = 0, which is 2.2's WTSEQ; reading
+  // one leaves CR = 128 instead.
+  if (cr == 128) {
+    fcb_next_extent(f);
+    cr = 0;
+  }
+  f[FCB_CR] = static_cast<qkz80_uint8>(cr + 1);
+  if (f[FCB_CR] == 128) fcb_next_extent(f);
 }
 
 // The mode a file BDOS 22 creates is written in: a mode rule for the name if
@@ -2134,20 +2392,26 @@ void CPMEmulator::bdos_make_file() {
     return;
   }
 
+  auto old = open_files.find(fcb_addr);
+  if (old != open_files.end()) {
+    close_open_file(old->second);
+    open_files.erase(old);
+  }
+
   OpenFile of;
   of.fp = fp;
   of.unix_path = unix_name;
   of.cpm_name = filename;
   of.mode = mode;
   of.eol_convert = eol_convert;
-  of.position = 0;
-  of.eof_seen = false;
-  of.write_mode = true;
   open_files[fcb_addr] = of;
 
+  // What 2.2's FCREATE and GETEMPTY clear: S2, S1, and RC with the
+  // allocation map after it.  EX is the caller's, as for open.
   qkz80_uint8* mem = cpu->get_mem();
-  mem[fcb_addr + 12] = 0;  // EX
-  mem[fcb_addr + 15] = 0;  // RC
+  mem[fcb_addr + FCB_S1] = 0;
+  mem[fcb_addr + FCB_S2] = 0;
+  memset(&mem[fcb_addr + FCB_RC], 0, 17);
 
   cpu->set_reg8(0, qkz80::reg_A);  // Success
 }
@@ -2182,6 +2446,34 @@ void CPMEmulator::bdos_delete_file() {
   }
 }
 
+// BDOS 33, 34 and 40 read and write R0-R2's record, and leave the FCB
+// pointing at it - CR the record, EX and S2 its extent - so that a sequential
+// call after them reads that record again or writes it again, which is what
+// 2.2 does and what its manual promises.  They used to leave the FCB alone and
+// the host stream one record on, so the sequential call went to the next one.
+//
+// The bytes are raw, text file or not: a random record of a text file is 128
+// host bytes at record * 128, as it has always been here.  A text file's
+// sequential stream is converted, so it cannot be trusted across a random
+// call and is found again from the FCB by the next sequential one.
+bool CPMEmulator::random_position(OpenFile& of, qkz80_uint16 fcb_addr, uint32_t* record) {
+  qkz80_uint8* f = &cpu->get_mem()[fcb_addr];
+  *record = static_cast<uint32_t>(f[FCB_R0] | (f[FCB_R1] << 8) | (f[FCB_R2] << 16));
+  if (*record >= FCB_MAX_RECORDS) {
+    cpu->set_reg8(6, qkz80::reg_A);  // seek past physical end of disk
+    return false;
+  }
+  fcb_set_record(f, *record);
+
+  flush_pending_cr(of);
+  of.stream_valid = false;
+  if (fseek(of.fp, static_cast<long>(*record) * 128L, SEEK_SET) != 0) {
+    cpu->set_reg8(0xFF, qkz80::reg_A);  // Error: seek failed
+    return false;
+  }
+  return true;
+}
+
 void CPMEmulator::bdos_read_random() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
   qkz80_uint8* mem = cpu->get_mem();
@@ -2192,22 +2484,17 @@ void CPMEmulator::bdos_read_random() {
     return;
   }
 
-  // Get random record number from FCB bytes 33-35 (r0, r1, r2)
-  uint32_t record_num = mem[fcb_addr + 33] |
-                        (mem[fcb_addr + 34] << 8) |
-                        (mem[fcb_addr + 35] << 16);
-
-  // Calculate byte position (each record is 128 bytes)
-  long position = record_num * 128L;
-
-  // Seek to position
-  if (fseek(it->second.fp, position, SEEK_SET) != 0) {
-    cpu->set_reg8(0xFF, qkz80::reg_A);  // Error: seek failed
-    return;
-  }
+  uint32_t record_num;
+  if (!random_position(it->second, fcb_addr, &record_num)) return;
 
   // Read 128 bytes to DMA
+  it->second.last_op = OP_READ;
   size_t nread = fread(&mem[current_dma], 1, 128, it->second.fp);
+
+  if (debug || debug_bdos_funcs.count(33)) {
+    fprintf(stderr, "Read random: FCB %04X file '%s' record %u read %zu bytes\n",
+            fcb_addr, it->second.cpm_name.c_str(), record_num, nread);
+  }
 
   if (nread == 0) {
     cpu->set_reg8(1, qkz80::reg_A);  // EOF
@@ -2230,23 +2517,18 @@ void CPMEmulator::bdos_write_random() {
     return;
   }
 
-  // Get random record number from FCB bytes 33-35 (r0, r1, r2)
-  uint32_t record_num = mem[fcb_addr + 33] |
-                        (mem[fcb_addr + 34] << 8) |
-                        (mem[fcb_addr + 35] << 16);
-
-  // Calculate byte position (each record is 128 bytes)
-  long position = record_num * 128L;
-
-  // Seek to position
-  if (fseek(it->second.fp, position, SEEK_SET) != 0) {
-    cpu->set_reg8(0xFF, qkz80::reg_A);  // Error: seek failed
-    return;
-  }
+  uint32_t record_num;
+  if (!random_position(it->second, fcb_addr, &record_num)) return;
 
   // Write 128 bytes from DMA
+  it->second.last_op = OP_WRITE;
   size_t nwritten = fwrite(&mem[current_dma], 1, 128, it->second.fp);
   fflush(it->second.fp);
+
+  if (debug || debug_bdos_funcs.count(34)) {
+    fprintf(stderr, "Write random: FCB %04X file '%s' record %u wrote %zu bytes\n",
+            fcb_addr, it->second.cpm_name.c_str(), record_num, nwritten);
+  }
 
   if (nwritten != 128) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
@@ -2306,12 +2588,11 @@ void CPMEmulator::bdos_set_random_record() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
   qkz80_uint8* mem = cpu->get_mem();
 
-  // Convert current sequential position to random record number
-  // Record number = (EX * 128) + CR
-  uint8_t ex = mem[fcb_addr + 12];  // Extent
-  uint8_t cr = mem[fcb_addr + 32];  // Current record
-
-  uint32_t record_num = (ex * 128) + cr;
+  // The record the next sequential call would use: CR within extent EX of
+  // module S2, the numbering 20 and 21 use.  This counted EX * 128 + CR and
+  // left S2 out, and took all eight bits of EX.  CR is taken whole, as 2.2's
+  // COMPRAND takes it, so CR = 128 is the first record of the next extent.
+  uint32_t record_num = fcb_extent_base(&mem[fcb_addr]) + mem[fcb_addr + FCB_CR];
 
   // Store in r0-r2
   mem[fcb_addr + 33] = record_num & 0xFF;
@@ -2419,12 +2700,7 @@ void CPMEmulator::bdos_direct_console_io() {
 
 void CPMEmulator::bdos_reset_disk() {
   // Reset disk system - close all files
-  for (auto& pair : open_files) {
-    if (pair.second.fp) {
-      fclose(pair.second.fp);
-    }
-  }
-  open_files.clear();
+  close_all_files();
 
   // A stale search now names files in a specific directory, so it cannot be
   // allowed to outlive the reset.
@@ -2719,12 +2995,7 @@ void CPMEmulator::bdos_get_dpb() {
 void CPMEmulator::bdos_reset_drive() {
   // Reset specified drives (bitmap in DE)
   // Just acknowledge - close files would be proper behavior
-  for (auto& pair : open_files) {
-    if (pair.second.fp) {
-      fclose(pair.second.fp);
-    }
-  }
-  open_files.clear();
+  close_all_files();
 }
 
 void CPMEmulator::bdos_write_random_zero_fill() {
@@ -2768,6 +3039,7 @@ void CPMEmulator::bios_call(int offset) {
     break;
 
   case BIOS_WBOOT:
+    close_all_files();
     program_exit("BIOS WBOOT called - exiting");
     break;
 

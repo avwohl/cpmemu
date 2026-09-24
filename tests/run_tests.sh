@@ -71,7 +71,7 @@ skipped=0
 
 # Every skip that means "this machine is missing a tool" registers itself here,
 # so --require can turn the lot into one failure at the end.  Registering is
-# separate from printing because the count behind a gate is not always one: 43
+# separate from printing because the count behind a gate is not always one: 62
 # checks sit behind the assembler.
 # Each takes a token so a caller can allow one by name: CPMEMU_SKIP_OK is a
 # space or comma separated list of tokens that --require lets through.  The
@@ -339,9 +339,9 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 43 checks live behind this gate, not the 6 an earlier version counted
-    skipped=$((skipped + 43))
-    soft_skip assembler "drive mapping tests: 43 checks, no assembler (pip install um80)"
+    # 62 checks live behind this gate, not the 6 an earlier version counted
+    skipped=$((skipped + 62))
+    soft_skip assembler "drive mapping tests: 62 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1
@@ -737,6 +737,104 @@ else
         { printf 'A\r\n\032'; head -c 124 /dev/zero | tr '\0' A; } >"$tmp/want"
         check_fcb "files: make gives a .COM the binary mode open gives it" \
             MK.COM MHAJ1K2U3WC '' mk.com "$tmp/want"
+
+        # --- where a file read or write lands --------------------------------
+        # Every expectation below is what CP/M 2.2's BDOS does, not what this
+        # emulator did: the record a sequential call reads or writes is the
+        # one EX, S2 and CR name, and it used to be wherever the host file's
+        # stdio position had got to.  DRI's GENSYS reads SYSTEM.DAT, sets CR
+        # back to 0 and writes it again; the write appended, so the file grew
+        # by 256 bytes every run and the next run read the stale page.  The
+        # first check is that run.
+        #
+        # Open keeps EX and CR as the FCB has them, as CP/M's does, so a
+        # script that closes and reopens its file sets CR back to 0 itself.
+        fcb_reset; fcb_file "$fcbdir/system.dat" AB; fcb_file "$tmp/want" CD
+        check_fcb "files: a write after CR = 0 rewrites, not appends (GENSYS)" \
+            SYSTEM.DAT ORRZ0HCWHDWCOZ0RRR 'ABCD=01' system.dat "$tmp/want"
+        fcb_reset; fcb_file "$fcbdir/data.dat" 0123; fcb_file "$tmp/want" 0X23
+        check_fcb "files: a write in the middle lands there and truncates nothing" \
+            DATA.DAT OZ1HXWCOZ0RRRRR '0X23=01' data.dat "$tmp/want"
+        # After a random read or write CR names that record, so the next
+        # sequential call reads it again or writes it again (CP/M 2.2
+        # Interface Guide, section 1.6: "the last randomly read record will
+        # be re-read").  Both used to go on from the record after it.
+        fcb_reset; fcb_file "$fcbdir/data.dat" 0123
+        check_fcb "files: a sequential read re-reads the random read's record" \
+            DATA.DAT ON2GRRS '223(00,00,04)'
+        fcb_reset; fcb_file "$fcbdir/data.dat" 0123; fcb_file "$tmp/want" 0ST3
+        check_fcb "files: a sequential write rewrites the random write's record" \
+            DATA.DAT ON1HWPHSWHTWCOZ0RRRRR '0ST3=01' data.dat "$tmp/want"
+        # EX is a position, and so is S2.  130 records: extent 0 all 'a',
+        # then b and c in extent 1.
+        fcb_reset; fcb_file "$fcbdir/data.dat" "$(printf 'a%.0s' $(seq 1 128))bc"
+        fcb_file "$tmp/want" "$(printf 'a%.0s' $(seq 1 128))bW"
+        check_fcb "files: EX picks the extent a read and a write use" \
+            DATA.DAT OX1RSHWWC 'b(01,00,01)' data.dat "$tmp/want"
+        # A read of an extent's last record leaves CR = 128, and the read
+        # after it carries into the next extent.  A write of it moves to the
+        # next extent at once: EX + 1, CR = 0, which is 2.2's WTSEQ.
+        check_fcb "files: CR 128 carries a read into the next extent" \
+            DATA.DAT OZ127RSRS 'a(00,00,80)b(01,00,01)'
+        fcb_reset; fcb_file "$fcbdir/data.dat" "$(printf 'a%.0s' $(seq 1 128))"
+        fcb_file "$tmp/want" "$(printf 'a%.0s' $(seq 1 127))WX"
+        check_fcb "files: writing an extent's last record moves to the next" \
+            DATA.DAT OZ127HWWSHXWC '(01,00,00)' data.dat "$tmp/want"
+        # S2 is the module above EX: 1 * 4096 + 3 * 128 + 5 = 4485 = 1185h.
+        # BDOS 36 counted EX and CR only, and a CR of 128 is the next extent.
+        check_fcb "files: set random record counts S2" DATA.DAT OX3Y1Z5T '#001185'
+        check_fcb "files: set random record takes CR 128" DATA.DAT OZ128T '#000080'
+        # A read at end of file must leave CR where it was, or an append
+        # after it skips a record.  It used to step CR on the failed read.
+        fcb_reset; fcb_file "$fcbdir/data.dat" 01; fcb_file "$tmp/want" 01A
+        check_fcb "files: a read at end of file does not move CR" \
+            DATA.DAT ORRRSHAWCOZ0RRRR '01=01(00,00,02)01A=01' data.dat "$tmp/want"
+        # 2^18 records is as far as S2:EX:CR reach.  Past that both BDOSes
+        # answer 6, and the FCB is left alone.
+        check_fcb "files: a random record the FCB cannot hold is error 6" \
+            DATA.DAT ON262144GS '=06(00,00,00)'
+        # Open keeps the EX the caller asked for and clears S2 (2.2's
+        # OPENFIL), rather than forcing EX to 0 and keeping S2.
+        fcb_reset; fcb_file "$fcbdir/data.dat" "$(printf 'a%.0s' $(seq 1 128))bc"
+        check_fcb "files: open keeps EX and clears S2" DATA.DAT X1Y5ORS 'b(01,00,01)'
+        # C requires a seek between a read and a write on one stream, and
+        # nothing issued one: this is a guard, and passed before on macOS.
+        fcb_reset; fcb_file "$fcbdir/data.dat" 0123; fcb_file "$tmp/want" W123
+        check_fcb "files: a read after a write goes on from the next record" \
+            DATA.DAT OHWWRRCOZ0RRRR '12W123' data.dat "$tmp/want"
+
+        # --- the same through the text converter ----------------------------
+        # A .TXT file is converted, LF to CR LF, so a record is not 128 host
+        # bytes and CR = n has to be found by converting from the top.
+        fcb_reset; printf 'one\ntwo\n' >"$fcbdir/t.txt"
+        check_fcb "files: CR = 0 re-reads a text file" T.TXT OLZ0L 'one<>two<>~one<>two<>~'
+        fcb_reset; head -c 100 /dev/zero | tr '\0' a >"$fcbdir/t.txt"
+        { printf '\n'; head -c 100 /dev/zero | tr '\0' b; printf '\nc\n'; } >>"$fcbdir/t.txt"
+        check_fcb "files: CR = 1 finds record 1 of a text file" T.TXT OZ1L \
+            "$(printf 'b%.0s' $(seq 1 74))<>c<>~"
+        a127=$(head -c 127 /dev/zero | tr '\0' a)
+        # A bare LF that converts at byte 127 of a record: the CR ended the
+        # record and the LF was pushed back, so the record came back 127
+        # bytes long, padded with ^Z - and a reader stops at the ^Z.
+        fcb_reset; printf '%s\nb\n' "$a127" >"$fcbdir/t.txt"
+        check_fcb "files: an LF converted at byte 127 does not end the text" T.TXT OL \
+            "${a127}<>b<>~"
+        # A CR LF already in the file, split by the record boundary: the LF
+        # opening the next record was taken for a bare one and given a CR.
+        fcb_reset; printf '%s\r\nb\r\n' "$a127" >"$fcbdir/t.txt"
+        check_fcb "files: a CR LF across two records is not doubled" T.TXT OL \
+            "${a127}<>b<>~"
+        # And writing: a record ending in CR, the next opening with LF, is
+        # one line end and reaches the host as one LF.
+        fcb_reset
+        { head -c 127 /dev/zero | tr '\0' X; printf '\n'; head -c 9 /dev/zero | tr '\0' Y; } >"$tmp/want"
+        check_fcb "files: a CR LF written across two records is one LF" \
+            T.TXT MHXJ127WHYK0U10WC '' t.txt "$tmp/want"
+        # A text record that starts with ^Z writes no host bytes, and that is
+        # not a failure: it is how a text file's last record often looks.
+        fcb_reset; : >"$tmp/want"
+        check_fcb "files: a text record that starts with ^Z is written" \
+            T.TXT MHAU0WC '' t.txt "$tmp/want"
     fi
 fi
 
@@ -958,7 +1056,7 @@ else
     skipped=$((skipped + 3))
 fi
 
-# A skip exits 0, so a machine with no assembler runs three fifths of this
+# A skip exits 0, so a machine with no assembler runs about half of this
 # suite and reports a green tick.  Under --require that is a failure, named,
 # with what to install.
 if [ "$require_all" = 1 ] && [ $soft_skips -gt 0 ]; then

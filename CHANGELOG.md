@@ -12,7 +12,65 @@ summarises and points; `git log` is the detail. Open work is in
 
 ## [Unreleased]
 
+**BDOS 20 and 21 read and wrote wherever the host stream had got to, not the
+record the FCB names.** A CP/M file has no position of its own: a sequential
+call reads or writes record CR of logical extent EX of module S2 - the record
+BDOS 36 reports for the same FCB - and a guest may change any of the three
+between two calls. cpmemu kept its own position in the host `FILE*` and only
+counted CR up. DRI's MP/M II GENSYS opens `SYSTEM.DAT`, reads its two
+records, sets CR back to 0 and writes the page it has generated; the write
+appended, so `SYSTEM.DAT` grew by 256 bytes a run and the next run read the
+stale first page. The session building MP/M from source had been seeding each
+run by hand with page 0 of the previous run's `MPM.SYS` to get round it. Now
+three chained GENSYS runs leave `SYSTEM.DAT` at 256 bytes, equal each time
+to page 0 of that run's `MPM.SYS`, and all three `MPM.SYS` images are
+byte-identical to the hand-seeded ones. DRI's LINK hit the same bug in its own
+temporary file: linking MP/M's `BNKBDOS` under e4f7fd5 stopped at `DISK READ
+ERROR: XXPROG.$$$`, a binary file, with the text converter not involved.
+
+Positions come from the FCB the way 2.2's BDOS takes them, and the calls
+around 20 and 21 were brought into line with them:
+
+- a random read or write (33, 34, 40) leaves CR, EX and S2 at its record, so
+  the sequential call after it reads that record again or writes it again,
+  as the 2.2 manual promises. It used to go on to the next one;
+- a read at end of file leaves CR alone. It used to step CR, so an append
+  written after it landed a record past the end;
+- CR = 128, which reading an extent's last record leaves, carries the next
+  call into the next extent, and writing an extent's last record moves the
+  FCB there at once (EX + 1, CR = 0), which is 2.2's `WTSEQ`;
+- BDOS 36 counts S2 and a CR of 128. It computed `EX * 128 + CR`;
+- open keeps the EX the caller set and clears S2, which is 2.2's `OPENFIL`.
+  It forced EX to 0 and left S2 alone. A program has to zero EX and CR
+  itself, as CP/M has always required, and CR was never reset by open;
+- a random record past 2^18, which no FCB can hold, is error 6, as both 2.2
+  and 3 answer. It was read or written at `record * 128`, out to 2 GB;
+- a read after a write, or a write after a read, on one stream now has the
+  seek between them that ISO C requires and nothing issued.
+
+A text file (`MODE_TEXT`) is converted, so its records are not 128 host
+bytes; CR = n is found by converting from the top of the file, and only when
+the guest moves its own position. Two limits remain, both older than this:
+a random read or write on a text file is still raw bytes at `record * 128`,
+and rewriting a text file in place with shorter text leaves the old tail
+after it, since the host file cannot be truncated there. `RC` after an open
+is still 128, not the extent's record count.
+
 ### Fixed
+
+- **The text converter's output depended on where the 128-byte record
+  boundaries fell.** A bare LF that converted at byte 127 ended the record
+  there, and the caller padded it with `^Z` - so every text reader, which
+  stops at `^Z`, took the file to end at that line. A CR LF already in the
+  file with the CR at byte 127 came back as CR CR LF. Writing, a CR LF split
+  across two records reached the host as CR LF rather than LF. And a text
+  record that begins with `^Z` - a text file's last record, often - wrote no
+  bytes and was answered 0xFF. All four hold their state between records now.
+  Measured with DRI's own tools on MP/M's sources, which are CR LF text:
+  under e4f7fd5 RMAC reported errors in all nine modules it assembled, 104
+  lines of them for `BNKBDOS` alone. Now PIP, RMAC and LINK rebuild
+  `BNKBDOS.SPR` and `RESBDOS.SPR` byte-identical to the ones DRI shipped,
+  and RMAC reports no error in any of the nine.
 
 - **A file a guest created was written as text, whatever its name.** BDOS 22
   took `default_mode` as it stood, and `auto` is not `binary`, so the text
@@ -25,7 +83,7 @@ summarises and points; `git log` is the detail. Open work is in
   what BDOS 15 does for the same name, and make does that now, after any mode
   rule for the name; a config that says `default_mode = binary` or `text` gets
   what it asks for as before. New guest `tests/fcb_io.asm` runs a script of
-  BDOS file calls against one FCB, for this check and the ones below.
+  BDOS file calls against one FCB, and every check for this section uses it.
 
 ## [4.9.0] - 2026-09-17
 

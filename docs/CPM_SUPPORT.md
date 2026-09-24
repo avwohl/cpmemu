@@ -36,6 +36,15 @@ What this emulator implements of CP/M 2.2, and the memory map a guest sees.
 | 40 | Write Random Zero Fill | Supported |
 | 48 | Flush Buffers | Supported (writes go straight to the host file, so this is a no-op) |
 
+A file's position is its FCB's, as in CP/M: BDOS 20 and 21 read and write
+record CR of logical extent EX of module S2, which is the record BDOS 36
+reports, and a random read or write leaves CR, EX and S2 at its record, so the
+next sequential call reads it again or writes it again. Open keeps the EX it is
+given and does not touch CR, so a program zeroes both itself. A random record
+past 2^18, the most an FCB can address, is error 6. A text file's records are
+counted after conversion - LF to CR LF, ending at `^Z` - except by BDOS 33,
+34, 35 and 40, which see the host file's raw bytes.
+
 The allocation vector BDOS 27 points at is initialised all-free and never
 updated, so a program that reads it to compute free space gets the same answer
 whatever is on the drive. Any other function number prints

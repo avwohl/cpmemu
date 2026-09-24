@@ -3,10 +3,13 @@ all: cpmemu
 # -Wextra and -Wshorten-64-to-32 are not decoration: between them they found the
 # unused detect_file_mode parameter and two 64-to-32 narrowings, one of which was
 # the bug that reported any file of 256 GiB or more to the guest as empty.
-# -Wconversion is deliberately NOT here - it adds 126 more over the six sources
-# this makefile compiles, all of them the Z80 core's intended mod-256 wraps.
+# -Wconversion is deliberately NOT here - it adds 124 more over the six sources
+# this makefile compiles: 94 in the Z80 core, its intended mod-256 wraps, 27 in
+# cpmemu.cc, 17 of them a toupper() or tolower() narrowed back to a byte, and 3
+# in the platform layer.  (This said all of them were the core's.)
 # It said 125 from 9fee3c2 until 2026-09-17, when re-measuring gave 137 and the
-# qkz80_MK_INT16 fix took eleven of those off.
+# qkz80_MK_INT16 fix took eleven of those off; then 126 until the BDOS record
+# position change replaced two random-record reads with one cast.
 #
 # -Wshorten-64-to-32 is Clang-only, and GCC does not ignore an unknown -W flag,
 # it fails the compile.  Probing for it is not tidiness: hardcoded, it stopped

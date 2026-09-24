@@ -426,7 +426,7 @@ The drive mapping sources, the two console end-of-input programs, `cli_tail.asm`
 `adm3a.asm`, `savemem.asm`, `bios_disk.asm`, `sectran.asm` and `fcb_io.asm` are assembled at
 test time instead, so no binary for them is committed. `tests/run_tests.sh` assembles them with
 **`um80` and `ul80`**, this project's own assembler and linker, and skips the
-whole group - 43 checks - when they are not on `PATH`:
+whole group - 62 checks - when they are not on `PATH`:
 ```bash
 pip install um80           # any platform; provides um80 and ul80
 ```
@@ -495,7 +495,7 @@ What is left is coverage of everything they do not reach:
    four terminal programs to try, and the bytes each key should print, are in
    `MANUAL_CHECKS.md` in the repo root.
 2. The drive mapping group needs an assembler. It takes `um80` and nothing
-   else, so on a machine without it 43 checks skip - about two fifths of the
+   else, so on a machine without it 62 checks skip - about half the
    suite. CI installs it with `pip install um80` on both runners and runs with
    `--require`, so the gate can no longer hide there; a local run on a machine
    without it still skips them, and committing those fourteen `.com` files as
