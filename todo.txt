@@ -1,6 +1,18 @@
 Todo list.  Open items only.
 
-There are none.
+[ANY] An editor's rewrite of a CR LF host file comes back LF.
+  ED, PIP and WordStar write NAME.$$$ and rename it over NAME.EXT after
+  renaming the old one NAME.BAK; the rename turns the $$$ file into host
+  text, and host text is LF.  A file rewritten in place keeps its style
+  (TextImage), a file replaced this way does not.  Repro, with CP/M 2.2's
+  ED.COM from the RomWBW hd1k_cpm22 image and keystrokes fed a line at a
+  time (ED eats typeahead): printf 'a\r\nb\r\n' >crlf.txt; ED CRLF.TXT,
+  #A, B, i, x, ^Z, E - crlf.bak is CR LF, crlf.txt is x LF a LF b LF.
+  Not a regression: ED did not start under 4.9.0 or e497958, and PIP's copy
+  of a CR LF file has come back LF since 4.9.0.  Missing: a
+  decision that the new file should take the style of the one it replaces -
+  the rename would have to remember what NAME.EXT was when it became
+  NAME.BAK, which is a guess about what the program meant.
 
 The rules that used to be in this header - what belongs here, what a tag means,
 where finished work goes - are in CLAUDE.md now.  They were rules rather than
