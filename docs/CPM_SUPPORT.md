@@ -45,6 +45,13 @@ past 2^18, the most an FCB can address, is error 6. A text file's records are
 counted after conversion - LF to CR LF, ending at `^Z` - except by BDOS 33,
 34, 35 and 40, which see the host file's raw bytes.
 
+Where this differs from 2.2 on purpose:
+
+- **An FCB that runs past FFFFh** - the bytes the call uses, 36 for BDOS 33-36
+  and 40, 33 for 20 and 21, fewer for the others - is refused with `FFh`
+  rather than wrapping to 0000h. No CP/M program keeps an FCB there, above
+  the BIOS. The DMA buffer does wrap, as a Z80 address does.
+
 The allocation vector BDOS 27 points at is initialised all-free and never
 updated, so a program that reads it to compute free space gets the same answer
 whatever is on the drive. Any other function number prints

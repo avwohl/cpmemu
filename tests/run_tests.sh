@@ -71,7 +71,7 @@ skipped=0
 
 # Every skip that means "this machine is missing a tool" registers itself here,
 # so --require can turn the lot into one failure at the end.  Registering is
-# separate from printing because the count behind a gate is not always one: 71
+# separate from printing because the count behind a gate is not always one: 72
 # checks sit behind the assembler.
 # Each takes a token so a caller can allow one by name: CPMEMU_SKIP_OK is a
 # space or comma separated list of tokens that --require lets through.  The
@@ -339,14 +339,14 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 71 checks live behind this gate, not the 6 an earlier version counted
-    skipped=$((skipped + 71))
-    soft_skip assembler "drive mapping tests: 71 checks, no assembler (pip install um80)"
+    # 72 checks live behind this gate, not the 6 an earlier version counted
+    skipped=$((skipped + 72))
+    soft_skip assembler "drive mapping tests: 72 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1
     for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren cli_tail con_eof con_spin adm3a \
-               savemem bios_disk sectran fcb_io; do
+               savemem bios_disk sectran fcb_io mem_top; do
         if ! assemble "$root/tests/$src.asm" "$tmp/$src.com" >"$tmp/asm.log" 2>&1; then
             echo "FAIL  assembling tests/$src.asm"
             sed 's/^/        /' <"$tmp/asm.log"
@@ -899,6 +899,18 @@ else
             failed=$((failed + 1))
         fi
 
+        # An FCB and a DMA buffer at the top of memory: see tests/mem_top.asm.
+        fcb_reset; { head -c 64 /dev/zero | tr '\0' A; head -c 64 /dev/zero | tr '\0' B; } >"$fcbdir/wrap.dat"
+        got=$(cd "$fcbdir" && "$emu" "$tmp/mem_top.com" 2>"$tmp/fcberr")
+        if [ "$got" = FF00AB ] && [ ! -e "$fcbdir/topfcb.dat" ]; then
+            printf 'PASS  %s\n' "memory: an FCB past FFFFh is refused, a DMA buffer wraps"
+            passed=$((passed + 1))
+        else
+            printf 'FAIL  %s\n        expected FF00AB and no topfcb.dat\n        got      %s\n' \
+                "memory: an FCB past FFFFh is refused, a DMA buffer wraps" "$got"
+            ls "$fcbdir" | sed 's/^/        /'
+            failed=$((failed + 1))
+        fi
     fi
 fi
 

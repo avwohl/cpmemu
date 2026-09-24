@@ -556,6 +556,9 @@ private:
   // Open the host file an FCB names into open_files, without touching the
   // FCB.  Returns false, having set A = 0xFF, when it cannot.
   bool open_fcb_file(qkz80_uint16 fcb_addr, int func);
+  // Copy to and from the DMA buffer, wrapping at 64K as CP/M addresses do.
+  void dma_put(const uint8_t* src, size_t n);
+  void dma_get(uint8_t* dst, size_t n);
   // The mode and conversion a file created by BDOS 22 gets.  *guessed is set
   // when nothing named it - no mode rule, default_mode auto, and an extension
   // on neither list - so binary is only auto's fallback.
@@ -1671,9 +1674,43 @@ bool CPMEmulator::handle_pc(qkz80_uint16 pc) {
   return false;
 }
 
+// How many bytes from DE a BDOS function reads or writes here: to R2 for the
+// calls that use R0-R2, to CR for 20 and 21, and so on down to the name alone
+// for delete.  0 for a call that does not touch memory at DE - among them 16,
+// which only looks the address up, and 18, which CP/M says ignores DE and
+// which programs call with whatever DE was left holding.
+static int fcb_bytes_used(qkz80_uint8 func) {
+  switch (func) {
+  case 19: return 12;                    // name
+  case 17: return 15;                    // name, EX, S1, S2
+  case 15: return 16;                    // and RC
+  case 23: return 28;                    // the new name at 16-27
+  case 22: return 32;                    // RC and the map cleared, to 31
+  case 20: case 21: return 33;           // CR
+  case 33: case 34: case 35: case 36: case 40: return 36;  // R0-R2
+  default: return 0;
+  }
+}
+
 void CPMEmulator::bdos_call(qkz80_uint8 func) {
   if (debug || debug_bdos_funcs.count(func)) {
     fprintf(stderr, "BDOS call %d\n", func);
+  }
+
+  // Every file call reads and writes its FCB as mem[DE + n], and the guest
+  // memory is exactly 64K, so an FCB near the top ran off the end of it:
+  // BDOS 22 at FFECh wrote 19 bytes of host heap.  CP/M would wrap the
+  // address to 0000h, but no CP/M program can have an FCB there - the BDOS
+  // and BIOS are at the top of memory, here as on a real machine - so the
+  // call fails as a bad FCB rather than every FCB access learning to wrap.
+  int fcb_len = fcb_bytes_used(func);
+  if (fcb_len && cpu->get_reg16(qkz80::regp_DE) > 0x10000 - fcb_len) {
+    if (debug || debug_bdos_funcs.count(func)) {
+      fprintf(stderr, "BDOS %d: FCB at %04X runs past FFFFh, refused\n", func,
+              cpu->get_reg16(qkz80::regp_DE));
+    }
+    cpu->set_reg8(0xFF, qkz80::reg_A);
+    return;
   }
 
   switch (func) {
@@ -2269,6 +2306,20 @@ void CPMEmulator::bdos_close_file() {
   }
 }
 
+// The DMA buffer is guest memory, and a guest address is 16 bits: a buffer
+// at FFC0h runs on at 0000h, as the Z80's own addressing does.  These were
+// memcpy and fread at &mem[current_dma], which ran up to 127 bytes past the
+// 64K the emulator allocates when the guest put its buffer near the top.
+void CPMEmulator::dma_put(const uint8_t* src, size_t n) {
+  qkz80_uint8* mem = cpu->get_mem();
+  for (size_t i = 0; i < n; i++) mem[(current_dma + i) & 0xFFFF] = src[i];
+}
+
+void CPMEmulator::dma_get(uint8_t* dst, size_t n) {
+  const qkz80_uint8* mem = cpu->get_mem();
+  for (size_t i = 0; i < n; i++) dst[i] = mem[(current_dma + i) & 0xFFFF];
+}
+
 // BDOS 20 and 21 read and write the record EX, S2 and CR name - CR within
 // logical extent EX of module S2 - which is the record BDOS 36 would report
 // for the same FCB.  They used to read and write wherever the host stream had
@@ -2322,8 +2373,7 @@ void CPMEmulator::bdos_read_sequential() {
     pad_to_128(buffer, nread);
   }
 
-  // Copy to DMA
-  memcpy(&mem[current_dma], buffer, 128);
+  dma_put(buffer, 128);
   cpu->set_reg8(0, qkz80::reg_A);  // Success
 
   if (trace) {
@@ -2369,7 +2419,9 @@ void CPMEmulator::bdos_write_sequential() {
     return;
   }
 
-  bool ok = write_record(it->second, record, &mem[current_dma]);
+  uint8_t buffer[128];
+  dma_get(buffer, 128);
+  bool ok = write_record(it->second, record, buffer);
   if (trace) {
     fprintf(stderr, "Write sequential: FCB %04X file '%s' record %u %s\n", fcb_addr,
             it->second.cpm_name.c_str(), record, ok ? "written" : "FAILED");
@@ -2546,7 +2598,6 @@ bool CPMEmulator::random_position(OpenFile& of, qkz80_uint16 fcb_addr, uint32_t*
 
 void CPMEmulator::bdos_read_random() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
-  qkz80_uint8* mem = cpu->get_mem();
 
   auto it = open_files.find(fcb_addr);
   if (it == open_files.end()) {
@@ -2558,8 +2609,9 @@ void CPMEmulator::bdos_read_random() {
   if (!random_position(it->second, fcb_addr, &record_num)) return;
 
   // Read 128 bytes to DMA
+  uint8_t buffer[128];
   it->second.last_op = OP_READ;
-  size_t nread = fread(&mem[current_dma], 1, 128, it->second.fp);
+  size_t nread = fread(buffer, 1, 128, it->second.fp);
 
   if (debug || debug_bdos_funcs.count(33)) {
     fprintf(stderr, "Read random: FCB %04X file '%s' record %u read %zu bytes\n",
@@ -2571,15 +2623,15 @@ void CPMEmulator::bdos_read_random() {
   } else {
     // Pad with ^Z if less than 128 bytes
     if (nread < 128) {
-      memset(&mem[current_dma + nread], 0x1A, 128 - nread);
+      memset(buffer + nread, 0x1A, 128 - nread);
     }
+    dma_put(buffer, 128);
     cpu->set_reg8(0, qkz80::reg_A);  // Success
   }
 }
 
 void CPMEmulator::bdos_write_random() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
-  qkz80_uint8* mem = cpu->get_mem();
 
   auto it = open_files.find(fcb_addr);
   if (it == open_files.end()) {
@@ -2591,8 +2643,10 @@ void CPMEmulator::bdos_write_random() {
   if (!random_position(it->second, fcb_addr, &record_num)) return;
 
   // Write 128 bytes from DMA
+  uint8_t buffer[128];
+  dma_get(buffer, 128);
   it->second.last_op = OP_WRITE;
-  size_t nwritten = fwrite(&mem[current_dma], 1, 128, it->second.fp);
+  size_t nwritten = fwrite(buffer, 1, 128, it->second.fp);
   fflush(it->second.fp);
 
   if (debug || debug_bdos_funcs.count(34)) {
@@ -3074,8 +3128,6 @@ void CPMEmulator::bdos_search_first() {
 // Byte 0 is the USER number, not the drive: CP/M 2.2 uses 0-15 for a user
 // and 0xE5 for an erased entry, and DIR, STAT and PIP all read it that way.
 void CPMEmulator::write_dir_entry(const SearchResult& r) {
-  qkz80_uint8* mem = cpu->get_mem();
-
   int64_t file_size = platform::get_file_size(r.path.c_str());
   if (file_size < 0) file_size = 0;
   // Keep the division in 64 bits and clamp BEFORE narrowing.  Computing this
@@ -3088,18 +3140,20 @@ void CPMEmulator::write_dir_entry(const SearchResult& r) {
   int64_t records = (file_size + 127) / 128;  // Number of 128-byte records
   int rc = records > 128 ? 128 : static_cast<int>(records);  // RC in this extent
 
-  memset(&mem[current_dma], 0, 32);
-  mem[current_dma + 0] = search_user;  // User number
-  memcpy(&mem[current_dma + 1], r.name, 8);
-  memcpy(&mem[current_dma + 9], r.ext, 3);
-  mem[current_dma + 12] = 0;  // EX (extent)
-  mem[current_dma + 13] = 0;  // S1
-  mem[current_dma + 14] = 0;  // S2
-  mem[current_dma + 15] = rc; // RC (record count)
+  uint8_t entry[32];
+  memset(entry, 0, 32);
+  entry[0] = search_user;  // User number
+  memcpy(&entry[1], r.name, 8);
+  memcpy(&entry[9], r.ext, 3);
+  entry[12] = 0;  // EX (extent)
+  entry[13] = 0;  // S1
+  entry[14] = 0;  // S2
+  entry[15] = rc; // RC (record count)
   // Allocation map bytes 16-31 can be any non-zero value for existing file
   for (int i = 16; i < 32; i++) {
-    mem[current_dma + i] = (i - 16 < (records + 7) / 8) ? 0x01 : 0x00;
+    entry[i] = (i - 16 < (records + 7) / 8) ? 0x01 : 0x00;
   }
+  dma_put(entry, 32);
 }
 
 void CPMEmulator::bdos_search_next() {

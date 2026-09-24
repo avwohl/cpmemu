@@ -143,6 +143,16 @@ is still 128, not the extent's record count.
   and wrong for a REL library: building one with DRI LIB or Microsoft LIB-80
   under `auto` still needs `*.LIB = binary`, as it did in 4.9.0.
 
+- **An FCB near the top of memory had the file calls write past the
+  emulator's 64K.** BDOS 22 with its FCB at FFECh cleared bytes 13 to 31 of
+  it, the last 12 of them past FFFFh in the host heap (AddressSanitizer:
+  heap-buffer-overflow in `bdos_make_file`), and the other file calls read
+  and wrote as far as R2 the same way. No CP/M program keeps an FCB there,
+  above the BIOS, so a call whose FCB would run past FFFFh is refused with
+  `FFh`. A DMA buffer near the top wraps to 0000h, as a Z80 address does,
+  where the record copies ran up to 127 bytes past the end. New guest
+  `tests/mem_top.asm`.
+
 - **A mode rule did not apply to a file named on the command line or renamed
   by the guest.** Both are found through a table that took the mode from the
   extension alone, so under `*.TXT = binary` such an `X.TXT` opened as text
