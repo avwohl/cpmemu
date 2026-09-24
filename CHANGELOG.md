@@ -208,6 +208,19 @@ after it, since the host file cannot be truncated there.
   A name that matches exactly still wins; one that differs only in case is
   found when nothing matches exactly.
 
+- **DRI's ED stopped before reading a key, with `DISK OR DIRECTORY FULL`.**
+  The default FCBs at 005Ch and 006Ch started as zeros, and a name the command
+  line did not give stayed eleven NULs. 2.2's CCP converts a first and a
+  second name whether or not they are there and blank-fills what is missing,
+  and ED starts `IF (FCB(1) = ' ') OR (FCB(17) <> ' ') THEN CALL FERR` - so
+  `ED X.ASM`, with no second name, saw a second name of NULs and gave up with
+  FERR's message, after closing an FCB it had never opened. 4.9.0 did the
+  same. Both names are blank now when not given, and a `*` fills the rest of
+  its field with `?`, as CONVERT does; it became `_`, with a warning. CP/M
+  2.2's ED.COM now edits a file that did not exist and one that did, and its
+  `NAME.$$$` renamed over the original is host text. New guest
+  `tests/cli_fcb.asm`.
+
 ### Changed
 
 - **`cpm_disk.py add` pads a file's last block with NUL, not `^Z`.** The bytes

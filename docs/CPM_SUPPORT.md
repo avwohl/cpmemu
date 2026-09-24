@@ -111,7 +111,10 @@ whatever is on the drive. Any other function number prints
 0x0003         IOBYTE (device control)
 0x0004         Current drive/user
 0x0005-0x0007  JMP to the BDOS entry
-0x005C-0x007F  Default FCBs, the first at 0x005C and the second at 0x006C
+0x005C-0x007F  Default FCBs, the first at 0x005C and the second at 0x006C,
+               filled from the first two command-line words as the CCP
+               fills them: a name not given is blank, and a * fills the
+               rest of its field with ?
 0x0080-0x00FF  Default DMA buffer (command tail)
 0x0100-0xFCFF  TPA (Transient Program Area); a .COM file is read into it
 0xFD00         BDOS entry - a trap address, no code in memory

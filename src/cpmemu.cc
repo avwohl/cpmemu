@@ -690,9 +690,17 @@ void CPMEmulator::setup_memory() {
   // Initialize DMA to default
   current_dma = DEFAULT_DMA;
 
-  // Clear default FCBs
+  // The default FCBs as the CCP leaves them when the command line names no
+  // file: drive 0, a blank name and type in both, EX, S1, S2 and CR zero.
+  // 2.2's CCP runs CONVERT for the first and the second name whether or not
+  // either is there, and CONVERT blank-fills what it does not find.  These
+  // were zeros, and a program that tests for "no second name" the way DRI's
+  // tools do - ED's IF (FCB(1) = ' ') OR (FCB(17) <> ' ') THEN CALL FERR -
+  // saw a second file named with NULs: ED stopped at its first line with
+  // DISK OR DIRECTORY FULL, on 4.9.0 and every build before it.
   memset(&mem[DEFAULT_FCB], 0, 36);
-  memset(&mem[DEFAULT_FCB2], 0, 20);
+  memset(&mem[DEFAULT_FCB + 1], ' ', 11);
+  memset(&mem[DEFAULT_FCB2 + 1], ' ', 11);
 
   // Initialize Disk Parameter Header (DPH) - 16 bytes
   // This is what BIOS SELDSK returns a pointer to
@@ -1570,6 +1578,27 @@ std::string CPMEmulator::fcb_to_filename(qkz80_uint16 fcb_addr) {
   return filename;
 }
 
+// One field of a command-line name - the name, 8 bytes, or the type, 3 -
+// from src[from, to), blank-padded and cut to the field as the CCP cuts it.
+static void fill_fcb_field(qkz80_uint8* mem, qkz80_uint16 at, size_t width,
+                           const std::string& src, size_t from, size_t to,
+                           const std::string& whole) {
+  size_t i = 0;
+  for (size_t k = from; k < to && i < width; k++, i++) {
+    char c = src[k];
+    if (c == '*') {
+      while (i < width) mem[at + i++] = '?';
+      return;
+    }
+    if (c != '?' && !is_valid_cpm_char(c)) {
+      fprintf(stderr, "Warning: invalid CP/M character '%c' in filename '%s'\n", c, whole.c_str());
+      c = '_';  // Replace with underscore
+    }
+    mem[at + i] = static_cast<qkz80_uint8>(c);
+  }
+  while (i < width) mem[at + i++] = ' ';
+}
+
 void CPMEmulator::filename_to_fcb(const std::string& filename, qkz80_uint16 fcb_addr) {
   qkz80_uint8* mem = cpu->get_mem();
 
@@ -1603,53 +1632,18 @@ void CPMEmulator::filename_to_fcb(const std::string& filename, qkz80_uint16 fcb_
     }
   }
 
-  // Find extension
+  // Fill the name and the type field, blank-padded, the way 2.2's CCP
+  // CONVERT does: a '*' fills the rest of its field with '?', and a '?' is
+  // kept.  Both were taken for invalid characters and became '_', so a
+  // program given *.BAK looked for _.BAK.  Anything else a CP/M name cannot
+  // hold is replaced, with a warning, as before.
   size_t dot_pos = upper_name.find('.', name_start);
-
-  // Fill name field (8 chars, space-padded), validating characters
-  size_t name_len = (dot_pos != std::string::npos) ? (dot_pos - name_start) : (upper_name.length() - name_start);
-  if (name_len > 8) {
-    name_len = 8;
-  }
-
-  for (size_t i = 0; i < 8; i++) {
-    if (i < name_len) {
-      char c = upper_name[name_start + i];
-      if (!is_valid_cpm_char(c)) {
-        fprintf(stderr, "Warning: invalid CP/M character '%c' in filename '%s'\n", c, filename.c_str());
-        c = '_';  // Replace with underscore
-      }
-      mem[fcb_addr + 1 + i] = c;
-    } else {
-      mem[fcb_addr + 1 + i] = ' ';
-    }
-  }
-
-  // Fill extension field (3 chars, space-padded), validating characters
+  size_t name_end = dot_pos != std::string::npos ? dot_pos : upper_name.length();
+  fill_fcb_field(mem, fcb_addr + 1, 8, upper_name, name_start, name_end, filename);
   if (dot_pos != std::string::npos) {
-    size_t ext_start = dot_pos + 1;
-    size_t ext_len = upper_name.length() - ext_start;
-    if (ext_len > 3) {
-      ext_len = 3;
-    }
-
-    for (size_t i = 0; i < 3; i++) {
-      if (i < ext_len) {
-        char c = upper_name[ext_start + i];
-        if (!is_valid_cpm_char(c)) {
-          fprintf(stderr, "Warning: invalid CP/M character '%c' in filename '%s'\n", c, filename.c_str());
-          c = '_';  // Replace with underscore
-        }
-        mem[fcb_addr + 9 + i] = c;
-      } else {
-        mem[fcb_addr + 9 + i] = ' ';
-      }
-    }
+    fill_fcb_field(mem, fcb_addr + 9, 3, upper_name, dot_pos + 1, upper_name.length(), filename);
   } else {
-    // No extension
-    for (int i = 0; i < 3; i++) {
-      mem[fcb_addr + 9 + i] = ' ';
-    }
+    fill_fcb_field(mem, fcb_addr + 9, 3, upper_name, 0, 0, filename);
   }
 }
 

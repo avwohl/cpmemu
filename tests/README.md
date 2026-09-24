@@ -429,10 +429,10 @@ of them ever needs rebuilding, assemble it with `um80` and compare, rather than
 reaching for z88dk again.
 
 The drive mapping sources, the two console end-of-input programs, `cli_tail.asm`,
-`adm3a.asm`, `savemem.asm`, `bios_disk.asm`, `sectran.asm`, `fcb_io.asm` and `mem_top.asm` are assembled at
+`cli_fcb.asm`, `adm3a.asm`, `savemem.asm`, `bios_disk.asm`, `sectran.asm`, `fcb_io.asm` and `mem_top.asm` are assembled at
 test time instead, so no binary for them is committed. `tests/run_tests.sh` assembles them with
 **`um80` and `ul80`**, this project's own assembler and linker, and skips the
-whole group - 88 checks - when they are not on `PATH`:
+whole group - 92 checks - when they are not on `PATH`:
 ```bash
 pip install um80           # any platform; provides um80 and ul80
 ```
@@ -501,10 +501,10 @@ What is left is coverage of everything they do not reach:
    four terminal programs to try, and the bytes each key should print, are in
    `MANUAL_CHECKS.md` in the repo root.
 2. The drive mapping group needs an assembler. It takes `um80` and nothing
-   else, so on a machine without it 88 checks skip - more than half the
+   else, so on a machine without it 92 checks skip - more than half the
    suite. CI installs it with `pip install um80` on both runners and runs with
    `--require`, so the gate can no longer hide there; a local run on a machine
-   without it still skips them, and committing those fifteen `.com` files as
+   without it still skips them, and committing those sixteen `.com` files as
    byte arrays the way `tests/con_guests.h` does would de-gate it entirely.
 3. `.github/workflows/ci.yml` now runs this suite on `ubuntu-latest` and
    `macos-latest` and `tests\win_console.bat` on `windows-latest`, on every

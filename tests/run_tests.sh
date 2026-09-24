@@ -71,7 +71,7 @@ skipped=0
 
 # Every skip that means "this machine is missing a tool" registers itself here,
 # so --require can turn the lot into one failure at the end.  Registering is
-# separate from printing because the count behind a gate is not always one: 88
+# separate from printing because the count behind a gate is not always one: 92
 # checks sit behind the assembler.
 # Each takes a token so a caller can allow one by name: CPMEMU_SKIP_OK is a
 # space or comma separated list of tokens that --require lets through.  The
@@ -339,14 +339,14 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 88 checks live behind this gate, not the 6 an earlier version counted
-    skipped=$((skipped + 88))
-    soft_skip assembler "drive mapping tests: 88 checks, no assembler (pip install um80)"
+    # 92 checks live behind this gate, not the 6 an earlier version counted
+    skipped=$((skipped + 92))
+    soft_skip assembler "drive mapping tests: 92 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1
-    for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren cli_tail con_eof con_spin adm3a \
-               savemem bios_disk sectran fcb_io mem_top; do
+    for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren cli_tail cli_fcb con_eof con_spin \
+               adm3a savemem bios_disk sectran fcb_io mem_top; do
         if ! assemble "$root/tests/$src.asm" "$tmp/$src.com" >"$tmp/asm.log" 2>&1; then
             echo "FAIL  assembling tests/$src.asm"
             sed 's/^/        /' <"$tmp/asm.log"
@@ -500,6 +500,30 @@ else
             "-X --bogus" ' -X --BOGUS'
         check_drive "cli: CP/M option tail is untouched" "$tmp/cli_tail.com" "$tmp/tail.cfg" \
             "TEST,TEST.COM/N/E" ' TEST,TEST.COM/N/E'
+
+        # The default FCBs are the CCP's: a name the command line does not
+        # give is blank, not NULs.  DRI's ED refuses to start - DISK OR
+        # DIRECTORY FULL, before it reads a key - unless the second name is
+        # blank, and it was eleven NULs.  And a '*' fills its field with '?',
+        # as the CCP's CONVERT does; it became '_'.
+        printf 'program = %s/cli_fcb.com\n' "$tmp" >"$tmp/clifcb.cfg"
+        check_drive "cli: a second name not given is blank (ED starts)" "$tmp/cli_fcb.com" \
+            "$tmp/clifcb.cfg" "FOO.TXT" '00[FOO     TXT]00[           ]00'
+        check_drive "cli: no names at all leaves both FCBs blank" "$tmp/cli_fcb.com" \
+            "$tmp/clifcb.cfg" "" '00[           ]00[           ]00'
+        check_drive "cli: drives and names in both FCBs" "$tmp/cli_fcb.com" "$tmp/clifcb.cfg" \
+            "A:X.Y B:LONGNAMEXX.ABCD" '01[X       Y  ]02[LONGNAMEABC]00'
+        # Not through check_drive, whose unquoted $arg would let the shell
+        # glob the '*' against the sandbox first.
+        got=$(cd "$sb" && "$emu" "$tmp/clifcb.cfg" 'FOO.*' 'A*B.T?T' 2>/dev/null)
+        if [ "$got" = '00[FOO     ???]00[A???????T?T]00' ]; then
+            printf 'PASS  %s\n' "cli: a '*' fills its field with '?'"
+            passed=$((passed + 1))
+        else
+            printf 'FAIL  %s\n        expected %s\n        got      %s\n' \
+                "cli: a '*' fills its field with '?'" '00[FOO     ???]00[A???????T?T]00' "$got"
+            failed=$((failed + 1))
+        fi
 
         # --- end of console input -------------------------------------------
         # The first read past the end still answers CR, so a part-typed line
