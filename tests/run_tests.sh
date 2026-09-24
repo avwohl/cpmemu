@@ -71,7 +71,7 @@ skipped=0
 
 # Every skip that means "this machine is missing a tool" registers itself here,
 # so --require can turn the lot into one failure at the end.  Registering is
-# separate from printing because the count behind a gate is not always one: 78
+# separate from printing because the count behind a gate is not always one: 88
 # checks sit behind the assembler.
 # Each takes a token so a caller can allow one by name: CPMEMU_SKIP_OK is a
 # space or comma separated list of tokens that --require lets through.  The
@@ -339,9 +339,9 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 78 checks live behind this gate, not the 6 an earlier version counted
-    skipped=$((skipped + 78))
-    soft_skip assembler "drive mapping tests: 78 checks, no assembler (pip install um80)"
+    # 88 checks live behind this gate, not the 6 an earlier version counted
+    skipped=$((skipped + 88))
+    soft_skip assembler "drive mapping tests: 88 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1
@@ -792,8 +792,9 @@ else
         fcb_reset; fcb_file "$fcbdir/data.dat" 01; fcb_file "$tmp/want" 01A
         check_fcb "files: a read at end of file does not move CR" \
             DATA.DAT ORRRSHAWCOZ0RRRR '01=01(00,00,02)01A=01' data.dat "$tmp/want"
-        # 2^18 records is as far as S2:EX:CR reach.  Past that both BDOSes
-        # answer 6, and the FCB is left alone.
+        # 2^18 records is as far as S2:EX:CR reach.  Past that CP/M 3 answers
+        # 6, and so does this, with the FCB left alone.  (2.2 answers 6 from
+        # 65536 on; docs/CPM_SUPPORT.md says why this does not.)
         check_fcb "files: a random record the FCB cannot hold is error 6" \
             DATA.DAT ON262144GS '=06(00,00,00)'
         # Open keeps the EX the caller asked for and clears S2 (2.2's
@@ -884,6 +885,27 @@ else
         fcb_cfg=$tmp/fcbbin.cfg check_fcb "files: a mode rule applies to a file named on the command line" \
             T.TXT OL 'a>b>~'
 
+        # Open fails for an extent the file does not have, as 2.2's does, and
+        # RC is that extent's record count.  It opened any extent asked for
+        # with RC = 128, so opening extents 0, 1, 2 ... until one fails - the
+        # CP/M 1.4 way to find a file's end - never stopped.
+        fcb_reset; fcb_file "$fcbdir/data.dat" 0
+        check_fcb "files: open fails for an extent the file does not have" DATA.DAT X5O '=FF'
+        fcb_reset; head -c 38400 /dev/zero | tr '\0' x >"$fcbdir/data.dat"
+        check_fcb "files: open gives each extent its record count" \
+            DATA.DAT O@X1O@X2O@X3O '@80@80@2C=FF'
+        fcb_reset; for i in $(seq 1 100); do printf 'a\n'; done >"$fcbdir/t.txt"
+        check_fcb "files: a text file's RC counts the CR the converter adds" T.TXT O@ '@03'
+        fcb_reset; : >"$fcbdir/data.dat"
+        check_fcb "files: an empty file opens with RC 0" DATA.DAT O@ '@00'
+        # And a program that then makes the extent, as CP/M 1.4 programs
+        # extend a file, gets that extent of the file it has.  Make truncated
+        # whatever the FCB's EX, so the file before it became zeros.
+        a128=$(printf 'a%.0s' $(seq 1 128))
+        fcb_reset; fcb_file "$fcbdir/data.dat" "$a128"; fcb_file "$tmp/want" "${a128}B"
+        check_fcb "files: making extent 1 of a file keeps extent 0" \
+            DATA.DAT X1OMSHBWC '=FF(01,00,00)' data.dat "$tmp/want"
+
         # CP/M keeps an open file's state in its FCB, so a read after a close,
         # after a disk reset, or through a copy of the FCB goes on from it.
         # Only a sequential write did; the rest answered 0xFF.
@@ -895,6 +917,20 @@ else
         fcb_reset; fcb_file "$fcbdir/data.dat" 012; fcb_file "$tmp/want" 0X2
         check_fcb "files: a random write after close" DATA.DAT OCN1HXPC '' data.dat "$tmp/want"
         check_fcb "files: a read of a file that is not there still fails" NONE.DAT R '=FF'
+
+        # Search returns one entry per extent, and the FCB's EX picks which:
+        # '?' every one, a number that one.  It returned one entry per file,
+        # EX = 0, RC at most 128, so a lister adding up extents saw 300
+        # records as 128.  300 records: 128, 128, 44.
+        fcb_reset; head -c 38400 /dev/zero | tr '\0' x >"$fcbdir/data.dat"
+        check_fcb "search: EX = ? returns every extent" DATA.DAT X63DAAA '[00,00,80][01,00,80][02,00,2C]=FF'
+        check_fcb "search: EX = 1 returns extent 1" DATA.DAT X1DA '[01,00,80]=FF'
+        check_fcb "search: an extent the file does not have is not found" DATA.DAT X3D '=FF'
+        check_fcb "search: EX = 0 is one entry per file" DATA.DAT DA '[00,00,80]=FF'
+        # A drive byte of '?' makes 2.2 compare nothing, EX included, so a
+        # lister that sets it gets every extent whatever EX was left holding.
+        check_fcb "search: a '?' drive byte returns every extent" DATA.DAT '&63X5DAAA' \
+            '[00,00,80][01,00,80][02,00,2C]=FF'
 
         # A CR the text writer holds at a record's end reaches the file when
         # the run ends at the end of its input, not only when the program

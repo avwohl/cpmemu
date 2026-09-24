@@ -19,6 +19,7 @@
 ;   Hc fill the DMA buffer with the character c
 ;   Jn Kn Un  put CR, LF or ^Z at byte n of the DMA buffer
 ;   Zn Xn Yn  set the FCB's CR, EX or S2 byte to n
+;   &n set the FCB's drive byte to n (63 is '?')
 ;   Nn set R0-R2 to n, up to 16777215
 ;   Vnc put the character c at byte n of the DMA buffer
 ;   #n run the command after it n times in all
@@ -153,6 +154,8 @@ next1:	call	getch
 	jp	z,c_rc
 	cp	'!'
 	jp	z,c_hang
+	cp	'&'
+	jp	z,c_setdr
 	push	af		; unknown: print ? and the letter, and go on
 	ld	a,'?'
 	call	putc
@@ -303,6 +306,10 @@ c_setex:call	getnum
 c_sets2:call	getnum
 	ld	ix,(cur)
 	ld	(ix+14),l
+	jp	next
+c_setdr:call	getnum
+	ld	ix,(cur)
+	ld	(ix+0),l
 	jp	next
 c_setr:	call	getnum
 	ld	ix,(cur)

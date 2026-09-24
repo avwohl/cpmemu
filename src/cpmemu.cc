@@ -323,9 +323,12 @@ enum {
 };
 
 // Records an FCB can address.  S2:EX:CR is 6 + 5 + 7 bits, 2^18 records or
-// 32 MB, which is CP/M 3's limit; CP/M 2.2's sixteen modules are inside it.
-// A random record past it is error 6, which both BDOSes answer, because no
-// FCB could say where the sequential calls after it should go.
+// 32 MB, which is CP/M 3's and MP/M II's limit, and a random record at or past
+// it is error 6, because no FCB could say where the sequential calls after it
+// should go.  2.2 is stricter: its POSITION answers 6 for any record of 65536
+// or more (R2 not zero), 8 MB.  This does not, on purpose - the MP/M II and
+// CP/M 3 tools this emulator runs, and host files over 8 MB, can use the rest,
+// and 4.9.0 read and wrote any record at all.  docs/CPM_SUPPORT.md says so.
 static const uint32_t FCB_MAX_RECORDS = 1u << 18;
 
 // The record the extent an FCB is in starts at: the numbering BDOS 33-36 use,
@@ -439,6 +442,8 @@ private:
     std::string path;
     char name[8];
     char ext[3];
+    uint32_t extent;   // logical extent: S2 * 32 + EX
+    uint32_t records;  // the whole file's, from its host size
   };
   std::vector<SearchResult> search_results;  // List of matching files
   static SearchResult make_search_result(const std::string& path,
@@ -447,6 +452,8 @@ private:
     r.path = path;
     memcpy(r.name, name, 8);
     memcpy(r.ext, ext, 3);
+    r.extent = 0;
+    r.records = 0;
     return r;
   }
   // Write one 32-byte CP/M directory entry at the current DMA address.
@@ -562,6 +569,7 @@ private:
   // Copy to and from the DMA buffer, wrapping at 64K as CP/M addresses do.
   void dma_put(const uint8_t* src, size_t n);
   void dma_get(uint8_t* dst, size_t n);
+  uint32_t cpm_record_count(const OpenFile& of);
   // The mode and conversion a file created by BDOS 22 gets.  *guessed is set
   // when nothing named it - no mode rule, default_mode auto, and an extension
   // on neither list - so binary is only auto's fallback.
@@ -2266,17 +2274,65 @@ bool CPMEmulator::open_fcb_file(qkz80_uint16 fcb_addr, int func) {
   return true;
 }
 
+// The records a guest reading this file sequentially finds in it.  A binary
+// file is its host size in 128-byte records.  A text file is what the
+// converter makes of it - an LF with no CR before it gains one, and the text
+// ends at the first ^Z - which is not the host size, so it is counted by
+// reading the file through a stream of its own.
+uint32_t CPMEmulator::cpm_record_count(const OpenFile& of) {
+  if (of.mode != MODE_TEXT) {
+    int64_t size = platform::get_file_size(of.unix_path.c_str());
+    if (size <= 0) return 0;
+    int64_t records = (size + 127) / 128;
+    return records > 0xFFFFFF ? 0xFFFFFF : static_cast<uint32_t>(records);
+  }
+  FILE* fp = fopen(of.unix_path.c_str(), "rb");
+  if (!fp) return 0;
+  uint64_t bytes = 0;
+  bool cr = false;
+  int ch;
+  while ((ch = fgetc(fp)) != EOF && ch != CPM_EOF) {
+    if (ch == '\n' && !cr && of.eol_convert) bytes++;
+    bytes++;
+    cr = (ch == '\r');
+  }
+  fclose(fp);
+  uint64_t records = (bytes + 127) / 128;
+  return records > 0xFFFFFF ? 0xFFFFFF : static_cast<uint32_t>(records);
+}
+
+// 2.2's OPENFIL clears S2 and opens the directory entry for extent EX of
+// module 0, keeping the caller's EX.  With cpmemu's disk (EXM = 0) an entry is
+// one logical extent, so the open fails, FFh, when the file has no records in
+// that extent - extent 0 always exists, even for an empty file - and RC is
+// that extent's record count: 128 for any extent before the last.  This
+// opened every extent that was asked for and answered RC = 128 whatever the
+// file held, so a program that finds a file's end the CP/M 1.4 way, opening
+// extents 0, 1, 2 ... until one fails and taking the last one's RC, never
+// found it.  Before the branch that let the caller's EX stand, EX was forced
+// to 0 and the loop could not even move.
 void CPMEmulator::bdos_open_file() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
   if (!open_fcb_file(fcb_addr, 15)) return;
 
-  // EX is left as the caller set it: 2.2's OPENFIL opens the extent the FCB
-  // names, and a sequential call then starts in it.  This used to force EX
-  // to 0.  S2 is cleared, as OPENFIL does first.  RC is not the extent's
-  // record count, which a directory would give; it has always been 128 here.
   qkz80_uint8* mem = cpu->get_mem();
+  auto it = open_files.find(fcb_addr);
+  uint32_t records = cpm_record_count(it->second);
+  uint32_t extents = records == 0 ? 1 : (records + 127) / 128;
+  uint32_t ex = mem[fcb_addr + FCB_EX] & 0x1F;
+  if (ex >= extents) {
+    if (debug || debug_bdos_funcs.count(15)) {
+      fprintf(stderr, "BDOS Open: '%s' has %u records, no extent %u\n",
+              it->second.cpm_name.c_str(), records, ex);
+    }
+    close_open_file(it->second);
+    open_files.erase(it);
+    cpu->set_reg8(0xFF, qkz80::reg_A);
+    return;
+  }
   mem[fcb_addr + FCB_S2] = 0;
-  mem[fcb_addr + FCB_RC] = 0x80;
+  mem[fcb_addr + FCB_RC] = static_cast<qkz80_uint8>(
+      ex + 1 < extents ? 128 : records - ex * 128);
 
   cpu->set_reg8(0, qkz80::reg_A);  // Success
 }
@@ -2507,12 +2563,39 @@ void CPMEmulator::bdos_make_file() {
     unix_name = join_path(ddir, unix_name);
   }
 
-  FILE* fp = fopen(unix_name.c_str(), "w+b");
+  // Make with EX above 0 makes that extent of the file, and in CP/M the
+  // extents before it are the file's own: 2.2's FCREATE writes a directory
+  // entry for the extent the FCB names and touches no other.  A CP/M 1.4
+  // program that writes past a file's end opens the next extent, and when
+  // the open fails - which it does now for an extent the file has not got -
+  // makes it.  Truncating here, as a make of extent 0 does, would throw the
+  // whole file away at that point, so an existing file is opened as it is.
+  FILE* fp = nullptr;
+  bool extending = false;
+  if ((cpu->get_mem()[fcb_addr + FCB_EX] & 0x1F) != 0) {
+    FileMode found_mode;
+    bool found_eol;
+    std::string found = find_unix_file_ex(filename, &found_mode, &found_eol,
+                                          cpu->get_mem()[fcb_addr]);
+    if (!found.empty() && (fp = fopen(found.c_str(), "r+b")) != nullptr) {
+      extending = true;
+      unix_name = found;
+      mode = found_mode;
+      eol_convert = found_eol;
+      if (debug || debug_bdos_funcs.count(22)) {
+        fprintf(stderr, "Make file: %s exists, extent %u added to it\n", found.c_str(),
+                cpu->get_mem()[fcb_addr + FCB_EX] & 0x1Fu);
+      }
+    }
+  }
+  if (!fp) fp = fopen(unix_name.c_str(), "w+b");
   if (!fp) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
     return;
   }
-  if (guessed) {
+  if (extending) {
+    // the file is what it was; a rename decides it as before, if at all
+  } else if (guessed) {
     made_guessed.insert(unix_name);
   } else {
     made_guessed.erase(unix_name);
@@ -3101,6 +3184,51 @@ void CPMEmulator::bdos_search_first() {
     fprintf(stderr, "Search First: found %zu files\n", search_results.size());
   }
 
+  // One directory entry per logical extent, as a CP/M directory has them,
+  // and the FCB's EX and S2 choose which, as 2.2's GETFST and SAMEXT do with
+  // EXM = 0: EX = '?' takes every extent of the module S2 names, or of every
+  // module if S2 is '?' too; any other EX takes that extent of module 0 and
+  // nothing if the file has no such extent.  A drive byte of '?' takes every
+  // extent whatever EX and S2 hold, since GETFST then compares no byte of
+  // the FCB at all.  This gave one entry per file, EX = 0 and RC at most 128,
+  // whatever was asked, so STAT and every lister that adds up a file's
+  // extents saw a 300-record file as 128 records.
+  {
+    bool every = mem[fcb_addr] == '?';
+    qkz80_uint8 want_ex = every ? '?' : mem[fcb_addr + FCB_EX];
+    qkz80_uint8 want_s2 = every ? '?' : mem[fcb_addr + FCB_S2];
+    std::vector<SearchResult> extents;
+    for (const auto& r : search_results) {
+      // Keep the division in 64 bits and clamp BEFORE narrowing.  Computing
+      // this as `int records` overflowed at 2^31 records - 274877906816
+      // bytes, reachable on any LP64 host and cheap to reach with a sparse
+      // file - after which records went negative, the `> 128` clamp never
+      // fired, and the RC byte and the whole allocation map came back zero:
+      // the guest saw a 256 GiB file as empty.  Measured by bisection on
+      // APFS: 274877906816 gave RC 0x80, one byte more gave RC 0x00.  The
+      // extents listed stop where an FCB can no longer name one.
+      int64_t size = platform::get_file_size(r.path.c_str());
+      int64_t records64 = size > 0 ? (size + 127) / 128 : 0;
+      uint32_t records = records64 > 0xFFFFFF ? 0xFFFFFF : static_cast<uint32_t>(records64);
+      uint32_t count = records == 0 ? 1 : (records + 127) / 128;
+      if (count > FCB_MAX_RECORDS / 128) count = FCB_MAX_RECORDS / 128;
+      for (uint32_t k = 0; k < count; k++) {
+        bool match;
+        if (want_ex == '?') {
+          match = want_s2 == '?' || (want_s2 & 0x7Fu) == (k >> 5);
+        } else {
+          match = k == (want_ex & 0x1Fu);
+        }
+        if (!match) continue;
+        SearchResult e = r;
+        e.extent = k;
+        e.records = records;
+        extents.push_back(e);
+      }
+    }
+    search_results.swap(extents);
+  }
+
   // Return first result
   if (search_results.empty()) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Not found
@@ -3127,16 +3255,9 @@ void CPMEmulator::bdos_search_first() {
 // Byte 0 is the USER number, not the drive: CP/M 2.2 uses 0-15 for a user
 // and 0xE5 for an erased entry, and DIR, STAT and PIP all read it that way.
 void CPMEmulator::write_dir_entry(const SearchResult& r) {
-  int64_t file_size = platform::get_file_size(r.path.c_str());
-  if (file_size < 0) file_size = 0;
-  // Keep the division in 64 bits and clamp BEFORE narrowing.  Computing this
-  // as `int records` overflowed at 2^31 records - 274877906816 bytes, reachable
-  // on any LP64 host and cheap to reach with a sparse file - after which
-  // records went negative, the `> 128` clamp never fired, and the RC byte and
-  // the whole allocation map came back zero: the guest saw a 256 GiB file as
-  // empty.  Measured by bisection on APFS: 274877906816 gave RC 0x80, one byte
-  // more gave RC 0x00.
-  int64_t records = (file_size + 127) / 128;  // Number of 128-byte records
+  // The records in this entry's extent: 128 for any before the last.
+  int64_t before = static_cast<int64_t>(r.extent) * 128;
+  int64_t records = r.records > before ? r.records - before : 0;
   int rc = records > 128 ? 128 : static_cast<int>(records);  // RC in this extent
 
   uint8_t entry[32];
@@ -3144,9 +3265,9 @@ void CPMEmulator::write_dir_entry(const SearchResult& r) {
   entry[0] = search_user;  // User number
   memcpy(&entry[1], r.name, 8);
   memcpy(&entry[9], r.ext, 3);
-  entry[12] = 0;  // EX (extent)
+  entry[12] = static_cast<uint8_t>(r.extent & 0x1F);  // EX (extent)
   entry[13] = 0;  // S1
-  entry[14] = 0;  // S2
+  entry[14] = static_cast<uint8_t>(r.extent >> 5);    // S2 (module)
   entry[15] = rc; // RC (record count)
   // Allocation map bytes 16-31 can be any non-zero value for existing file
   for (int i = 16; i < 32; i++) {

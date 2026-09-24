@@ -42,9 +42,21 @@ around 20 and 21 were brought into line with them:
 - BDOS 36 counts S2 and a CR of 128. It computed `EX * 128 + CR`;
 - open keeps the EX the caller set and clears S2, which is 2.2's `OPENFIL`.
   It forced EX to 0 and left S2 alone. A program has to zero EX and CR
-  itself, as CP/M has always required, and CR was never reset by open;
-- a random record past 2^18, which no FCB can hold, is error 6, as both 2.2
-  and 3 answer. It was read or written at `record * 128`, out to 2 GB;
+  itself, as CP/M has always required, and CR was never reset by open. Open
+  fails, `FFh`, for an extent the file has no records in, and sets RC to that
+  extent's record count; it opened any extent it was asked for with RC = 128,
+  so a program that finds a file's end by opening extents 0, 1, 2 ... until
+  one fails - CP/M 1.4's way - never found it. Make of an extent above 0 of
+  a file that exists opens it as it is, as 2.2's `FCREATE` adds an extent
+  and touches no other: a CP/M 1.4 program extending a file makes the extent
+  its open could not find, and make truncated the host file whatever EX said;
+- a random record at or past 2^18, which no FCB can hold, is error 6, as
+  CP/M 3 and MP/M II answer. It was read or written at `record * 128`, out to
+  2 GB. 2.2 is stricter and answers 6 from record 65536 (8 MB) on; records
+  65536 to 262143 are read and written here on purpose, for the MP/M II and
+  CP/M 3 tools this emulator runs and for host files over 8 MB, as 4.9.0 read
+  and wrote them. `docs/CPM_SUPPORT.md` lists this with the other deliberate
+  departures from 2.2;
 - a read after a write, or a write after a read, on one stream now has the
   seek between them that ISO C requires and nothing issued.
 
@@ -53,8 +65,7 @@ bytes; CR = n is found by converting from the top of the file, and only when
 the guest moves its own position. Two limits remain, both older than this:
 a random read or write on a text file is still raw bytes at `record * 128`,
 and rewriting a text file in place with shorter text leaves the old tail
-after it, since the host file cannot be truncated there. `RC` after an open
-is still 128, not the extent's record count.
+after it, since the host file cannot be truncated there.
 
 ### Fixed
 
@@ -142,6 +153,16 @@ is still 128, not the extent's record count.
   list and stays there, which is right for MAC's and M80's macro libraries
   and wrong for a REL library: building one with DRI LIB or Microsoft LIB-80
   under `auto` still needs `*.LIB = binary`, as it did in 4.9.0.
+
+- **Search First and Next returned one directory entry per file, with EX = 0
+  and RC at most 128, whatever the FCB asked for.** A CP/M directory has an
+  entry per extent, and STAT and every lister that sizes a file by adding up
+  its extents saw a 300-record file as 128 records. Now an FCB whose EX is
+  `?` gets every extent (of the module S2 names, or of all of them if S2 is
+  `?` too), and any other EX gets that extent of module 0 or nothing, which
+  is 2.2's `GETFST` and `SAMEXT` with this disk's `EXM` of 0. A drive byte of
+  `?` gets every extent whatever EX holds, since 2.2 then compares no byte
+  of the FCB. A plain search, EX = 0, still returns one entry per file.
 
 - **A read or write through an FCB the emulator held no stream for failed
   with `FFh`.** CP/M keeps an open file's state in its FCB, so a read after

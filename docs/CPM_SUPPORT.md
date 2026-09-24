@@ -40,10 +40,17 @@ A file's position is its FCB's, as in CP/M: BDOS 20 and 21 read and write
 record CR of logical extent EX of module S2, which is the record BDOS 36
 reports, and a random read or write leaves CR, EX and S2 at its record, so the
 next sequential call reads it again or writes it again. Open keeps the EX it is
-given and does not touch CR, so a program zeroes both itself. A random record
-past 2^18, the most an FCB can address, is error 6. A text file's records are
-counted after conversion - LF to CR LF, ending at `^Z` - except by BDOS 33,
-34, 35 and 40, which see the host file's raw bytes.
+given and does not touch CR, so a program zeroes both itself. A text file's
+records are counted after conversion - LF to CR LF, ending at `^Z` - except by
+BDOS 17, 18, 33, 34, 35 and 40, which see the host file's raw bytes.
+
+The disk this emulates has 2 KB blocks and `EXM` = 0, so a directory entry is
+one logical extent of 128 records. Open fails, `FFh`, for an extent the file
+has no records in - extent 0 always exists, even for an empty file - and sets
+RC to that extent's record count. Search First and Next return one entry per
+extent: an FCB whose EX is `?` gets every extent (of the module S2 names, or
+of every module if S2 is `?` too), any other EX gets that extent of module 0
+or nothing, and a drive byte of `?` gets every extent whatever EX holds.
 
 As in CP/M, a close, a disk reset or a copy of an FCB leaves the FCB usable: a
 read or write through an FCB the emulator holds no host file for opens the
@@ -51,6 +58,20 @@ file again from its name and goes on from the FCB's position.
 
 Where this differs from 2.2 on purpose:
 
+- **Random records up to 2^18 - 1.** 2.2's `POSITION` answers error 6 for any
+  record of 65536 or more (R2 not zero). This takes records up to 262143, as
+  CP/M 3 and MP/M II do, and answers 6 past that, the most S2:EX:CR can hold.
+  It is here for the MP/M II and CP/M 3 tools this emulator runs and for host
+  files over 8 MB; 4.9.0 read and wrote any record at all.
+- **Unwritten random records.** A host file cannot say which of its records
+  were written, so a record inside the file that nothing wrote reads as the
+  zeros the host returns for a hole, where 2.2 answers 1 (unwritten data) or 4
+  (unwritten extent), and a record past the end answers 1 whether or not 2.2
+  would have had its extent and answered 4.
+- **A write at CR = 128** writes record 0 of the next extent, where 2.2
+  answers 1; an end-of-file read at an extent boundary leaves the FCB there
+  rather than on the next extent. Both only make an append succeed that 2.2
+  would have refused.
 - **An FCB that runs past FFFFh** - the bytes the call uses, 36 for BDOS 33-36
   and 40, 33 for 20 and 21, fewer for the others - is refused with `FFh`
   rather than wrapping to 0000h. No CP/M program keeps an FCB there, above
