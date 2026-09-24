@@ -72,7 +72,7 @@ skipped=0
 
 # Every skip that means "this machine is missing a tool" registers itself here,
 # so --require can turn the lot into one failure at the end.  Registering is
-# separate from printing because the count behind a gate is not always one: 111
+# separate from printing because the count behind a gate is not always one: 112
 # checks sit behind the assembler.
 # Each takes a token so a caller can allow one by name: CPMEMU_SKIP_OK is a
 # space or comma separated list of tokens that --require lets through.  The
@@ -340,9 +340,9 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 111 checks live behind this gate, not the 6 an earlier version counted
-    skipped=$((skipped + 111))
-    soft_skip assembler "drive mapping tests: 111 checks, no assembler (pip install um80)"
+    # 112 checks live behind this gate, not the 6 an earlier version counted
+    skipped=$((skipped + 112))
+    soft_skip assembler "drive mapping tests: 112 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1
@@ -1008,6 +1008,13 @@ else
         fcb_reset; printf 'A\n' >"$tmp/want"
         check_fcb "files: and at the end of the run when it is never closed" \
             T.PRN MHAJ1K2U3W '' t.prn "$tmp/want"
+        # Made and at once opened again, as LIB-80 does with its MYLIB.LIB work
+        # file, it is still undecided: opened while empty it was taken for
+        # text, and the REL library written into it went through the
+        # converter - LIB-80's listing of it then said "Out of memory".
+        fcb_reset; { printf 'A\000\000\000\000B\000\000\000\r\n\032'; head -c 116 /dev/zero; } >"$tmp/want"
+        check_fcb "files: made, opened again and written, a .LIB keeps its bytes" \
+            X.LIB MOV0AV5BJ9K10U11WC '' x.lib "$tmp/want"
         # Written in sequence, it is converted as the text writer always did,
         # a bare LF and all - RMAC's listings have one after the title line.
         # Written at random, it has to read back record for record, and a

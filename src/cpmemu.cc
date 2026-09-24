@@ -2439,6 +2439,10 @@ bool CPMEmulator::open_fcb_file(qkz80_uint16 fcb_addr, int func) {
     }
   }
 
+  // A file made this run under a text-list name and not yet decided is still
+  // written as it comes, whatever it holds so far; see settle_made_file.
+  if (made_by_content.count(unix_path)) mode = MODE_BINARY;
+
   OpenFile of;
   if (mode == MODE_TEXT && eol_convert) {
     of.img = text_image(unix_path, false);
@@ -3135,6 +3139,12 @@ void CPMEmulator::settle_made_file(const std::string& path, bool trace) {
   for (const auto& pair : open_files) {
     if (pair.second.is_open() && pair.second.unix_path == path) return;  // not its last close
   }
+  // Nothing written yet says nothing: it stays undecided, and opens as it
+  // is, for what a program writes after it opens it again.  Microsoft's
+  // LIB-80 makes its work file MYLIB.LIB and at once opens it again with the
+  // same FCB; decided then, empty, it opened as text and the REL library
+  // written into it went through the converter.
+  if (platform::get_file_size(path.c_str()) <= 0) return;
   made_by_content.erase(it);
   // Written in sequence only, it is converted as the text writer converted
   // a text name before: CR LF to LF whether or not every line reads back as

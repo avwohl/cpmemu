@@ -222,7 +222,9 @@ or the end of the run, if the program never closes it - becomes host text if
 it is text by the rule above. If the program wrote any of it at random, it
 must also read back exactly as it was written, since a random file's records
 have to stay where they are; a file written in sequence is converted as a
-text file always was, a bare LF becoming a line end like any other. So a listing or an ASCII `SAVE "X",A` lands as host text, and
+text file always was, a bare LF becoming a line end like any other. Until
+something has been written in it, it stays undecided: opened again, by the FCB
+that made it or another, it is still written as it comes. So a listing or an ASCII `SAVE "X",A` lands as host text, and
 a tokenized `SAVE "X"` or a library written directly under a `.LIB` name keeps
 its bytes.
 

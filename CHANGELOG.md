@@ -193,7 +193,11 @@ records are found, read and written back is the first entry under Fixed.
   random, only if it reads back exactly, since a random file's records have
   to stay where they are; so an `,A` save or a `.PRN` listing lands as host
   text as before, and a tokenized save or a library made directly keeps its
-  bytes. With the default config,
+  bytes. Microsoft's LIB-80 makes its work file `MYLIB.LIB`, opens it again
+  at once and writes the REL library into it; 4.9.0 and e497958 wrote that
+  through the converter, 17,694 bytes of a 20,736-byte library, and LIB-80's
+  own listing of the result said `?Module name/number not found in file`.
+  It is the library now, and lists its module. With the default config,
   RMAC, LIB and LINK now rebuild `XDOS.SPR`, `TMP.SPR` and `BNKXDOS.SPR` from
   MP/M II's NUCLEUS sources byte-identical to DRI's, and RMAC reads an LF copy
   of DRI's `Z80.LIB` as the macro library it is. A mode rule for the name

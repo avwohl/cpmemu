@@ -39,7 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # um80 assembles 17 guests at test time; without it 111 checks - more
+      # um80 assembles 17 guests at test time; without it 112 checks - more
       # than half the suite - skip.  g++-mingw-w64 is for the cross-compile
       # of src/os/windows/platform.cc, which fails on any warning.
       #
@@ -101,7 +101,7 @@ jobs:
       # file both POSIX platforms share.  It had been run on macOS by hand and
       # by no machine.
       #
-      # --require here too, so an install that stops working cannot hide 111
+      # --require here too, so an install that stops working cannot hide 112
       # checks behind a green tick - the hole this job had until the ubuntu one
       # demonstrated it.  CPMEMU_SKIP_OK allows exactly one skip through:
       # installing a Windows cross-compiler on a Mac to repeat a check the
