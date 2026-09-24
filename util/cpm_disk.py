@@ -525,11 +525,15 @@ class SssdDisk:
             self.write_block(block_num, chunk)
 
         # Create directory entries
-        # For SSSD: EXM=0, each extent = 128 records, 16 blocks max per entry
+        # For SSSD: EXM=0, each extent = 128 records, 16 blocks max per entry.
+        # An empty file still has its extent 0, RC 0 and no blocks, as the
+        # BDOS's make leaves it.  It had none, so the file did not exist, and
+        # adding an empty file over an existing one deleted it and said
+        # "Successfully updated".
         extent_num = 0
         block_idx = 0
 
-        while block_idx < blocks_needed:
+        while block_idx < blocks_needed or extent_num == 0:
             dir_entry_num = self.find_free_dir_entry()
             if dir_entry_num is None:
                 print(f"No free directory entry for {filename} extent {extent_num}")
@@ -865,7 +869,9 @@ class Hd1kDisk:
         physical_extent_num = 0
         block_idx = 0
 
-        while block_idx < blocks_needed:
+        # At least one entry: an empty file is extent 0 with RC 0 and no
+        # blocks (see SssdDisk.add_file).
+        while block_idx < blocks_needed or physical_extent_num == 0:
             dir_offset = self.find_free_dir_entry()
             if dir_offset is None:
                 print(f"No free directory entry for {filename} extent {physical_extent_num}")

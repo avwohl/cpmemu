@@ -186,6 +186,12 @@ after it, since the host file cannot be truncated there.
   extension alone, so under `*.TXT = binary` such an `X.TXT` opened as text
   and every other one binary.
 
+- **`cpm_disk.py add` of an empty file wrote no directory entry**, so the file
+  did not exist, and adding one over an existing file deleted that file and
+  said "Successfully updated". It gets extent 0 with RC 0 and no blocks, as
+  the BDOS's make leaves it. On hd1k this is older than 4.9.0; on SSSD it
+  arrived with `add` replacing a file of the same name, above.
+
 ### Changed
 
 - **`cpm_disk.py add` pads a file's last block with NUL, not `^Z`.** The bytes

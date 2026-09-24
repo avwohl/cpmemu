@@ -521,6 +521,45 @@ class TestAttributeBits(unittest.TestCase):
         self.assertEqual(verify_disk(disk, data, 'hd1k')[0], [])
 
 
+def each_geometry():
+    """(name, image bytes, disk) for a fresh hd1k, SSSD and combo slice."""
+    for make, cls in ((lambda: create_hd1k_disk(combo=False), Hd1kDisk),
+                      (create_sssd_disk, SssdDisk),
+                      (lambda: create_hd1k_disk(combo=True), ComboDisk)):
+        data = bytearray(make())
+        yield cls.__name__, data, cls(data)
+
+
+class TestEmptyFile(unittest.TestCase):
+    """An empty file has a directory entry: extent 0, RC 0, no blocks.
+
+    It had none, so an empty file added did not exist, and adding one over an
+    existing file deleted that file and reported success.
+    """
+
+    def test_an_empty_file_is_listed_and_extracts_empty(self):
+        for fmt, data, disk in each_geometry():
+            with self.subTest(fmt=fmt):
+                self.assertTrue(disk.add_file("EMPTY.TXT", b""))
+                files = disk.list_files()
+                self.assertIn((0, "EMPTY.TXT"), files)
+                self.assertEqual(files[(0, "EMPTY.TXT")]['records'], 0)
+                self.assertEqual(files[(0, "EMPTY.TXT")]['blocks'], [])
+                self.assertEqual(bytes(disk.extract_file("EMPTY.TXT")), b"")
+                self.assertEqual(verify_disk(disk, data, detect_disk_format(data))[0], [])
+
+    def test_an_empty_file_replaces_rather_than_deletes(self):
+        for fmt, data, disk in each_geometry():
+            with self.subTest(fmt=fmt):
+                disk.add_file("NOTE.TXT", b"12345678")
+                self.assertTrue(disk.add_file("NOTE.TXT", b""))
+                self.assertEqual(bytes(disk.extract_file("NOTE.TXT")), b"")
+                entries = [e for i, e in dir_entries(disk)
+                           if e[0] == 0 and bytes(e[1:12]) == b"NOTE    TXT"]
+                self.assertEqual(len(entries), 1)
+                self.assertEqual(entries[0][12:], bytes(20))
+
+
 class TestCommandLine(unittest.TestCase):
     """The same through the commands, which is where the crash was reported."""
 
