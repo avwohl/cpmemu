@@ -31,6 +31,8 @@
 ;      use that from here on; a second I copies it back and switches back
 ;   !  read the console (BDOS 1) for ever, closing nothing: the run ends
 ;      when the emulator gives up at the end of its input
+;   %  call BIOS READ (0FE27h), closing nothing: under CPM_BIOS_DISK=error
+;      the emulator ends the run there
 ;
 ; A read that succeeds prints the first byte of the record it read.  Any call
 ; that fails prints = and the status in A as two hex digits, so a read at end
@@ -154,6 +156,8 @@ next1:	call	getch
 	jp	z,c_rc
 	cp	'!'
 	jp	z,c_hang
+	cp	'%'
+	jp	z,c_bios
 	cp	'&'
 	jp	z,c_setdr
 	push	af		; unknown: print ? and the letter, and go on
@@ -376,6 +380,9 @@ srch:	call	callf
 c_hang:	ld	c,1
 	call	bdos
 	jr	c_hang
+
+c_bios:	call	0FE27h		; BIOS READ
+	jp	next
 
 c_rc:	ld	a,'@'
 	call	putc

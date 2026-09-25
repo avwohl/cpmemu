@@ -1243,6 +1243,23 @@ else
         fcb_reset; printf 'A\n' >"$tmp/want"
         check_fcb "files: and at the end of the run when it is never closed" \
             T.PRN MHAJ1K2U3W '' t.prn "$tmp/want"
+        # And when CPM_BIOS_DISK=error ends the run at a BIOS disk call, which
+        # exited without closing anything: t.prn stayed 128 bytes of CR LF and
+        # ^Z.  Exit status 1 is that mode's, so check_fcb cannot run it.
+        fcb_reset
+        (cd "$fcbdir" && CPM_BIOS_DISK=error "$emu" "$tmp/fcb_io.com" T.PRN 'MHAJ1K2U3W%' \
+            >/dev/null 2>"$tmp/fcberr")
+        rc=$?
+        if [ $rc -eq 1 ] && grep -q 'Unimplemented BIOS disk function' "$tmp/fcberr" &&
+           [ "$(od -An -c "$fcbdir/t.prn" | tr -d ' \n')" = 'A\n' ]; then
+            printf 'PASS  files: and when CPM_BIOS_DISK=error ends the run\n'
+            passed=$((passed + 1))
+        else
+            printf 'FAIL  files: and when CPM_BIOS_DISK=error ends the run\n'
+            printf '        exit %d, t.prn is %s bytes\n' "$rc" "$(wc -c <"$fcbdir/t.prn" | tr -d ' ')"
+            sed 's/^/        /' <"$tmp/fcberr"
+            failed=$((failed + 1))
+        fi
         # Not under eol_convert = false, which converts nothing: it was.
         fcb_reset; { printf 'A\r\n\032'; head -c 124 /dev/zero | tr '\0' A; } >"$tmp/want"
         fcb_cfg=$tmp/fcbnoeol.cfg check_fcb "files: under eol_convert = false it is kept as written" \

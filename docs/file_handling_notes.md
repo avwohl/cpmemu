@@ -72,9 +72,11 @@ and otherwise when the file is closed, at a disk reset or BDOS 48, before a
 directory search, rename or file size, when the program ends, and when
 SIGTERM, SIGHUP or SIGINT ends the run (POSIX; the process still dies of the
 signal). A `SIGKILL` or a crash before then loses a change that was waiting.
-A close whose change cannot be written - the host file read-only, the disk
-full - answers `FFh` and says so on stderr. What a program writes after the
-text's first `^Z` is not text, and does not reach the host file.
+The exit `CPM_BIOS_DISK=error` makes at a BIOS disk call closes every file
+first, as the end of the run does. A close whose change cannot be written -
+the host file read-only, the disk full - answers `FFh` and says so on stderr.
+What a program writes after the text's first `^Z` is not text, and does not
+reach the host file.
 
 Every FCB open on one host file shares its image, whichever name or path it
 was opened by. A file that opened as text because of what it holds (below)

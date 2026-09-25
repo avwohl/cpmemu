@@ -292,6 +292,14 @@ records are found, read and written back is the first entry under Fixed.
   holds is text. Nothing was lost before - the file read back as written -
   only its form on the host was wrong.
 
+- **`CPM_BIOS_DISK=error` ended the run without closing any file.** Every
+  other end of the run - BDOS 0, WBOOT, a jump to 0, end of input, a signal -
+  closes every file first, so a text file's change still waiting in its image
+  and a file made under a text-list name not yet decided reach the host. This
+  `exit(1)` did not: `T.PRN` made, written `A` CR LF `^Z` and not closed
+  before a BIOS READ stayed 128 bytes of CR LF and `^Z` where every other end
+  leaves `A` LF. `tests/fcb_io.asm` has a `%` command for the call now.
+
 - **`cpm_disk.py add` of an empty file wrote no directory entry**, so the file
   did not exist, and adding one over an existing file deleted that file and
   said "Successfully updated". It gets extent 0 with RC 0 and no blocks, as

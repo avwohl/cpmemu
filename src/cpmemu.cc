@@ -4121,6 +4121,9 @@ void CPMEmulator::bios_call(int offset) {
       fprintf(stderr, "FATAL: Unimplemented BIOS disk function at offset %d\n", offset);
       fprintf(stderr, "This emulator handles file I/O at the BDOS level.\n");
       fprintf(stderr, "Set CPM_BIOS_DISK=ok or CPM_BIOS_DISK=fail to change this behavior.\n");
+      // As every other end of the run does: a text file's change still only
+      // in its image, and a made file not yet decided, reach the host.
+      close_all_files();
       exit(1);
     } else if (bios_disk_mode == 1) {
       // Fail mode - return error to caller.  A = 1 is the CP/M BIOS permanent

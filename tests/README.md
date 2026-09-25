@@ -195,13 +195,13 @@ and what should come back is `MANUAL_CHECKS.md` in the repo root.
   what came back: `FCB_IO <file> <script>`, where the script is a string of
   one-letter commands - open, make, close, delete, rename, search, disk reset,
   sequential and random reads and writes, BDOS 35 and 36, setting `EX`, `S2`,
-  `CR` or `R0`-`R2`, filling the DMA buffer, working on a copy of the FCB -
-  listed in the source's header. A read prints the first byte of the record it
-  got, a failed call prints `=` and the status, a search prints the entry's
-  `[EX,S2,RC]`, and `L` dumps a text file to its `^Z`. `tests/run_tests.sh`
-  builds the host file each check starts from and compares the file each check
-  ends with as well as the output. Assembled at test time; no `.com` is
-  committed.
+  `CR` or `R0`-`R2`, filling the DMA buffer, working on a copy of the FCB,
+  calling BIOS READ - listed in the source's header. A read prints the first
+  byte of the record it got, a failed call prints `=` and the status, a
+  search prints the entry's `[EX,S2,RC]`, and `L` dumps a text file to its
+  `^Z`. `tests/run_tests.sh` builds the host file each check starts from and
+  compares the file each check ends with as well as the output. Assembled at
+  test time; no `.com` is committed.
 - **mem_top.asm** - an FCB and a DMA buffer at the top of the 64K: BDOS 22
   with its FCB at FFECh is refused, and a record read into a buffer at FFC0h
   wraps its second half to 0000h. Expected output: `FF00AB`. Assembled at test
