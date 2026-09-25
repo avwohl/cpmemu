@@ -1125,6 +1125,51 @@ else
         fcb_reset; printf '\001\n' >"$tmp/want"
         fcb_cfg=$tmp/fcbdbin.cfg check_fcb "files: and converts what a guess would take for binary" \
             'U.$$$' $'MH\001J1K2U3WC>U.TXT;' '' u.txt "$tmp/want"
+        # A file renamed while it is still open is decided at its last close,
+        # by the new name's configuration.  It was left as written for good:
+        # 128 bytes of CR LF and ^Z padding under a name made text.
+        fcb_reset; printf 'A\n' >"$tmp/want"
+        fcb_cfg=$tmp/fcbdtext.cfg check_fcb "files: a rename while open to a name default_mode makes text converts at the close" \
+            'U.$$$' 'MHAJ1K2U3W>U.TXT;C' '' u.txt "$tmp/want"
+        fcb_reset; printf 'A\n' >"$tmp/want"
+        fcb_cfg=$tmp/fcbdbin.cfg check_fcb "files: a rename while open to a name a mode rule makes text converts at the close" \
+            'U.$$$' 'MHAJ1K2U3W>U.TXT;C' '' u.txt "$tmp/want"
+        fcb_reset; printf 'A\n' >"$tmp/want"
+        check_fcb "files: a rename while open to a text-list name under auto converts text at the close" \
+            'U.$$$' 'MHAJ1K2U3W>U.TXT;C' '' u.txt "$tmp/want"
+        fcb_reset; printf 'A\n' >"$tmp/want"
+        fcb_cfg=$tmp/fcbdbin.cfg check_fcb "files: and at the end of the run when it is never closed" \
+            'U.$$$' 'MHAJ1K2U3W>U.TXT;' '' u.txt "$tmp/want"
+        fcb_reset; { printf 'A\r\n\032'; head -c 124 /dev/zero | tr '\0' A; } >"$tmp/want"
+        fcb_cfg=$tmp/fcbbin.cfg check_fcb "files: a rename while open to a binary name is left as written" \
+            'U.$$$' 'MHAJ1K2U3W>U.TXT;C' '' u.txt "$tmp/want"
+        # Written again after the rename, by the FCB that has it open: all of
+        # it is converted at the close, not only what was there at the rename.
+        fcb_reset; { printf 'A\n'; head -c 125 /dev/zero | tr '\0' A; printf 'B\n'; } >"$tmp/want"
+        fcb_cfg=$tmp/fcbdbin.cfg check_fcb "files: a record written after a rename while open is converted too" \
+            'U.$$$' 'MHAJ1K2W>U.TXT;HBJ1K2U3WC' '' u.txt "$tmp/want"
+
+        # A mapping with a host path decides the mode of the file a make or a
+        # rename of its name creates at that path, as it does for an open of
+        # it.  Make and rename looked only at mode rules and default_mode: under
+        # auto, N.TXT = n.txt binary had a make of N.TXT converted at its close
+        # by what it held, and the binary open after it read LF text.
+        { echo "program = $tmp/fcb_io.com"; echo "default_mode = auto"
+          echo "N.TXT = n.txt binary"; } >"$tmp/fcbmapb.cfg"
+        { echo "program = $tmp/fcb_io.com"; echo "default_mode = binary"
+          echo "N.TXT = n.txt text"; } >"$tmp/fcbmapt.cfg"
+        fcb_reset; { printf 'A\r\n\032'; head -c 124 /dev/zero | tr '\0' A; } >"$tmp/want"
+        fcb_cfg=$tmp/fcbmapb.cfg check_fcb "files: a make at a mapping's binary host path is left as written" \
+            N.TXT 'MHAJ1K2U3WC' '' n.txt "$tmp/want"
+        fcb_reset; printf 'A\n' >"$tmp/want"
+        fcb_cfg=$tmp/fcbmapt.cfg check_fcb "files: a make at a mapping's text host path is host text" \
+            N.TXT 'MHAJ1K2U3WC' '' n.txt "$tmp/want"
+        fcb_reset; { printf 'A\r\n\032'; head -c 124 /dev/zero | tr '\0' A; } >"$tmp/want"
+        fcb_cfg=$tmp/fcbmapb.cfg check_fcb "files: a rename to a mapping's binary host path is left as written" \
+            'U.$$$' 'MHAJ1K2U3WC>N.TXT;' '' n.txt "$tmp/want"
+        fcb_reset; printf 'A\n' >"$tmp/want"
+        fcb_cfg=$tmp/fcbmapt.cfg check_fcb "files: a rename to a mapping's text host path converts" \
+            'U.$$$' 'MHAJ1K2U3WC>N.TXT;' '' n.txt "$tmp/want"
 
         # default_mode is the mode of a file a program opens, as well as of
         # one it makes, unless a mapping or a mode rule names it; only auto

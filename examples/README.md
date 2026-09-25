@@ -185,6 +185,13 @@ does. A file's mode is, in order:
 What the configuration names text is text whatever it holds, and what it
 names binary is binary; the look at the bytes is for `auto` alone.
 
+A file a program makes is decided the same way. A make puts the file in the
+drive's directory, and a rename leaves it in the old file's; a mapping with a
+host path decides when that path is the file made or renamed to, so
+`N.TXT = n.txt binary` is the mode of the `n.txt` a make of `N.TXT` creates as
+well as of the one an open reaches. A mapping to another file does not reach
+the made one, and the name's mode rule or `default_mode` decides.
+
 A text file with `eol_convert = true` is read with each LF that has no CR
 before it made CR LF (a CR LF already there stays CR LF), ending at the first
 `^Z`, and is written to the host converted back: CR LF to LF, ending at the
@@ -215,7 +222,8 @@ the new name is text with `eol_convert` - by a mapping, a mode rule or
 `default_mode` - so a `*.$$$ = binary` rule leaves a copied program alone and
 still gives a copied text file host line ends. A new name that is binary, or
 has `eol_convert = false`, leaves the file as written; under `auto` the new
-name's extension and the file's bytes decide.
+name's extension and the file's bytes decide. A file still open when it is
+renamed is decided the same way at its last close.
 
 ## See also
 

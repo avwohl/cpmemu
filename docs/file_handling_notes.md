@@ -229,6 +229,12 @@ it makes alike:
    one that matches;
 3. `default_mode`, if it is `text` or `binary`.
 
+A file a program makes or renames is decided the same way. A make puts the
+file in the drive's directory and a rename leaves it in the old file's
+directory, so a mapping with a host path decides for it when that path is the
+file made or renamed to - `N.TXT = n.txt binary` for the `n.txt` a make of
+`N.TXT` creates - and a mapping that reaches another file does not.
+
 What the configuration calls text is text, and binary binary, without a look
 at the file. Only when none of those says - `default_mode = auto` and no
 mapping or rule for the name - does the emulator guess, from the extension:
@@ -299,6 +305,11 @@ and is left as written at a rename to a name that is `binary` or has
 `eol_convert = false`. So under `default_mode = text`, rules `*.$$$ = binary`
 and `*.COM = binary` have PIP copy a program byte for byte and a text file to
 host text. A file that was not made this run keeps its bytes at a rename.
+
+A file still open when it is renamed - CP/M allows it, though PIP, ED and
+WordStar close first - cannot be converted under the open stream, and is
+decided at its last close, or at a disk reset or the end of the run, as a
+file made under its new name is.
 
 ## File Search Order
 

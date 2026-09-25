@@ -264,6 +264,34 @@ records are found, read and written back is the first entry under Fixed.
   extension alone, so under `*.TXT = binary` such an `X.TXT` opened as text
   and every other one binary.
 
+- **A mapping with a host path did not decide the mode of the file a make or
+  a rename of its name created at that path.** `N.TXT = n.txt binary` is
+  the mode of the `n.txt` an open of `N.TXT` reaches, and it should be of
+  the `n.txt` a make of `N.TXT`, or a rename of `D.$$$` to it, creates;
+  BDOS 22 and 23 looked only at mode rules and `default_mode`. Under
+  `default_mode = auto` a make of `N.TXT` holding `line one` CR LF `line two`
+  CR LF `^Z` was guessed text by what it held and converted at its close,
+  and the binary open after it read 18 bytes of LF text, not the record
+  written; `default_mode = binary` with `N.TXT = n.txt text` left 128 bytes of
+  CR LF and `^Z` padding. As old as 4.9.0. The mapping now decides when its
+  host file - the first that exists, as for an open - is the file made or
+  renamed to; a make still lands in the drive's directory, so a mapping to
+  another file does not reach it, and the name's mode rule or `default_mode`
+  decides.
+
+- **A file made this run and renamed while it was still open was never
+  converted**, whatever its new name's configuration said. The conversion a
+  rename does cannot run under an open stream, and it was skipped for good:
+  under `default_mode = text` and `*.$$$ = binary`, the config
+  `examples/README.md` recommends, `D.$$$` made, written, renamed `N.TXT` and
+  then closed stayed 128 bytes of CR LF and `^Z` padding, as it did under
+  `default_mode = binary` and `N.TXT = text`. Such a file is now decided at
+  its last close, or at a disk reset or the end of the run, as one made under
+  its new name is: host text if the configuration makes the name text with
+  `eol_convert`, and under `auto` for a name on the text list if what it
+  holds is text. Nothing was lost before - the file read back as written -
+  only its form on the host was wrong.
+
 - **`cpm_disk.py add` of an empty file wrote no directory entry**, so the file
   did not exist, and adding one over an existing file deleted that file and
   said "Successfully updated". It gets extent 0 with RC 0 and no blocks, as

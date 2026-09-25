@@ -608,6 +608,13 @@ private:
   // The last mode rule - a mapping with no host path - that matches a
   // normalized name, if there is one.
   bool mode_rule(const std::string& normalized, FileMode* mode, bool* eol) const;
+  // The mapping with a host path that an open of a normalized name reaches:
+  // the first that matches it and whose file exists.  Its host file in
+  // *target, and its mode - the one on its line, or default_mode as it stood
+  // there; if that is auto, a mode rule for the name - in *mode and *eol.
+  // MODE_AUTO means neither says.  False if no mapping reaches the name.
+  bool host_mapping(const std::string& normalized, std::string* target, FileMode* mode,
+                    bool* eol) const;
   // The mode and conversion the configuration gives a name wherever it is
   // found: its mode rule if it has one, else default_mode and eol_convert.
   // MODE_AUTO means the configuration does not say.
@@ -708,8 +715,10 @@ private:
   // neither list, waits for a rename to a name that says, as PIP's X.$$$
   // does.
   enum MakeKind { MAKE_AS_MODE, MAKE_BY_CONTENT, MAKE_GUESSED };
-  void make_file_mode(const std::string& filename, FileMode* mode, bool* eol,
-                      MakeKind* kind = nullptr);
+  // `path` is the host file the name is made, or renamed, at: a mapping
+  // with a host path decides for it when that path is this file.
+  void make_file_mode(const std::string& filename, const std::string& path, FileMode* mode,
+                      bool* eol, MakeKind* kind = nullptr);
   // Host paths of files BDOS 22 made this run under MAKE_GUESSED and under
   // MAKE_BY_CONTENT, still as they were written.  See bdos_rename_file and
   // settle_made_file.
@@ -719,6 +728,9 @@ private:
   // text with eol_convert false - which a rename to a name the configuration
   // makes converted text turns into host text.
   std::set<std::string> made_raw;
+  // ... and the ones renamed, while an FCB still had them open, to a name the
+  // configuration makes converted text: host text at their last close.
+  std::set<std::string> made_to_text;
   // ... and of those, the ones written at random (BDOS 34 or 40) as well as
   // in sequence: a random file has to read back record for record.
   std::set<std::string> made_random;
@@ -737,7 +749,7 @@ private:
   void renamed_made_file(const std::string& old_path, const std::string& new_name,
                          const std::string& new_path);
   // A MAKE_BY_CONTENT file whose last stream has closed: host text now, if
-  // it is text.
+  // it is text.  A made_to_text file's: host text now.
   void settle_made_file(const std::string& path, bool trace);
 
 private:
@@ -1195,6 +1207,22 @@ void CPMEmulator::configured_mode(const std::string& normalized, FileMode* mode,
   *eol = default_eol_convert;
 }
 
+bool CPMEmulator::host_mapping(const std::string& normalized, std::string* target,
+                               FileMode* mode, bool* eol) const {
+  for (const auto& mapping : file_mappings) {
+    if (mapping.unix_pattern.empty()) continue;  // mode rule: see configured_mode
+    if (!match_pattern(mapping.cpm_pattern, normalized)) continue;
+    std::string t = expand_unix_pattern(mapping.cpm_pattern, mapping.unix_pattern, normalized);
+    if (platform::get_file_type(t.c_str()) == platform::FileType::NotFound) continue;
+    *target = t;
+    *mode = mapping.mode;
+    *eol = mapping.eol_convert;
+    if (*mode == MODE_AUTO) mode_rule(normalized, mode, eol);
+    return true;
+  }
+  return false;
+}
+
 FileMode CPMEmulator::resolve_mode(const std::string& normalized, const std::string& path,
                                    FileMode mode, bool* by_content) {
   if (by_content) *by_content = false;
@@ -1213,24 +1241,15 @@ std::string CPMEmulator::find_unix_file_ex(const std::string& cpm_name, FileMode
   // `binary` on its line, or default_mode as it stood there - decides for
   // the file it reaches; one that is auto leaves it to a mode rule for the
   // name, and then to the guess.
-  for (const auto& mapping : file_mappings) {
-    if (mapping.unix_pattern.empty()) continue;  // mode rule: see configured_mode
-    if (match_pattern(mapping.cpm_pattern, normalized)) {
-      std::string target = expand_unix_pattern(mapping.cpm_pattern, mapping.unix_pattern,
-                                               normalized);
-      if (platform::get_file_type(target.c_str()) != platform::FileType::NotFound) {
-        FileMode mode = mapping.mode;
-        *eol_out = mapping.eol_convert;
-        if (mode == MODE_AUTO) mode_rule(normalized, &mode, eol_out);
-        *mode_out = resolve_mode(normalized, target, mode, by_content);
-        return target;
-      }
-    }
+  std::string target;
+  FileMode mode;
+  if (host_mapping(normalized, &target, &mode, eol_out)) {
+    *mode_out = resolve_mode(normalized, target, mode, by_content);
+    return target;
   }
 
   // Everywhere else the name's mode is configured_mode's: a mode rule, then
   // default_mode, then the guess.
-  FileMode mode;
   configured_mode(normalized, &mode, eol_out);
 
   // Check legacy file map: a file named on the command line, or one a guest
@@ -1312,6 +1331,7 @@ std::string CPMEmulator::tracked_path(const std::string& path) const {
   }
   for (const auto& pair : text_images) known.push_back(&pair.first);
   for (const auto& p : made_by_content) known.push_back(&p);
+  for (const auto& p : made_to_text) known.push_back(&p);
   for (const auto* k : known) {
     if (*k == path) return path;
   }
@@ -1636,6 +1656,7 @@ void CPMEmulator::close_all_files() {
   open_files.clear();
   text_images.clear();
   std::set<std::string> made = made_by_content;
+  made.insert(made_to_text.begin(), made_to_text.end());
   for (const auto& path : made) settle_made_file(path, debug);
 }
 
@@ -2964,14 +2985,27 @@ void CPMEmulator::bdos_write_sequential() {
 // made as text, and every name on it also names binary files: MBASIC's SAVE
 // makes X.BAS tokenized unless told ,A, and a library program can make its
 // X.LIB directly.  With eol_convert false for the name nothing is converted,
-// so there is nothing to guess: it is written as it comes and stays so.  A
-// file a mapping with a host path reaches is not made there - make puts a
-// file in the drive's directory - so only a mode rule, the one kind of
-// mapping that applies wherever the file is, decides here.
-void CPMEmulator::make_file_mode(const std::string& filename, FileMode* mode, bool* eol,
-                                 MakeKind* kind) {
+// so there is nothing to guess: it is written as it comes and stays so.
+//
+// Make puts a file in the drive's directory, and a rename leaves it in the
+// old file's, whatever a mapping with a host path says, so such a mapping
+// decides only when its host file is the one made or renamed to, `path`:
+// `N.TXT = n.txt binary` is the mode of the n.txt a make of N.TXT creates,
+// as it is of the n.txt an open of N.TXT reaches.  It was never looked at
+// here, so under auto a make of N.TXT was converted at its close by what it
+// held, and the binary open after it read LF text; under default_mode =
+// binary, `N.TXT = n.txt text` left the file CR LF and ^Z padding.  A
+// mapping whose host file is another one - the first one that exists, as
+// for an open - does not reach this file, and the name's mode rule or
+// default_mode does.
+void CPMEmulator::make_file_mode(const std::string& filename, const std::string& path,
+                                 FileMode* mode, bool* eol, MakeKind* kind) {
   std::string normalized = normalize_cpm_filename(filename);
-  configured_mode(normalized, mode, eol);
+  std::string target;
+  if (!host_mapping(normalized, &target, mode, eol) ||
+      (target != path && !platform::same_file(target.c_str(), path.c_str()))) {
+    configured_mode(normalized, mode, eol);
+  }
   MakeKind k = MAKE_AS_MODE;
   if (*mode == MODE_AUTO) {
     FileMode ext = extension_mode(normalized);
@@ -2995,17 +3029,10 @@ void CPMEmulator::bdos_make_file() {
 
   std::string filename = fcb_to_filename(fcb_addr);
 
-  FileMode mode;
-  bool eol_convert;
-  MakeKind kind;
-  make_file_mode(filename, &mode, &eol_convert, &kind);
-
-  if (debug || debug_bdos_funcs.count(22)) {
-    fprintf(stderr, "Make file: %s (mode: %s%s)\n", filename.c_str(),
-            mode == MODE_TEXT ? "text" : "binary",
-            kind == MAKE_GUESSED ? ", until renamed"
-            : kind == MAKE_BY_CONTENT ? ", text at its close if it is text" : "");
-  }
+  // Decided once the file exists, below: a mapping decides by the file.
+  FileMode mode = MODE_BINARY;
+  bool eol_convert = false;
+  MakeKind kind = MAKE_AS_MODE;
 
   // Convert to lowercase for Unix
   std::string unix_name;
@@ -3056,6 +3083,14 @@ void CPMEmulator::bdos_make_file() {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
     return;
   }
+  if (!extending) make_file_mode(filename, unix_name, &mode, &eol_convert, &kind);
+  if (debug || debug_bdos_funcs.count(22)) {
+    fprintf(stderr, "Make file: %s -> %s (mode: %s%s)\n", filename.c_str(), unix_name.c_str(),
+            mode == MODE_TEXT ? "text" : "binary",
+            extending ? ", as it was"
+            : kind == MAKE_GUESSED ? ", until renamed"
+            : kind == MAKE_BY_CONTENT ? ", text at its close if it is text" : "");
+  }
   if (extending) {
     // the file is what it was; a rename decides it as before, if at all
   } else {
@@ -3063,6 +3098,7 @@ void CPMEmulator::bdos_make_file() {
     made_by_content.erase(unix_name);
     made_random.erase(unix_name);
     made_raw.erase(unix_name);
+    made_to_text.erase(unix_name);
     if (kind == MAKE_GUESSED) made_guessed.insert(unix_name);
     if (kind == MAKE_BY_CONTENT) made_by_content.insert(unix_name);
     if (kind == MAKE_AS_MODE && !(mode == MODE_TEXT && eol_convert)) made_raw.insert(unix_name);
@@ -3138,6 +3174,7 @@ void CPMEmulator::bdos_delete_file() {
     made_by_content.erase(unix_path);
     made_random.erase(unix_path);
     made_raw.erase(unix_path);
+    made_to_text.erase(unix_path);
     forget_text_image(unix_path);
     cpu->set_reg8(0, qkz80::reg_A);  // Success
   }
@@ -3201,7 +3238,12 @@ void CPMEmulator::bdos_write_random() {
   uint8_t buffer[128];
   dma_get(buffer, 128);
   bool ok = write_record(*of, record_num, buffer);
-  if (made_by_content.count(of->unix_path)) made_random.insert(of->unix_path);
+  // Every file made this run: a rename while it is open can leave it to be
+  // decided at its last close, as a file made under its new name would be.
+  if (made_by_content.count(of->unix_path) || made_guessed.count(of->unix_path) ||
+      made_raw.count(of->unix_path)) {
+    made_random.insert(of->unix_path);
+  }
 
   if (debug || debug_bdos_funcs.count(34)) {
     fprintf(stderr, "Write random: FCB %04X file '%s' record %u %s\n",
@@ -3358,6 +3400,7 @@ void CPMEmulator::bdos_rename_file() {
       made_by_content.erase(replaced);
       made_random.erase(replaced);
       made_raw.erase(replaced);
+      made_to_text.erase(replaced);
       forget_text_image(replaced);
     }
     renamed_made_file(old_path, new_name, new_path);
@@ -3386,16 +3429,18 @@ void CPMEmulator::bdos_rename_file() {
 // where e4f7fd5, which made every file as text, left the 12 bytes it was
 // given.  A name that still says nothing keeps the file on the list, so a
 // second rename can decide.  A MAKE_BY_CONTENT file renamed while still open
-// is decided by its new name the same way.
+// is decided by its new name the same way.  A file still open when it is
+// renamed is decided at its last close; see below.
 //
 // The new name's configuration decides, as it would for a file made under
-// it: a mapping, mode rule or default_mode that makes it text, with
-// eol_convert, converts the file whatever it holds; binary, or eol_convert
-// false, leaves it as written; auto guesses from the name and, for a name on
-// the text list, from what the file holds.  A file made as written under an
-// explicit mode - X.$$$ under default_mode = binary - is converted too when
-// its new name is configured text.  Only files made this run are touched: a
-// rename of any other file changes its name and not its bytes.
+// it: a mapping whose host file this is, a mode rule or default_mode that
+// makes it text, with eol_convert, converts the file whatever it holds;
+// binary, or eol_convert false, leaves it as written; auto guesses from the
+// name and, for a name on the text list, from what the file holds.  A file
+// made as written under an explicit mode - X.$$$ under default_mode =
+// binary - is converted too when its new name is configured text.  Only
+// files made this run are touched: a rename of any other file changes its
+// name and not its bytes.
 void CPMEmulator::renamed_made_file(const std::string& old_path, const std::string& new_name,
                                     const std::string& new_path) {
   // whatever the name held before is gone
@@ -3403,9 +3448,10 @@ void CPMEmulator::renamed_made_file(const std::string& old_path, const std::stri
   made_by_content.erase(new_path);
   made_random.erase(new_path);
   made_raw.erase(new_path);
-  made_random.erase(old_path);
+  made_to_text.erase(new_path);
+  bool random = made_random.erase(old_path) != 0;
   if (made_guessed.erase(old_path) + made_by_content.erase(old_path) +
-      made_raw.erase(old_path) == 0) {
+      made_raw.erase(old_path) + made_to_text.erase(old_path) == 0) {
     return;
   }
 
@@ -3413,23 +3459,37 @@ void CPMEmulator::renamed_made_file(const std::string& old_path, const std::stri
   FileMode mode;
   bool eol_convert;
   MakeKind kind;
-  make_file_mode(new_name, &mode, &eol_convert, &kind);
+  make_file_mode(new_name, new_path, &mode, &eol_convert, &kind);
   if (kind == MAKE_GUESSED) {
     made_guessed.insert(new_path);
+    if (random) made_random.insert(new_path);
     return;
   }
   if (kind == MAKE_AS_MODE && (mode != MODE_TEXT || !eol_convert)) {
     if (trace) fprintf(stderr, "Rename: %s left as written: its name is not converted text\n",
                        new_path.c_str());
     made_raw.insert(new_path);  // still as written, for a rename after this one
+    if (random) made_random.insert(new_path);
     return;
   }
   // Converting under an open stream would leave that stream writing to the
-  // file the conversion replaced.  CP/M lets a program rename an open file;
-  // none of the three above does.
+  // file the conversion replaced; CP/M lets a program rename an open file,
+  // though none of the three above does.  Such a file is decided at its last
+  // close instead, as one made under its new name is: host text then if the
+  // configuration makes that name converted text, and under auto for a
+  // text-list name if it is text.  It was left as written for good, so under
+  // default_mode = text and *.$$$ = binary a D.$$$ renamed N.TXT and then
+  // closed stayed CR LF and ^Z padding.
   for (const auto& pair : open_files) {
     if (pair.second.is_open() && pair.second.unix_path == old_path) {
-      if (trace) fprintf(stderr, "Rename: %s still open, left as written\n", new_path.c_str());
+      if (trace) fprintf(stderr, "Rename: %s still open, decided at its last close\n",
+                         new_path.c_str());
+      if (kind == MAKE_AS_MODE) {
+        made_to_text.insert(new_path);
+      } else {
+        made_by_content.insert(new_path);
+        if (random) made_random.insert(new_path);
+      }
       return;
     }
   }
@@ -3442,9 +3502,17 @@ void CPMEmulator::renamed_made_file(const std::string& old_path, const std::stri
 
 void CPMEmulator::settle_made_file(const std::string& path, bool trace) {
   auto it = made_by_content.find(path);
-  if (it == made_by_content.end()) return;
+  bool to_text = made_to_text.count(path) != 0;
+  if (it == made_by_content.end() && !to_text) return;
   for (const auto& pair : open_files) {
     if (pair.second.is_open() && pair.second.unix_path == path) return;  // not its last close
+  }
+  if (to_text) {
+    // renamed while open to a name the configuration makes converted text
+    made_to_text.erase(path);
+    made_random.erase(path);
+    write_made_file_as_text(path, "Close", trace);
+    return;
   }
   // Nothing written yet says nothing: it stays undecided, and opens as it
   // is, for what a program writes after it opens it again.  Microsoft's
