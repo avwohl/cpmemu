@@ -10,7 +10,7 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
-## [Unreleased]
+## [4.10.0] - 2026-09-24
 
 **BDOS 20 and 21 read and wrote wherever the host stream had got to, not the
 record the FCB names.** A CP/M file has no position of its own: a sequential
