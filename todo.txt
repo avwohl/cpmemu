@@ -14,9 +14,16 @@ Todo list.  Open items only.
   directory and then opens sub/t.txt, the file_map entry, and prints its old
   text; ED on ./sub/x.txt renames sub/x.txt to sub/x.bak and leaves the
   edited x.txt in the working directory.  bdos_make_file and the rename's
-  new path never look in file_map.  Older than this branch.  Missing: which
-  of file_map's spellings a make should honour - a path given on the command
-  line, but not a name a rename planted there.
+  new path never look in file_map.  A mapping with a host path is the same:
+  under *.BAS = basic/*.bas a SAVE makes x.bas in the drive's directory and
+  the LOAD after it opens basic/x.bas if there is one (the mapping decides
+  the mode of a made file only when its path is the made file).  And a
+  file_map entry outlives its file: an open of a name renamed and then
+  deleted finds the entry, closes the FCB's previous file and then fails,
+  where a name not found fails and leaves it open.  Older than this branch.
+  Missing: which of file_map's spellings, and which mappings, a make should
+  honour - a path given on the command line, but not a name a rename
+  planted there.
 
 The rules that used to be in this header - what belongs here, what a tag means,
 where finished work goes - are in CLAUDE.md now.  They were rules rather than

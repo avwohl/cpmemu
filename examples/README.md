@@ -164,7 +164,7 @@ against files this repo does have.
 | `simple_test.cfg` | MBASIC against this repo's `tests/*.bas`, `default_mode = text` with a binary rule for what MBASIC saves tokenized. |
 | `mbasic_tests.cfg` | MBASIC with a directory of programs reached by a drive letter (`drive_B`). |
 | `assembler.cfg` | M80/L80 assembly workflow. |
-| `compiler.cfg` | Hi-Tech C workflow. |
+| `compiler.cfg` | Hi-Tech C workflow. Hi-Tech C 3.09-19's `C.COM` calls CP/M 3's BDOS 102 and its `$EXEC` stops with `Fmt err`, so the driver does not run here; its passes run one at a time. |
 | `test.cfg`, `test2.cfg` | Minimal configs for checking env expansion and `cd`. |
 
 ## Text vs binary
@@ -200,7 +200,8 @@ file had before: a CR LF file that a program rewrites in place, appends to or
 replaces comes back all LF, the lines it did not touch as well. With
 `eol_convert = false`, or `binary`, the records go to the host as the program
 wrote them - CR LF, `^Z` and padding - so either one keeps CP/M's CR LF on the
-host. A file only read is never rewritten.
+host. A file only read is never rewritten, and nor is one whose writes change
+nothing before its `^Z`.
 
 `default_mode = text` or `binary` applies to what a program opens, so a
 config that sets it names what has to be the other mode with a rule. Under
@@ -224,6 +225,17 @@ still gives a copied text file host line ends. A new name that is binary, or
 has `eol_convert = false`, leaves the file as written; under `auto` the new
 name's extension and the file's bytes decide. A file still open when it is
 renamed is decided the same way at its last close.
+
+A rename only ever converts toward host text. A `NAME.$$$` that was itself
+text with `eol_convert` - under `default_mode = text` with no `*.$$$` rule -
+is host text already, cut at its first `^Z`, and stays so when it is renamed
+to a binary name: what the converter dropped cannot be put back. That is what
+the `*.$$$ = binary` rule is for.
+
+One host file is one view: a second FCB that opens a file another has open
+reads and writes it as the first one does, text or binary, whatever the
+configuration says of the name it used. It takes a rename while the file is
+open, or two mappings to one path, to meet this.
 
 ## See also
 

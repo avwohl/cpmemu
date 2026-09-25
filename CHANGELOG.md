@@ -406,6 +406,15 @@ records are found, read and written back is the first entry under Fixed.
   A file only read, or whose writes changed nothing before its `^Z`, is not
   rewritten.
 
+- **Writing costs more than it did in 4.9.0, reading less.** A text file's
+  change is written back at once when the text from the changed line on is 64
+  KB or less, so a program making a large text file rewrites its tail at every
+  record, and a binary record is flushed to the host as it is written. Measured
+  against 4.9.0: 5 MB made under `default_mode = text` in 5.6 s against 1.0 s,
+  5 MB of binary records in 0.73 s against 0.05 s, and 5 MB of text read in
+  sequence in 0.03 s against 0.19 s; linear in every case. Every text open
+  holds the whole file in memory.
+
 - **`cpm_disk.py add` pads a file's last block with NUL, not `^Z`.** The bytes
   past the last record are undefined in CP/M, so both are legal, but cpmtools'
   `cpmcp` writes NUL and every hd1k image RomWBW and romwbw_disks publish was

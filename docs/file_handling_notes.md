@@ -73,18 +73,32 @@ directory search, rename or file size, when the program ends, and when
 SIGTERM, SIGHUP or SIGINT ends the run (POSIX; the process still dies of the
 signal). A `SIGKILL` or a crash before then loses a change that was waiting.
 The exit `CPM_BIOS_DISK=error` makes at a BIOS disk call closes every file
-first, as the end of the run does. A close whose change cannot be written -
+first, as the end of the run does. A write back truncates the host file and
+writes it again, so a `SIGKILL`, or a second signal, while the last one is
+being written can leave the file short. A signal that arrives between the
+console's check for one and the read that waits for a key ends the run when a
+key comes or input ends, not at once. A close whose change cannot be written -
 the host file read-only, the disk full - answers `FFh` and says so on stderr.
 What a program writes after the text's first `^Z` is not text, and does not
 reach the host file.
 
+What that costs: a small change is written back at once by rewriting the host
+file from the changed line, so a program that makes a large text file record
+by record rewrites its tail at every record - measured, 5 MB made under
+`default_mode = text` in 5.6 s where 4.9.0 took 1.0 s - and a binary write is
+flushed to the host at every record, 5 MB in 0.73 s against 0.05 s. It is
+linear in both. Reading 5 MB of text in sequence is faster, 0.03 s against
+0.19 s, and every text open holds the whole file in memory.
+
 Every FCB open on one host file shares its image, whichever name or path it
-was opened by. A file that opened as text because of what it holds (below)
-has to hold text afterwards: a write that would leave it failing the text
-rule - NULs in the text, from a record written past the end of text that
-fills its last record, or a control character - makes the host file the
-image itself, CR LF and padding included, which the next open reads binary,
-record for record. That is decided again at every write back, so once the
+was opened by, and one that opens a file another FCB reads as a stream reads
+it as a stream: the first FCB's mode is the file's while it is open, whatever
+the configuration says of the name the second one used. A file that opened as
+text because of what it holds (below) has to hold text afterwards: a write
+that would leave it failing the text rule - NULs in the text, from a record
+written past the end of text that fills its last record, or a control
+character - makes the host file the image itself, CR LF and padding included,
+which the next open reads binary, record for record. That is decided again at every write back, so once the
 NULs are written over it is host text again. A file the configuration makes
 text - a mapping, a mode rule or `default_mode = text` - stays host text
 whatever is written in it.
@@ -194,8 +208,8 @@ program = /path/to/m80.com
 cd = /tmp
 
 # Assembly source files in specific directory
-*.MAC = ${HOME}/asm/src text
-*.ASM = ${HOME}/asm/src text
+*.MAC = ${HOME}/asm/src/*.mac text
+*.ASM = ${HOME}/asm/src/*.asm text
 ```
 
 ### Compiler with Output Directory
@@ -206,8 +220,8 @@ program = ${HOME}/cpm/compilers/hitech_c.com
 cd = /tmp/build
 
 # Source files in specific directory
-*.C = ${HOME}/projects/myapp/src text
-*.H = ${HOME}/projects/myapp/src text
+*.C = ${HOME}/projects/myapp/src/*.c text
+*.H = ${HOME}/projects/myapp/src/*.h text
 ```
 
 ## Command Line Usage
@@ -312,6 +326,12 @@ A file still open when it is renamed - CP/M allows it, though PIP, ED and
 WordStar close first - cannot be converted under the open stream, and is
 decided at its last close, or at a disk reset or the end of the run, as a
 file made under its new name is.
+
+A rename converts only toward host text. A `NAME.$$$` made as text with
+conversion - `default_mode = text` and no rule for `*.$$$` - is host text
+already, cut at its first `^Z`, and stays host text when it is renamed to a
+binary name, since what the converter dropped is gone. Hence the
+`*.$$$ = binary` rule.
 
 ## File Search Order
 
