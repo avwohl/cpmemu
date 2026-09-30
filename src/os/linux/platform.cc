@@ -308,7 +308,7 @@ void enable_raw_mode() {
     //
     // Whether CP/M should see eight bits was a real question and it is now
     // settled: the masks stay, and a CP/M guest here sees seven bits.  The
-    // reasoning and what it costs are in README.md under Known Limitations,
+    // reasoning and what it costs are in docs/console.md under Known limitations,
     // and tests/pty_console.cc pins the bytes so the answer cannot change by
     // accident.  What this clear buys is that revisiting it needs no change to
     // this layer.

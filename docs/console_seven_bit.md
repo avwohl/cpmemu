@@ -2,7 +2,7 @@
 
 Six read sites mask incoming bytes with `& 0x7F` - four console sites and the
 two Reader sites below - so no byte at or above 0x80 reaches the guest intact. This is deliberate and permanent; the
-README states the rule, and this file records what it costs and why it is not
+[console.md](console.md#known-limitations) states the rule, and this file records what it costs and why it is not
 going to change.
 
 ## The six sites

@@ -2,8 +2,9 @@
 
 A CP/M 2.2 emulator: it runs CP/M `.com` files on Linux, macOS and Windows by
 emulating the 8080/Z80 and answering BDOS and BIOS calls on the host.
-`README.md` is the reference for what it does and how it is used. This file is
-only the things a session working on it has to know that the code does not say.
+`README.md` and the `docs/` files it links are the reference for what it does
+and how it is used. This file is only the things a session working on it has
+to know that the code does not say.
 
 ## Build and test
 
@@ -76,7 +77,7 @@ files. None of the four has a version gate: romwbw_emu had the only
 one and removed it on 2026-09-01, so they all build whatever this repository's
 default branch holds, and they take an edit on the schedule above with no
 notification. Read
-[Who else compiles qkz80](README.md#who-else-compiles-qkz80) before changing
+[Who else compiles qkz80](docs/qkz80_library.md#who-else-compiles-qkz80) before changing
 qkz80's public surface: it names the compiler, language standard and warning set
 each one uses, and they are not this repo's.
 
@@ -112,6 +113,9 @@ written down so the person only has to compare. Delete an item once someone runs
 it: if it found something, the fix goes in `CHANGELOG.md` and whatever is still
 open goes in `todo.txt`; if it found nothing, the deletion and the commit
 message are the record. It is not a log of checks that were done.
+
+## README stays short
+README.md is at most 150 lines. New detail goes in docs/<topic>.md with a one-line link from the README; never add sections to the README.
 
 ## Conventions
 

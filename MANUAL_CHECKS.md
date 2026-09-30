@@ -81,7 +81,7 @@ What right looks like:
 A key that prints nothing when the table says it should print something is a
 binding the terminal program took. Ctrl+V is already known not to fall through
 on Windows Terminal and no `SetConsoleMode` call changes it — that one is in
-`README.md` as a limitation, not a finding.
+`docs/console.md` as a limitation, not a finding.
 
 Note that this pass and running `tests\win_console.bat` without `--manual` are
 two different things. The automated cases now run on every push: the `windows`

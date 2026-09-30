@@ -2,6 +2,15 @@
 
 What this emulator implements of CP/M 2.2, and the memory map a guest sees.
 
+## Overview
+
+BDOS functions 0-40 and 48 are implemented, with 28-30, 38 and 39 as stubs;
+41-47 are not implemented and return 0xFF with a message on stderr. File I/O is
+handled at the BDOS level, so the BIOS disk calls (HOME, SETTRK, SETSEC, SETDMA,
+READ, WRITE) are stubs and a program that drives the disk through the BIOS will
+not work. There is no CCP: nothing runs above the TPA, and a program that
+returns lands back in the emulator rather than at a command prompt.
+
 ## BDOS functions
 
 | # | Function | Status |

@@ -134,8 +134,8 @@ or add this to the `actions` array of their Windows Terminal `settings.json`:
 }
 ```
 
-See the Console and Keyboard section of the top-level
-[README](../../README.md) for the rest of the keyboard notes.
+See [docs/console.md](../../docs/console.md) for the rest of the keyboard
+notes.
 
 ## Troubleshooting
 
