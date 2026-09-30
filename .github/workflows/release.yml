@@ -78,6 +78,10 @@ jobs:
              src/qkz80_types.h staging/usr/include/qkz80/
           cp README.md staging/usr/share/doc/cpmemu/
           cp LICENSE staging/usr/share/doc/cpmemu/
+          # README.md links docs/*.md, so the package keeps that layout.
+          # docs/archive is maintainer history and stays out.
+          mkdir -p staging/usr/share/doc/cpmemu/docs
+          cp docs/*.md staging/usr/share/doc/cpmemu/docs/
           # The file src/makefile's `install:` target installs, under the name
           # it installs it as, so a package and `make install` put the same
           # command on PATH.  `install -m 755` and not `cp`: the destination
