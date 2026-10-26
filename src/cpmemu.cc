@@ -821,6 +821,8 @@ private:
   enum TermState { TERM_NORMAL, TERM_ESC, TERM_ESC_EQ, TERM_ESC_EQ_ROW, TERM_ESC_G };
   TermState term_state = TERM_NORMAL;
   int term_saved_row = 0;
+  int console_column = 0;  // column of the BDOS console, for TAB expansion
+  void bdos_console_char(qkz80_uint8 ch);
 
   void console_output(qkz80_uint8 ch);
 
@@ -2342,8 +2344,20 @@ void CPMEmulator::bdos_call(qkz80_uint8 func) {
   }
 }
 
-void CPMEmulator::bdos_write_console(qkz80_uint8 ch) {
+// BDOS 2 and 9 expand a TAB to the next multiple of 8 columns, as the
+// CP/M 2.2 BDOS does; BIOS CONOUT and BDOS 6 send the byte raw.
+void CPMEmulator::bdos_console_char(qkz80_uint8 ch) {
+  if ((ch & 0x7F) == 0x09) {
+    do {
+      console_output(' ');
+    } while (console_column & 7);
+    return;
+  }
   console_output(ch);
+}
+
+void CPMEmulator::bdos_write_console(qkz80_uint8 ch) {
+  bdos_console_char(ch);
 }
 
 void CPMEmulator::bdos_write_string() {
@@ -2351,7 +2365,7 @@ void CPMEmulator::bdos_write_string() {
   qkz80_uint8* mem = cpu->get_mem();
 
   while (mem[addr] != '$') {
-    console_output(mem[addr]);
+    bdos_console_char(mem[addr]);
     addr++;
   }
 }
@@ -4318,7 +4332,14 @@ void CPMEmulator::console_output(qkz80_uint8 ch) {
     break;
   }
 
-  // Normal character processing
+  // Normal character processing; the column follows what the BDOS counts
+  if (ch == 0x0D)
+    console_column = 0;
+  else if (ch == 0x08) {
+    if (console_column > 0)
+      console_column--;
+  } else if (ch >= 0x20 && ch != 0x7F)
+    console_column++;
   switch (ch) {
   case 0x1B:  // ESC - start escape sequence
     term_state = TERM_ESC;
