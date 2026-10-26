@@ -44,6 +44,10 @@ out. How to vet a move of the pin is in
 [docs/test_suite.md](docs/test_suite.md#vet-a-cpm-test-update). The detail of `tests/README.md` moved to
 `docs/test_suite.md`, which leaves that README at 29 lines.
 
+**BDOS 2 and 9 expand a TAB.** The CP/M 2.2 BDOS console output functions
+move to the next multiple of 8 columns for a TAB; the emulator dropped the
+byte. BIOS CONOUT and BDOS 6 still send it raw.
+
 ## [4.10.0] - 2026-09-24
 
 **BDOS 20 and 21 read and wrote wherever the host stream had got to, not the
