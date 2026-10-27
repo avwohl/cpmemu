@@ -89,7 +89,7 @@ and the config file format.
 - [CHANGELOG.md](CHANGELOG.md) - changes, from v4.7.0 on
 - [docs/BUILDING.md](docs/BUILDING.md) - every platform, CMake, MinGW, cross-compiling, packaging
 - [examples/README.md](examples/README.md) - the config-file reference
-- [tests/README.md](tests/README.md) - the test suite
+- [docs/test_suite.md](docs/test_suite.md) - the test suite
 - [MANUAL_CHECKS.md](MANUAL_CHECKS.md) - what needs a person at a keyboard
 - [docs/qkz80_interrupts.md](docs/qkz80_interrupts.md) - interrupts in the CPU core
 - [docs/console_seven_bit.md](docs/console_seven_bit.md) - why console input is seven bits

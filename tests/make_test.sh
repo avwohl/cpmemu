@@ -1,7 +1,7 @@
 #!/bin/bash
 # Regenerate flag_test.hex and flag_test.com by hand-assembling.
 #
-# There is no assembler in this repo - tests/README.md records that the .com
+# There is no assembler in this repo - docs/test_suite.md records that the .com
 # files here were built elsewhere with z88dk - so this is the one place a test
 # binary is produced from source that lives in the tree.  It writes next to
 # itself rather than to an absolute path, so it works in any checkout.

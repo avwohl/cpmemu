@@ -16,5 +16,5 @@ and names what to install - which is how `.github/workflows/ci.yml` runs it.
 
 The terminal layer is unreachable through a pipe and has harnesses of its own:
 `tests/pty_console.cc` (everywhere but Windows) and `tests/win_console.cc`
-(Windows only). [`tests/README.md`](../tests/README.md) documents the whole suite;
+(Windows only). [`docs/test_suite.md`](test_suite.md) documents the whole suite;
 what no test can reach is in [`MANUAL_CHECKS.md`](../MANUAL_CHECKS.md).
