@@ -4,7 +4,7 @@ What this emulator implements of CP/M 2.2, and the memory map a guest sees.
 
 ## Overview
 
-BDOS functions 0-40 and 48 are implemented, with 28-30, 38 and 39 as stubs;
+BDOS functions 0-40 and 48 are implemented, with 30, 38 and 39 as stubs;
 41-47 are not implemented and return 0xFF with a message on stderr. File I/O is
 handled at the BDOS level, so the BIOS disk calls (HOME, SETTRK, SETSEC, SETDMA,
 READ, WRITE) are stubs and a program that drives the disk through the BIOS will
@@ -28,18 +28,20 @@ returns lands back in the emulator rather than at a command prompt.
 | 13-14 | Reset/Select Disk | Supported |
 | 15-16 | Open/Close File | Supported |
 | 17-18 | Search First/Next | Supported |
-| 19 | Delete File | Supported |
+| 19 | Delete File | Supported (a `?` deletes every file a search with the same FCB finds) |
 | 20-21 | Read/Write Sequential | Supported |
 | 22 | Make File | Supported |
 | 23 | Rename File | Supported |
 | 24 | Get Login Vector | Supported (A: plus every configured or selected drive) |
 | 25-27 | Current Drive, Set DMA, Allocation Vector | Supported |
-| 28-30 | Write Protect, Read-Only Vector, Set Attributes | Stub (accepted, nothing stored or enforced) |
+| 28 | Write Protect Disk | Supported (see [Read-only drives](#read-only-drives)) |
+| 29 | Get Read-Only Vector | Supported |
+| 30 | Set File Attributes | Stub (accepted, nothing stored or enforced) |
 | 31-32 | Get DPB, Get/Set User | Supported |
 | 33-34 | Read/Write Random | Supported |
 | 35 | Compute File Size | Supported |
 | 36 | Set Random Record | Supported |
-| 37 | Reset Drive | Supported (the DE bitmap is ignored; every open file closes) |
+| 37 | Reset Drive | Supported (the drives in the DE bitmap stop being read-only, and every open file closes) |
 | 38 | Access Free Space | Stub (returns success) |
 | 39 | Free Space | Stub (no-op) |
 | 40 | Write Random Zero Fill | Supported |
@@ -114,6 +116,22 @@ The allocation vector BDOS 27 points at is initialised all-free and never
 updated, so a program that reads it to compute free space gets the same answer
 whatever is on the drive. Any other function number prints
 `Unimplemented BDOS function N` on stderr and returns 0xFF.
+
+## Read-only drives
+
+BDOS 28 makes the current drive read-only. BDOS 29 gives the bitmap of
+read-only drives, with bit 0 for A:. BDOS 13 clears the bitmap. BDOS 37
+clears the bits of the drives that DE names.
+
+Make, delete, rename and the write calls (21, 34 and 40) check the drive
+that the FCB names. If that drive is read-only, the emulator writes
+`Bdos Err On B: R/O` to the console and ends the run with exit status 1.
+The call does not return to the program, and the host directory does not
+change. The 2.2 BDOS does the same in `CHECK$WRITE`. The 2.2 BDOS waits
+for a key before its warm boot, but the emulator does not wait.
+
+A program that expects `FFh` from a write to a read-only drive does not get
+it. The 2.2 BDOS never returns `FFh` for this error.
 
 ## BIOS functions
 

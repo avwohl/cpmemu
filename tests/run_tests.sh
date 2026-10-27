@@ -72,7 +72,7 @@ skipped=0
 
 # Every skip that means "this machine is missing a tool" registers itself here,
 # so --require can turn the lot into one failure at the end.  Registering is
-# separate from printing because the count behind a gate is not always one: 156
+# separate from printing because the count behind a gate is not always one: 160
 # checks sit behind the assembler.
 # Each takes a token so a caller can allow one by name: CPMEMU_SKIP_OK is a
 # space or comma separated list of tokens that --require lets through.  The
@@ -340,13 +340,13 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 156 checks live behind this gate (215 pass with um80, 59 without)
-    skipped=$((skipped + 156))
-    soft_skip assembler "drive mapping tests: 156 checks, no assembler (pip install um80)"
+    # 160 checks live behind this gate (219 pass with um80, 59 without)
+    skipped=$((skipped + 160))
+    soft_skip assembler "drive mapping tests: 160 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1
-    for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren cli_tail cli_fcb con_eof con_spin \
+    for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren drv_del drv_ro cli_tail cli_fcb con_eof con_spin \
                adm3a savemem bios_disk sectran fcb_io mem_top text_ops; do
         if ! assemble "$root/tests/$src.asm" "$tmp/$src.com" >"$tmp/asm.log" 2>&1; then
             echo "FAIL  assembling tests/$src.asm"
@@ -422,6 +422,50 @@ else
             "B:RENAMED.TXT" 'CCC'
         check_drive "drive: rename leaks no cross-drive alias" "$tmp/drv_read.com" "$tmp/rd2.cfg" \
             "A:RENAMED.TXT" 'NF'
+
+        # A '?' in a delete deletes every file it matches, as 2.2's does.
+        # skx/cpm-test's DELETE.Z80 found this (avwohl/cpmemu#4): TEST?.TXT
+        # was looked up as one file, not found, and all three were kept.  The
+        # decoy on A: and the non-match on B: must survive.
+        printf '1' >"$sb/b/test1.txt"; printf '2' >"$sb/b/test2.txt"
+        printf '3' >"$sb/b/test3.txt"; printf '4' >"$sb/b/test10.txt"
+        printf 'A' >"$sb/a/test1.txt"
+        printf 'program = %s/drv_del.com\n' "$tmp" >"$tmp/del.cfg"
+        cat "$cfg" >>"$tmp/del.cfg"
+        check_drive "drive: delete with ? answers success" "$tmp/drv_del.com" "$tmp/del.cfg" \
+            "B:TEST?.TXT" 'DEL'
+        if [ ! -e "$sb/b/test1.txt" ] && [ ! -e "$sb/b/test2.txt" ] && [ ! -e "$sb/b/test3.txt" ] &&
+           [ -f "$sb/b/test10.txt" ] && [ -f "$sb/a/test1.txt" ]; then
+            printf 'PASS  drive: delete with ? takes every match and nothing else\n'
+            passed=$((passed + 1))
+        else
+            printf 'FAIL  drive: delete with ? takes every match and nothing else\n'
+            ( cd "$sb" && ls a b ) | sed 's/^/        /'
+            failed=$((failed + 1))
+        fi
+        check_drive "drive: delete with ? and no match is FFh" "$tmp/drv_del.com" "$tmp/del.cfg" \
+            "B:NONE?.TXT" 'ERR'
+
+        # BDOS 28 sets the current disk's bit in the vector 29 reads, 37
+        # clears it, and a write to a read-only disk ends the program with
+        # 2.2's message and no file made.  28 and 29 were stubs before
+        # avwohl/cpmemu#4: nothing was stored, and the make went through.
+        printf 'program = %s/drv_ro.com\n' "$tmp" >"$tmp/ro.cfg"
+        cat "$cfg" >>"$tmp/ro.cfg"
+        ( cd "$sb" && "$emu" "$tmp/ro.cfg" ROMADE.TXT ) >"$tmp/rogot" 2>"$tmp/roerr"
+        rc=$?
+        printf 'VEC\r\nBdos Err On A: R/O\r\n' >"$tmp/rowant"
+        if [ $rc -eq 1 ] && cmp -s "$tmp/rowant" "$tmp/rogot" && [ ! -e "$sb/a/romade.txt" ]; then
+            printf 'PASS  drive: R/O vector, and a write to a R/O disk ends the run\n'
+            passed=$((passed + 1))
+        else
+            printf 'FAIL  drive: R/O vector, and a write to a R/O disk ends the run\n'
+            printf '        exit %d (want 1)\n' "$rc"
+            [ -e "$sb/a/romade.txt" ] && printf '        made %s\n' "$sb/a/romade.txt"
+            printf '    expected:\n'; show "$tmp/rowant"
+            printf '    got:\n';      show "$tmp/rogot"
+            failed=$((failed + 1))
+        fi
 
         # --- file mapping forms -------------------------------------------
         # A '*' on the host side takes the name the CP/M pattern matched.

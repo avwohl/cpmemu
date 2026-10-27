@@ -492,6 +492,9 @@ private:
   // Bit 0 = A: .. bit 15 = P:.  A drive is logged in once it is configured
   // or selected.  A: is always logged in, as on a real machine that booted.
   qkz80_uint16 login_vector;
+  // Bit 0 = A: .. bit 15 = P:, as BDOS 28 sets it and 29 reports it.  BDOS 13
+  // clears it and BDOS 37 clears the drives its DE names, as in 2.2.
+  qkz80_uint16 ro_vector;
   qkz80_uint16 current_dma;
   bool debug;
   FileMode default_mode;
@@ -559,7 +562,7 @@ public:
 
   CPMEmulator(qkz80* acpu, bool adebug = false)
     : cpu(acpu), current_drive(0), current_user(0), login_vector(0x0001),
-      current_dma(DEFAULT_DMA), debug(adebug),
+      ro_vector(0), current_dma(DEFAULT_DMA), debug(adebug),
       default_mode(MODE_AUTO), default_eol_convert(true),
       printer_file(nullptr), aux_in_file(nullptr),
       aux_out_file(nullptr), iobyte(0), printer_echo(false),
@@ -793,6 +796,13 @@ private:
   void bdos_get_dpb();
   void bdos_reset_drive();
   void bdos_write_random_zero_fill();
+  // 2.2's CHECK$WRITE: a call that would change the disk the FCB names ends
+  // the run with "Bdos Err On X: R/O" when BDOS 28 has made that disk
+  // read-only.  Returns only when the disk is writable.
+  void check_write(qkz80_uint16 fcb_addr);
+  // Every file BDOS 17 would list for the FCB's name, one per file, not per
+  // extent.  Delete takes the same list, so a '?' deletes what a search shows.
+  std::vector<SearchResult> directory_matches(qkz80_uint16 fcb_addr);
   // Take R0-R2 for BDOS 33/34/40 and point the FCB at the record.  False,
   // with A set, when no FCB can name it.
   bool random_position(qkz80_uint16 fcb_addr, uint32_t* record);
@@ -2935,6 +2945,7 @@ void CPMEmulator::bdos_read_sequential() {
 
 void CPMEmulator::bdos_write_sequential() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
+  check_write(fcb_addr);
   qkz80_uint8* mem = cpu->get_mem();
   qkz80_uint8* f = &mem[fcb_addr];
   bool trace = debug || debug_bdos_funcs.count(21);
@@ -3018,6 +3029,7 @@ void CPMEmulator::make_file_mode(const std::string& filename, const std::string&
 
 void CPMEmulator::bdos_make_file() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
+  check_write(fcb_addr);
 
   if (!validate_fcb_name(cpu->get_mem(), fcb_addr)) {
     if (debug || debug_bdos_funcs.count(22)) {
@@ -3145,6 +3157,7 @@ void CPMEmulator::bdos_make_file() {
 
 void CPMEmulator::bdos_delete_file() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
+  check_write(fcb_addr);
 
   if (!validate_fcb_name(cpu->get_mem(), fcb_addr)) {
     if (debug || debug_bdos_funcs.count(19)) {
@@ -3156,28 +3169,47 @@ void CPMEmulator::bdos_delete_file() {
 
   std::string filename = fcb_to_filename(fcb_addr);
 
-  FileMode mode;
-  bool eol_convert;
-  std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert,
-                                            cpu->get_mem()[fcb_addr]);
-  if (!unix_path.empty()) unix_path = tracked_path(unix_path);  // before it is gone
-
-  if (debug || debug_bdos_funcs.count(19)) {
-    fprintf(stderr, "Delete file: %s -> %s\n", filename.c_str(),
-            unix_path.empty() ? "(not found)" : unix_path.c_str());
+  // A '?' deletes every file it matches, as 2.2's DELETE does: it searches
+  // the directory with the FCB and erases each entry the search finds.  This
+  // looked the name up as one file, found no file called TEST?.TXT, and
+  // answered FFh with all three TEST1-3.TXT still there.
+  std::vector<std::string> paths;
+  bool wild = false;
+  for (int i = 1; i <= 11; i++) {
+    if ((cpu->get_mem()[fcb_addr + i] & 0x7F) == '?') wild = true;
+  }
+  if (wild) {
+    for (const auto& r : directory_matches(fcb_addr)) paths.push_back(r.path);
+  } else {
+    FileMode mode;
+    bool eol_convert;
+    std::string unix_path = find_unix_file_ex(filename, &mode, &eol_convert,
+                                              cpu->get_mem()[fcb_addr]);
+    if (!unix_path.empty()) paths.push_back(unix_path);
   }
 
-  if (unix_path.empty() || !platform::delete_file(unix_path.c_str())) {
-    cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
-  } else {
+  int deleted = 0;
+  for (std::string unix_path : paths) {
+    unix_path = tracked_path(unix_path);  // before it is gone
+    bool ok = platform::delete_file(unix_path.c_str());
+    if (debug || debug_bdos_funcs.count(19)) {
+      fprintf(stderr, "Delete file: %s -> %s%s\n", filename.c_str(), unix_path.c_str(),
+              ok ? "" : " (failed)");
+    }
+    if (!ok) continue;
     made_guessed.erase(unix_path);
     made_by_content.erase(unix_path);
     made_random.erase(unix_path);
     made_raw.erase(unix_path);
     made_to_text.erase(unix_path);
     forget_text_image(unix_path);
-    cpu->set_reg8(0, qkz80::reg_A);  // Success
+    deleted++;
   }
+  if (paths.empty() && (debug || debug_bdos_funcs.count(19))) {
+    fprintf(stderr, "Delete file: %s -> (not found)\n", filename.c_str());
+  }
+
+  cpu->set_reg8(deleted ? 0 : 0xFF, qkz80::reg_A);
 }
 
 // BDOS 33, 34 and 40 read and write R0-R2's record, and leave the FCB
@@ -3228,6 +3260,7 @@ void CPMEmulator::bdos_read_random() {
 
 void CPMEmulator::bdos_write_random() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
+  check_write(fcb_addr);
 
   OpenFile* of = fcb_open_file(fcb_addr, 34);
   if (!of) return;  // A = 0xFF: no such file
@@ -3327,6 +3360,7 @@ void CPMEmulator::bdos_set_random_record() {
 
 void CPMEmulator::bdos_rename_file() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
+  check_write(fcb_addr);
 
   // In CP/M, rename uses a special FCB format:
   // Bytes 0-15: old filename (standard FCB format)
@@ -3677,9 +3711,10 @@ void CPMEmulator::bdos_reset_disk() {
   search_results.clear();
   search_index = 0;
 
-  // Reset to drive A, user 0
+  // Reset to drive A, user 0, and no drive read-only
   current_drive = 0;
   current_user = 0;
+  ro_vector = 0;
   // Back to whatever the configuration logged in, dropping drives that were
   // only reachable because BDOS 14 had selected them.
   login_vector = 0x0001;
@@ -3752,9 +3787,9 @@ static bool unix_to_cpm_83(const std::string& unix_name,
   return true;
 }
 
-void CPMEmulator::bdos_search_first() {
-  qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
+std::vector<CPMEmulator::SearchResult> CPMEmulator::directory_matches(qkz80_uint16 fcb_addr) {
   qkz80_uint8* mem = cpu->get_mem();
+  std::vector<SearchResult> results;
 
   // Extract pattern from FCB
   char pattern_name[8], pattern_ext[3];
@@ -3765,20 +3800,6 @@ void CPMEmulator::bdos_search_first() {
   // which is what every search did before drives existed.
   const std::string& search_ddir = drive_dir(fcb_drive_index(mem[fcb_addr]));
   std::string scan_dir = search_ddir.empty() ? std::string(".") : search_ddir;
-
-  // Get user from FCB byte 0 for '?' user matching
-  search_user = current_user;
-
-  // Clear previous results and scan directory
-  search_results.clear();
-  search_index = 0;
-
-  // Store pattern for debug output
-  search_pattern = std::string(pattern_name, 8) + "." + std::string(pattern_ext, 3);
-
-  if (debug || debug_bdos_funcs.count(17)) {
-    fprintf(stderr, "Search First: pattern='%s'\n", search_pattern.c_str());
-  }
 
   // Track which CP/M names we've already added (to avoid duplicates from mappings + dir)
   std::set<std::string> added_cpm_names;
@@ -3794,7 +3815,7 @@ void CPMEmulator::bdos_search_first() {
     if (!unix_to_cpm_83(mapping.cpm_pattern, file_name, file_ext)) continue;
 
     if (match_fcb_pattern(pattern_name, pattern_ext, file_name, file_ext)) {
-      search_results.push_back(make_search_result(mapping.unix_pattern, file_name, file_ext));
+      results.push_back(make_search_result(mapping.unix_pattern, file_name, file_ext));
       // Remember this CP/M name to avoid duplicates
       std::string cpm_name = std::string(file_name, 8) + std::string(file_ext, 3);
       added_cpm_names.insert(cpm_name);
@@ -3814,18 +3835,13 @@ void CPMEmulator::bdos_search_first() {
     if (added_cpm_names.count(cpm_name)) continue;  // Already added
 
     if (match_fcb_pattern(pattern_name, pattern_ext, file_name, file_ext)) {
-      search_results.push_back(make_search_result(pair.second, file_name, file_ext));
+      results.push_back(make_search_result(pair.second, file_name, file_ext));
       added_cpm_names.insert(cpm_name);
     }
   }
 
   // Scan current directory for files with valid CP/M names
   std::vector<platform::DirEntry> dir_entries = platform::list_directory(scan_dir.c_str());
-  if (dir_entries.empty() && search_results.empty()) {
-    cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
-    return;
-  }
-
   for (const auto& entry : dir_entries) {
     // Skip directories and hidden files
     if (entry.name[0] == '.' || entry.is_directory) continue;
@@ -3839,11 +3855,34 @@ void CPMEmulator::bdos_search_first() {
     if (added_cpm_names.count(cpm_name)) continue;
 
     if (match_fcb_pattern(pattern_name, pattern_ext, file_name, file_ext)) {
-      search_results.push_back(make_search_result(join_path(scan_dir, entry.name),
-                                                 file_name, file_ext));
+      results.push_back(make_search_result(join_path(scan_dir, entry.name),
+                                           file_name, file_ext));
       added_cpm_names.insert(cpm_name);
     }
   }
+  return results;
+}
+
+void CPMEmulator::bdos_search_first() {
+  qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
+  qkz80_uint8* mem = cpu->get_mem();
+
+  // Get user from FCB byte 0 for '?' user matching
+  search_user = current_user;
+
+  // Clear previous results and scan directory
+  search_results.clear();
+  search_index = 0;
+
+  // Store pattern for debug output
+  search_pattern = std::string(reinterpret_cast<const char*>(&mem[fcb_addr + 1]), 8) + "." +
+                   std::string(reinterpret_cast<const char*>(&mem[fcb_addr + 9]), 3);
+
+  if (debug || debug_bdos_funcs.count(17)) {
+    fprintf(stderr, "Search First: pattern='%s'\n", search_pattern.c_str());
+  }
+
+  search_results = directory_matches(fcb_addr);
 
   if (debug || debug_bdos_funcs.count(17)) {
     fprintf(stderr, "Search First: found %zu files\n", search_results.size());
@@ -3977,15 +4016,35 @@ void CPMEmulator::bdos_get_allocation_vector() {
 }
 
 void CPMEmulator::bdos_write_protect_disk() {
-  // Write protect current disk
-  // Just acknowledge - we don't actually enforce this
+  // The current disk, as 2.2's SET$RO marks it.  These two were stubs: 28 did
+  // nothing and 29 answered 0, so a program that wrote a disk it had just
+  // protected went ahead and changed the host directory.
+  ro_vector |= (qkz80_uint16)(1u << current_drive);
 }
 
 void CPMEmulator::bdos_get_readonly_vector() {
-  // Return bitmap of read-only drives
-  // For simplicity, say no drives are read-only
-  cpu->set_reg8(0x00, qkz80::reg_L);
-  cpu->set_reg8(0x00, qkz80::reg_H);
+  cpu->set_reg8(ro_vector & 0xFF, qkz80::reg_L);
+  cpu->set_reg8((ro_vector >> 8) & 0xFF, qkz80::reg_H);
+}
+
+// 2.2 prints the message, waits for a key and warm boots whatever the key
+// is: the call never returns to the program.  This ends the run the way a
+// warm boot does, without the wait, which nothing typed could change.  It
+// exits 1 rather than 0 so a script can tell the program did not finish.
+void CPMEmulator::check_write(qkz80_uint16 fcb_addr) {
+  int drive = fcb_drive_index(cpu->get_mem()[fcb_addr]);
+  if (!(ro_vector & (1u << drive))) return;
+  const char* msg = "\r\nBdos Err On ";
+  for (const char* p = msg; *p; p++) console_output(*p);
+  console_output('A' + drive);
+  for (const char* p = ": R/O"; *p; p++) console_output(*p);
+  console_output('\r');
+  console_output('\n');
+  fflush(stdout);
+  close_all_files();
+  fprintf(stderr, "BDOS write to read-only drive %c: - exiting\n", 'A' + drive);
+  do_save_memory();
+  exit(1);
 }
 
 void CPMEmulator::bdos_set_file_attributes() {
@@ -4001,8 +4060,10 @@ void CPMEmulator::bdos_get_dpb() {
 }
 
 void CPMEmulator::bdos_reset_drive() {
-  // Reset specified drives (bitmap in DE)
-  // Just acknowledge - close files would be proper behavior
+  // Reset specified drives (bitmap in DE).  Every open file closes, not only
+  // the named drives' files; the named drives stop being read-only, as 2.2's
+  // RESET$DRIVE clears their bits in the R/O vector.
+  ro_vector &= (qkz80_uint16)~cpu->get_reg16(qkz80::regp_DE);
   close_all_files();
 }
 

@@ -10,6 +10,30 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
+## [Unreleased]
+
+**A delete with `?` in the name deleted nothing.** BDOS 19 looked the FCB's
+name up as one file, so `TEST?.TXT` found no file of that name and answered
+`FFh` with `TEST1.TXT` to `TEST3.TXT` still there. 2.2's DELETE erases every
+entry a search with the same FCB finds, and BDOS 19 now takes the list BDOS 17
+builds. Reported by Steve Kemp in
+[#4](https://github.com/avwohl/cpmemu/issues/4), found by `DELETE.Z80` in his
+[cpm-test](https://github.com/skx/cpm-test).
+
+**BDOS 28 and 29 were stubs, so a read-only drive was neither recorded nor
+enforced.** 28 now sets the current drive's bit, 29 reports the vector, 13
+clears it and 37 clears the drives DE names. Make, delete, rename and the
+write calls (21, 34, 40) on a read-only drive end the run with `Bdos Err On
+X: R/O` and exit status 1, which is 2.2's `CHECK$WRITE` without the wait for a
+key; they used to change the host directory. cpm-test's `RO1` passes. Its
+`RO2` and the read-only part of `COMPLETE.COM` expect `FFh` back from those
+calls, which 2.2 never returns, and stop at the first one, as they would on
+2.2. See [Read-only drives](docs/CPM_SUPPORT.md#read-only-drives).
+
+Four checks in `tests/run_tests.sh` (`drv_del.asm`, `drv_ro.asm`); three
+fail on 4.10.0. The detail of `tests/README.md` moved to
+`docs/test_suite.md`, which leaves that README at 29 lines.
+
 ## [4.10.0] - 2026-09-24
 
 **BDOS 20 and 21 read and wrote wherever the host stream had got to, not the
