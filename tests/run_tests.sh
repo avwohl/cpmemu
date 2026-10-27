@@ -29,20 +29,20 @@
 #           CPMEMU_REQUIRE_ALL=1.  A skip exits 0, so on a machine missing an
 #           assembler this suite still reports 0 failed and a green tick while
 #           roughly two fifths of its checks never ran - which is what the
-#           first CI job to run it did.  Under this flag the four skips a
+#           first CI job to run it did.  Under this flag the five skips a
 #           machine can fix by installing something - no assembler, no mingw,
 #           a .com that has gone missing, no python3 for the random text file
-#           check - fail instead.  The two platform
-#           skips do not: the pty harness cannot run on Windows and the console
-#           harness cannot run anywhere else, and no install changes that.  Nor
-#           do the exercisers, which are opt-in above by design.
-#           CPMEMU_SKIP_OK allows named ones through: a space or comma
-#           separated list of "assembler", "mingw", "missing-com", "python3",
-#           "posix-console" and "windows-console".  The macOS CI job passes
-#           "mingw" and nothing else.  The last two cover skips the pty and
-#           console sub-harnesses print themselves, which are skips of this
-#           suite too - pty_console.cc skipping for want of a pty is 42 checks
-#           gone, and --require could not see it.
+#           check, tests/cpm-test not checked out - fail instead.  The two
+#           platform skips do not: the pty harness cannot run on Windows and
+#           the console harness cannot run anywhere else, and no install
+#           changes that.  Nor do the exercisers, which are opt-in above by
+#           design.  CPMEMU_SKIP_OK allows named ones through: a space or
+#           comma separated list of "assembler", "mingw", "missing-com",
+#           "python3", "cpm-test", "posix-console" and "windows-console".  The
+#           macOS CI job passes "mingw" and nothing else.  The last two cover
+#           skips the pty and console sub-harnesses print themselves, which
+#           are skips of this suite too - pty_console.cc skipping for want of a
+#           pty is 42 checks gone, and --require could not see it.
 
 set -u
 
@@ -340,7 +340,7 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 160 checks live behind this gate (219 pass with um80, 59 without)
+    # 160 checks live behind this gate (244 pass with um80, 84 without)
     skipped=$((skipped + 160))
     soft_skip assembler "drive mapping tests: 160 checks, no assembler (pip install um80)"
 else
@@ -1530,6 +1530,93 @@ case $(uname -s) in
         fi
         ;;
 esac
+
+# ---------------------------------------------------------------------------
+# skx/cpm-test, Steve Kemp's BDOS tests, a git submodule at tests/cpm-test.
+#
+# Only the .COM files are run, each alone in a new directory under $tmp, so the
+# files a guest makes and deletes land there and nowhere else.  Nothing else in
+# the submodule is executed: not its Makefile, not run.sh, and above all not
+# setup.sh, which clones five other emulators from the network and builds them.
+# A CP/M guest reaches the host only through cpmemu's BDOS, which with no config
+# reaches only the directory it was started in.  How to vet a bump of the
+# pinned commit is in docs/test_suite.md.
+#
+# The .COM files are skx's, assembled with pasmo.  um80 cannot build the .Z80
+# sources as they stand - 0x hex, C escapes in strings, org 100h - and this
+# project installs no second assembler, so the binaries are what is run.
+#
+# A test passes when its output says PASSED and nowhere says FAIL: DELETE.COM
+# printed "File deletion failed" three times and then PASSED., so PASSED alone
+# proves nothing.  AWRITE.COM writes through BDOS 4, so CPM_AUX_OUT is set and
+# the aux file is read with stdout.
+#
+# RO2.COM and the read-only part of COMPLETE.COM expect FFh from a make on a
+# read-only drive.  2.2 never returns that: CHECK$WRITE prints "Bdos Err On B:
+# R/O" and warm boots, and so does cpmemu, exiting 1 (docs/CPM_SUPPORT.md).
+# Those two are checked for exactly that stop - exit 1, the message, and no
+# FAIL before it - so a change to either behaviour shows up here.  Any program
+# a bump adds is expected to pass until it is listed otherwise.
+#
+# TICKER.COM needs a timer interrupt, which cpmemu does not raise, and spins
+# for ever without one; skx's own harness leaves it out of its scores too.
+# ---------------------------------------------------------------------------
+
+cpmtest=$root/tests/cpm-test
+cpmtest_ro_stop=" RO2.COM COMPLETE.COM "
+
+check_cpmtest() {
+    local prog=$1 base want dir out rc
+    base=$(basename -- "$prog")
+    want=pass
+    case $cpmtest_ro_stop in *" $base "*) want=ro-stop ;; esac
+    dir=$tmp/cpmtest/$base
+    mkdir -p "$dir"
+    cp "$prog" "$dir/"
+    out=$tmp/cpmtest/$base.out
+    ( cd "$dir" && CPM_AUX_OUT=aux.out run_bounded 30 "$emu" "$base" </dev/null ) >"$out" 2>"$out.err"
+    rc=$?
+    [ -f "$dir/aux.out" ] && cat "$dir/aux.out" >>"$out"
+
+    local ok=0
+    if grep -q FAIL "$out"; then
+        ok=0
+    elif [ $want = pass ]; then
+        [ $rc -eq 0 ] && grep -q PASSED "$out" && ok=1
+    else
+        [ $rc -eq 1 ] && grep -q 'Bdos Err On B: R/O' "$out" && ok=1
+    fi
+    if [ $ok -eq 1 ]; then
+        if [ $want = pass ]; then
+            printf 'PASS  cpm-test: %s\n' "$base"
+        else
+            printf 'PASS  cpm-test: %s stops at the R/O drive, as 2.2 does\n' "$base"
+        fi
+        passed=$((passed + 1))
+    else
+        printf 'FAIL  cpm-test: %s (want %s, exit %d)\n' "$base" "$want" "$rc"
+        show "$out"
+        sed 's/^/        /' <"$out.err"
+        failed=$((failed + 1))
+    fi
+}
+
+echo
+if [ ! -f "$cpmtest/RO1.COM" ]; then
+    echo "SKIP  cpm-test (tests/cpm-test is empty: git submodule update --init tests/cpm-test)"
+    skipped=$((skipped + 1))
+    soft_skip cpm-test "cpm-test: the submodule is not checked out (git submodule update --init tests/cpm-test)"
+else
+    for prog in "$cpmtest"/*.COM; do
+        case $(basename -- "$prog") in
+            TICKER.COM)
+                echo "SKIP  cpm-test: TICKER.COM (needs a timer interrupt)"
+                skipped=$((skipped + 1))
+                continue ;;
+        esac
+        check_cpmtest "$prog"
+    done
+fi
 
 # ---------------------------------------------------------------------------
 # Windows cross-compile.

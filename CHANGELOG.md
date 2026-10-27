@@ -31,7 +31,17 @@ calls, which 2.2 never returns, and stop at the first one, as they would on
 2.2. See [Read-only drives](docs/CPM_SUPPORT.md#read-only-drives).
 
 Four checks in `tests/run_tests.sh` (`drv_del.asm`, `drv_ro.asm`); three
-fail on 4.10.0. The detail of `tests/README.md` moved to
+fail on 4.10.0.
+
+**skx/cpm-test is a git submodule at `tests/cpm-test`, and the suite runs it.**
+Pinned at a98f514. Each `.COM` runs alone in a new temporary folder; nothing
+else in the submodule runs. 25 checks: 23 programs pass, and `RO2.COM` and
+`COMPLETE.COM` must stop at the read-only drive with exit 1, as 2.2 does.
+`TICKER.COM` is skipped, because cpmemu raises no timer interrupt. Against
+4.10.0, DELETE, RO1, RO2 and COMPLETE fail. A clone without `--recursive`
+skips the group, and `--require` fails on that skip; CI checks the submodule
+out. How to vet a move of the pin is in
+[docs/test_suite.md](docs/test_suite.md#vet-a-cpm-test-update). The detail of `tests/README.md` moved to
 `docs/test_suite.md`, which leaves that README at 29 lines.
 
 ## [4.10.0] - 2026-09-24

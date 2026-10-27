@@ -396,6 +396,72 @@ All simple flag tests match tnylpo exactly:
 - `.mac` - Macro-80 source, in `tests/8080/` only
 - `.prn` - Macro-80 listing, in `tests/8080/` only
 
+## skx/cpm-test
+
+`tests/cpm-test` is a git submodule. It holds Steve Kemp's BDOS tests from
+[skx/cpm-test](https://github.com/skx/cpm-test). This repository pins the
+submodule to one commit. A new commit in skx/cpm-test has no effect here until
+a commit in this repository moves the pin.
+
+`tests/run_tests.sh` runs each `.COM` file alone in a new temporary folder.
+It runs nothing else from the submodule. The `.COM` files are skx's own
+binaries, assembled with pasmo. um80 cannot assemble the `.Z80` sources as
+they are: they use `0x` hex numbers, C escapes in strings and `org 100h`.
+
+A test passes when its output contains `PASSED` and does not contain `FAIL`.
+Two tests have a different expected result:
+
+- `RO2.COM` and `COMPLETE.COM` expect `FFh` from a make on a read-only drive.
+  CP/M 2.2 does not return `FFh` for that error, and cpmemu does not either.
+  The check expects exit status 1, `Bdos Err On B: R/O`, and no `FAIL` before
+  that message. See [Read-only drives](CPM_SUPPORT.md#read-only-drives).
+- `TICKER.COM` needs a timer interrupt. cpmemu does not make timer interrupts,
+  so the suite skips this test.
+
+A program that a submodule update adds must pass. If it fails, the suite fails.
+
+### Vet a cpm-test update
+
+The submodule is code from a different author, so do these steps for each
+update. Do not let a bot move the pin.
+
+1. Fetch the new commits. Do not check them out yet:
+
+   ```bash
+   git -C tests/cpm-test fetch origin
+   git -C tests/cpm-test log --stat HEAD..origin/main
+   ```
+
+2. Read the full diff:
+
+   ```bash
+   git -C tests/cpm-test diff HEAD origin/main
+   ```
+
+3. Look for these problems in the diff:
+   - A `.COM` file that changes without a change to its `.Z80` source.
+   - A new file that is not a `.Z80` source, a `.COM` binary or text.
+   - A symbolic link, or a new `.gitmodules` file.
+   - A change to `.gitmodules` in this repository. Only a commit here can
+     change the URL.
+4. If you find a problem, stop. Do not move the pin.
+5. Move the pin, and run the suite:
+
+   ```bash
+   git -C tests/cpm-test checkout <commit>
+   make -C src && tests/run_tests.sh
+   ```
+
+6. Commit the new pin with `tests/run_tests.sh` and any changed expectations.
+   In the commit message, write the old and new commit and what you read.
+
+Never run the `Makefile`, `run.sh` or `setup.sh` in `tests/cpm-test`.
+`setup.sh` clones five other emulators from the network and builds them.
+
+skx/cpm-test has no licence file. A submodule is a link to the repository, so
+this repository does not copy the files. A request for a licence is on
+[#4](https://github.com/avwohl/cpmemu/issues/4).
+
 ## Assembler
 
 **`um80` is the assembler for this project.** Do not install, reach for, or add

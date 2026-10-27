@@ -9,7 +9,7 @@ to know that the code does not say.
 ## Build and test
 
     make -C src                 # cpmemu
-    tests/run_tests.sh          # the suite that can fail: 219 checks, about 30s
+    tests/run_tests.sh          # the suite that can fail: 244 checks, about 30s
     tests/run_tests.sh --zex    # and zexdoc, zexall, 8080exm: about 18 minutes
     make -C src unit            # the 8080 unit tests on their own
 
@@ -62,6 +62,17 @@ Two things about the dialect, both of which have already cost time:
 
   (`-p` does not help: it names where the image is *loaded*, not where the
   segment starts. `-p 0000` is for a ROM image, which does start at zero.)
+
+## tests/cpm-test is someone else's code
+
+`tests/cpm-test` is a git submodule of
+[skx/cpm-test](https://github.com/skx/cpm-test), Steve Kemp's BDOS tests,
+pinned to one commit. `tests/run_tests.sh` runs its `.COM` files and nothing
+else. **Never run its `Makefile`, `run.sh` or `setup.sh`** - `setup.sh`
+clones and builds five other emulators off the network. Move the pin only by
+the steps in [Vet a cpm-test update](docs/test_suite.md#vet-a-cpm-test-update),
+by hand, never with a bot. Its sources are pasmo's dialect and um80 does not
+assemble them; that is not a reason to install pasmo.
 
 ## The rule that is easy to miss
 

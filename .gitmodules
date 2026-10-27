@@ -1,0 +1,3 @@
+[submodule "tests/cpm-test"]
+	path = tests/cpm-test
+	url = https://github.com/skx/cpm-test.git

@@ -14,6 +14,17 @@ cross-compiles the Windows half of the platform layer. Both skip quietly and
 exit 0, so `tests/run_tests.sh --require` turns any fixable skip into a failure
 and names what to install - which is how `.github/workflows/ci.yml` runs it.
 
+Steve Kemp's [cpm-test](https://github.com/skx/cpm-test) is a git submodule at
+`tests/cpm-test`. A clone without `--recursive` leaves that folder empty, and
+the suite skips 25 checks. To get them, run this command once:
+
+```bash
+git submodule update --init tests/cpm-test
+```
+
+To move the submodule to a newer commit, follow the procedure in
+[Vet a cpm-test update](test_suite.md#vet-a-cpm-test-update).
+
 The terminal layer is unreachable through a pipe and has harnesses of its own:
 `tests/pty_console.cc` (everywhere but Windows) and `tests/win_console.cc`
 (Windows only). [`docs/test_suite.md`](test_suite.md) documents the whole suite;

@@ -37,7 +37,14 @@ jobs:
   linux:
     runs-on: ubuntu-latest
     steps:
+      # The submodule is skx/cpm-test at the commit tests/cpm-test pins.  It
+      # does not follow skx's main: a new commit there reaches this job only
+      # when a commit here moves the pin (docs/test_suite.md says how one is
+      # vetted).  Without it run_tests.sh skips that group, which --require
+      # turns into a failure.
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       # um80 assembles 17 guests at test time; without it 126 checks - more
       # than half the suite - skip.  g++-mingw-w64 is for the cross-compile
@@ -81,6 +88,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       # The same assembler as the linux job, from the same place, so the 13
       # guests are assembled by the same program on both.
@@ -149,6 +158,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Install the mingw cross-compiler
         run: |
           sudo apt-get update || (sleep 30 && sudo apt-get update)
