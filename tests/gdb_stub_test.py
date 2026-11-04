@@ -408,6 +408,10 @@ def case_running_interrupt(emu, wd, g):
         check("^C stops a running program: T02", reply == "T02", reply)
         check("the stop is inside the loop", c.pc() == gs.start)
         if os.name == "nt":
+            # No SIGTERM on Windows: end the run with k.  A close alone
+            # lets the spinning guest run on, and finish() then waits for
+            # a program that never ends.
+            c.send_raw("k")
             return
         c.send_raw("c")
         time.sleep(0.3)
