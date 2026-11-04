@@ -15,6 +15,12 @@ emulator that the three GUI clients share code with), mbasic (for BASIC
 lines) and 80mcp (a later user of the debug stub). cpmemu holds the plan
 because cpmemu gets the first runtime support.
 
+**uada80 is out of scope.** On 2026-11-04 the owner said to leave uada80
+out of this work. The uada80 facts below stay as the record of the survey.
+No phase changes uada80: no `-g` markers, no Ada traceback and no Ada
+variables. The two uada80 bugs that the survey found are in the uada80
+`todo.txt`.
+
 ## Where the facts come from
 
 The facts come from a survey on 2026-11-04 and a review of a first draft
@@ -910,6 +916,7 @@ real GDB 18.1 showed all three (measured, against `cpmemu --gdb`):
 
 One rule differed in the build. D7 rule 2 said to drop each entry with a
 slot below SP first. That drops the entry of the REENTRANT callee itself.
+
 The stub pops the entry with the slot equal to SP. If no slot is SP, the stub
 pops the innermost entry with the RET target as return address. Then the stub
 drops the entries above the popped entry.
@@ -956,9 +963,9 @@ before the other compilers start.
 | 1 | RSP stub in `gdbstub.cc`, shadow call stack, `--backtrace` | cpmemu | 0 | `tests/gdb_stub_test.py` passes in `run_tests.sh` on all three CI platforms. `--backtrace` prints the expected chain for a guest that ends with a fatal BDOS error. Speed is the same with no debugger attached (commit message). |
 | 2 | `--debug-info` in um80, ulib80 and ul80 (the line counter fix is done). `debug_info.md`. | um80_and_friends | none | For a test program with a macro, a JR promotion, a `.PHASE` block and a library module: the `.dbg` address of each label equals the ul80 address, and each instruction has a `.mac` line. |
 | 3 | udb80 core and CLI, `addr2line`, `sizes` | um80_and_friends | 1, 2 | Break on an assembler line, step, and `bt` (shadow stack) on a recursive assembler program under `cpmemu --gdb`. A golden test for `addr2line`. |
-| 4 | Fix `peep_flow` and `looprot` (D2). Markers in uc80, then uplm80, uada80 and ucow. upeepz80 marker test. um80 reads markers. `;#noopt` in um80 and upeepz80. `#line` in mbasic. | compilers, upeepz80, um80, mbasic | 2 | The D2 byte test passes in each compiler suite. Each code byte of a uc80 test program, other than runtime code, has a source line (the percentage goes in the commit). Break on a C line and step through the program. Break on a BASIC line. |
+| 4 | Fix `peep_flow` and `looprot` (D2). Markers in uc80, then uplm80 and ucow (not uada80). upeepz80 marker test. um80 reads markers. `;#noopt` in um80 and upeepz80. `#line` in mbasic. | compilers, upeepz80, um80, mbasic | 2 | The D2 byte test passes in each compiler suite. Each code byte of a uc80 test program, other than runtime code, has a source line (the percentage goes in the commit). Break on a C line and step through the program. Break on a BASIC line. |
 | 5 | Optnone (D6), the pattern switch, `peep_local` rule 3 switch | compilers, upeepz80 | 4 | A routine under optnone keeps its IX frame and its calls, and the step stops at each statement. A program that does not link under `--optnone=all` links with `--optnone=f`. |
-| 6 | Frame records. Ada `GNAT.Traceback.Call_Chain`. Unhandled exception message with name and chain. | compilers, uada80 runtime | 4 | `bt` from frame records equals the shadow stack for the phase 3 program and for a uc80 program. A uada80 test program with an unhandled exception prints the name and the chain. |
+| 6 | Frame records | compilers | 4 | `bt` from frame records equals the shadow stack for the phase 3 program and for a uc80 program. |
 | 7 | `dbg2elf`, GDB Python unwinder, `docs/gdb.md` | um80_and_friends | 0, 4 | The GDB acceptance list above, skipped only when no z80 GDB is present. |
 | 8 | Variables | compilers, um80, udb80, dbg2elf | 4 | A test program for each compiler: `print` of a local in each storage kind. |
 | 9 | romwbw_emu stub with banks, then ioscpm, z80cpmw and cpmdroid | RomWBW clients | 1, 3 | udb80 stops at 0100H in bank 8EH for a program run from a disk image in romwbw_emu. The other three clients: `MANUAL_CHECKS.md` items. |
@@ -992,11 +999,10 @@ Each decision has a recommendation. The decision is still the owner's.
    region in upeepz80, in ucow's `postopt.py` and in uc80's text passes,
    so that the liveness analysis sees the whole routine. The other choice
    is a cut of the text, as uc80 does for inline assembler.
-7. **Ada exception names.** uada80 already writes a name table,
-   `_exc_ntab`, when the program reads exception names
-   (`codegen/__init__.py:105-130`, read in code). Recommendation: under
-   `-g`, write the table always, and use the table for the unhandled
-   exception message. Measure the size of the table.
+7. **Ada exception names.** Out of scope: the owner left uada80 out on
+   2026-11-04. uada80 already writes a name table, `_exc_ntab`, when the
+   program reads exception names (`codegen/__init__.py:105-130`, read in
+   code).
 8. **z80fpga host link.** Recommendation: a second UART on a Pmod header.
    An escape byte on the console changes what the guest reads.
 9. **Stub file for the RomWBW clients.** Recommendation: the clients
