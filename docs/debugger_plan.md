@@ -81,9 +81,16 @@ An older note of the owner's, `docs/archive/debug.txt`, adds four points:
 
 Five measured facts decide much of the design.
 
-**GDB has had a Z80 target since GDB 10.** The GDB `NEWS` file lists
-`z80-unknown-*` under "Changes in GDB 10" (read in code). The owner's
-belief that the GDB port is old and not supported is out of date.
+**GDB has had a Z80 target since GDB 11.1 (2021).** The tag
+`gdb-10.1-release` has no `gdb/z80-tdep.c`, and `gdb-11.1-release` and
+`gdb-18.1-release` (2026-09-25, the newest release) have the file
+(measured). The `NEWS` file lists `z80-unknown-*` under "Changes in GDB
+10", but no GDB 10 release has the code. The port has 56 commits from
+2021-07-17 to 2026-09-22. Most are changes across all of GDB, and a few
+are fixes from z80 users: instruction sizes (2025), a missing symbol
+table (2026) and an endless loop in the unwinder (2026) (measured).
+
+The owner's belief that the GDB port is old and not supported is out of date.
 `legumbre/gdb-z80`, cited in `docs/archive/debug-research.md`, is an
 older fork that the mainline port replaces.
 
@@ -727,7 +734,7 @@ their udb80 words:
 
 ### GDB
 
-- **Build.** GDB has a Z80 target since GDB 10, but Homebrew has no
+- **Build.** GDB has a Z80 target since GDB 11.1, but Homebrew has no
   formula. Phase 7 adds `docs/gdb.md` to um80_and_friends with the build:
   `configure --target=z80-unknown-elf`.
 - **`dbg2elf`.** A Python tool that writes an ELF file: ELFCLASS32,

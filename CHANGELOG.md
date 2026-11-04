@@ -25,7 +25,7 @@ checks in `tests/run_tests.sh`. qkz80 does not change.
 um80 and ul80, cpmemu, the RomWBW clients and z80fpga. cpmemu's part is a GDB
 remote stub on a TCP port, with a shadow call stack. Two measurements shaped
 the plan: LINK-80 3.44 refuses each extension item kind but 35H, so debug
-info goes in a sidecar file, and GDB has had a z80 target since GDB 10.
+info goes in a sidecar file, and GDB has had a z80 target since GDB 11.1.
 Nothing is built yet.
 
 **A delete with `?` in the name deleted nothing.** BDOS 19 looked the FCB's
