@@ -23,6 +23,12 @@ such as `TEST,TEST.COM/N/E` intact.
 | `--no-ctrl-c-exit` | Disable the five-consecutive-^C exit |
 | `--ctrl-c-exit` | Enable it (the default) |
 
+HLT waits for an interrupt. With `--int-cycles`, the clock goes to the next
+timer tick, and the interrupt routine runs. With no `--int-cycles`, or after a
+`DI`, no interrupt can end the wait. cpmemu then writes `HLT at XXXX with no
+interrupt to end it - exiting` to standard error and ends the run with exit
+status 1.
+
 [^1]: A range that does not parse is ignored without a message and the whole
 64K is written.
 [^2]: Only used with `--int-cycles`, which also puts the CPU in IM 1, where

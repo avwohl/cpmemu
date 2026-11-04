@@ -340,14 +340,14 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 160 checks live behind this gate (244 pass with um80, 84 without)
-    skipped=$((skipped + 160))
-    soft_skip assembler "drive mapping tests: 160 checks, no assembler (pip install um80)"
+    # 162 checks live behind this gate (246 pass with um80, 84 without)
+    skipped=$((skipped + 162))
+    soft_skip assembler "drive mapping tests: 162 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1
     for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren drv_del drv_ro cli_tail cli_fcb con_eof con_spin \
-               adm3a savemem bios_disk sectran fcb_io mem_top text_ops; do
+               adm3a savemem bios_disk sectran fcb_io mem_top text_ops hlt; do
         if ! assemble "$root/tests/$src.asm" "$tmp/$src.com" >"$tmp/asm.log" 2>&1; then
             echo "FAIL  assembling tests/$src.asm"
             sed 's/^/        /' <"$tmp/asm.log"
@@ -464,6 +464,31 @@ else
             [ -e "$sb/a/romade.txt" ] && printf '        made %s\n' "$sb/a/romade.txt"
             printf '    expected:\n'; show "$tmp/rowant"
             printf '    got:\n';      show "$tmp/rogot"
+            failed=$((failed + 1))
+        fi
+
+        # HLT waits for an interrupt: with the timer each of the three HLTs
+        # in tests/hlt.asm waits for one tick and the guest prints 3.  Up to
+        # 4.10.0 HLT ran on like a NOP and the guest printed 0.  With no
+        # timer nothing can end the wait, and the run ends with exit 1.
+        "$emu" --int-cycles=1000 "$tmp/hlt.com" >"$tmp/hltgot" 2>"$tmp/hlterr" </dev/null
+        rc=$?
+        if [ $rc -eq 0 ] && [ "$(cat "$tmp/hltgot")" = 3 ]; then
+            printf 'PASS  cpu: HLT waits for the timer interrupt\n'
+            passed=$((passed + 1))
+        else
+            printf 'FAIL  cpu: HLT waits for the timer interrupt\n'
+            printf '        exit %d (want 0), output:\n' "$rc"; show "$tmp/hltgot"
+            failed=$((failed + 1))
+        fi
+        "$emu" "$tmp/hlt.com" >"$tmp/hltgot" 2>"$tmp/hlterr" </dev/null
+        rc=$?
+        if [ $rc -eq 1 ] && [ ! -s "$tmp/hltgot" ] && grep -q '^HLT at 0110 with no interrupt' "$tmp/hlterr"; then
+            printf 'PASS  cpu: HLT with no interrupt ends the run\n'
+            passed=$((passed + 1))
+        else
+            printf 'FAIL  cpu: HLT with no interrupt ends the run\n'
+            printf '        exit %d (want 1), stderr:\n' "$rc"; sed 's/^/        /' <"$tmp/hlterr"
             failed=$((failed + 1))
         fi
 

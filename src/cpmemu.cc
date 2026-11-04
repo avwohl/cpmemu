@@ -2106,7 +2106,8 @@ bool CPMEmulator::handle_pc(qkz80_uint16 pc) {
     return true;
   }
 
-  // Check for BIOS calls (magic addresses 0xFF00-0xFF10)
+  // Check for BIOS calls.  The 17 jump table entries trap at 0xFF00-0xFF10;
+  // the test takes 0xFF00-0xFF1F, and bios_call ignores the unused ones.
   if (pc >= 0xFF00 && pc < 0xFF20) {
     int bios_func = (pc - 0xFF00) * 3;
     bios_call(bios_func);
@@ -4797,6 +4798,24 @@ int main(int argc, char** argv) {
 
     // Execute one instruction
     cpu.execute();
+
+    // HLT.  qkz80 only sets halted_ and moves PC past the HLT, so the
+    // interrupt pushes the address after it, as on the Z80.  Here the CPU
+    // waits: a halted Z80 runs NOPs until an interrupt, so the clock jumps
+    // to the next timer tick.  With no timer, or with interrupts off,
+    // nothing can ever end the wait, and the run ends rather than hang.
+    // Until 4.10.0 nothing read halted_ and HLT ran on like a NOP.
+    if (cpu.is_halted()) {
+      if (int_cycles > 0 && cpu.regs.IFF1) {
+        if (cpu.cycles < next_tick_cycles_) cpu.cycles = next_tick_cycles_;
+        cpu.clear_halted();
+      } else {
+        fprintf(stderr, "HLT at %04X with no interrupt to end it - exiting\n", pc);
+        if (close_guest_files) close_guest_files();
+        do_save_memory();
+        exit(1);
+      }
+    }
 
     instruction_count++;
 

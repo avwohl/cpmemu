@@ -12,6 +12,14 @@ summarises and points; `git log` is the detail. Open work is in
 
 ## [Unreleased]
 
+**HLT ran on like a NOP.** qkz80 sets `halted_` at a HLT, and nothing in
+cpmemu read it, so a program that waited for the timer with `EI` and `HLT` went
+straight on. HLT now waits: with `--int-cycles` the clock goes to the next tick
+and the interrupt routine runs, and with no interrupt that can come the run ends
+with `HLT at XXXX with no interrupt to end it` and exit status 1, where the CPU
+would hang. `tests/hlt.asm` printed 0 for its three HLTs and prints 3 now; two
+checks in `tests/run_tests.sh`. qkz80 does not change.
+
 **A delete with `?` in the name deleted nothing.** BDOS 19 looked the FCB's
 name up as one file, so `TEST?.TXT` found no file of that name and answered
 `FFh` with `TEST1.TXT` to `TEST3.TXT` still there. 2.2's DELETE erases every
