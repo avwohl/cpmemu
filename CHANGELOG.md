@@ -20,6 +20,14 @@ with `HLT at XXXX with no interrupt to end it` and exit status 1, where the CPU
 would hang. `tests/hlt.asm` printed 0 for its three HLTs and prints 3 now; two
 checks in `tests/run_tests.sh`. qkz80 does not change.
 
+**A plan for source debugging and backtrace.**
+[docs/debugger_plan.md](docs/debugger_plan.md) covers the compilers, upeepz80,
+um80 and ul80, cpmemu, the RomWBW clients and z80fpga. cpmemu's part is a GDB
+remote stub on a TCP port, with a shadow call stack. Two measurements shaped
+the plan: LINK-80 3.44 refuses each extension item kind but 35H, so debug
+info goes in a sidecar file, and GDB has had a z80 target since GDB 10.
+Nothing is built yet.
+
 **A delete with `?` in the name deleted nothing.** BDOS 19 looked the FCB's
 name up as one file, so `TEST?.TXT` found no file of that name and answered
 `FFh` with `TEST1.TXT` to `TEST3.TXT` still there. 2.2's DELETE erases every
