@@ -920,6 +920,28 @@ With GDB 18.1 and the `dbg2elf_proto` ELF file for `sumto.com`, these worked:
 frameless program), `watch total` (a hardware watchpoint through `Z2`),
 `tbreak`, `stepi` and `continue` to `exited normally`.
 
+## Phase 2 to 4 results: Milestone A
+
+Milestone A was built on 2026-11-04 (measured):
+
+- **Phase 2**, um80_and_friends `92196ca`: `um80 --debug-info` writes a
+  `.dbm` for each module, ulib80 version 2 stores the `.dbm` files, and
+  `ul80 --debug-info` writes `prog.dbg`. The specification is
+  `docs/debug_info.md` in um80_and_friends. 747 sources give the same
+  `.rel` bytes with and without the option.
+- **Phase 3**, um80_and_friends `8c828b3`: `udb80`. Against `cpmemu --gdb`,
+  `break`, `step`, `next`, `finish` and `bt` work on the shadow stack. The
+  first review found that `next` and `finish` ran to the end when a routine
+  popped its own return address. udb80 now also stops at the return address
+  of each caller.
+- **Phase 4 for uc80**, uc80 `e1811c9` and upeepz80 `ab4de24`: `uc80 -g`
+  writes the markers. The `.COM` is the same with and without `-g` for 115
+  programs and 5 option sets. In 363 programs, 105,500 of 105,500 bytes of
+  user routines have a source line. Before the fix, `peep_flow` and `looprot`
+  changed the code at a marker line (4 of 260 and 2 of 232 calls).
+- **Not met:** a step into an inlined call in GDB. `prog.dbg` holds the
+  inline stack, but no ELF writer gives DWARF inline records yet (phase 7).
+
 ## Phases
 
 Each phase ends with a test that can fail. **Milestone A** is phases 1 to
