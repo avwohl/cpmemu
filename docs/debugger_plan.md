@@ -255,22 +255,31 @@ to the next marker.
 
 Two or more `;#line` markers with no byte between them all belong to the
 next instruction. The line table row for that instruction lists all the
-lines, in source order. The first line is the primary line, because the
-first statement started the fused group. The merge rule gives the owner's
-"more than one source line" case for the text optimizers. A fused
-instruction lands after the markers of all the lines that the fused
-instruction replaced (measured, D3).
+lines, in source order. The last line is the primary line. The merge rule
+gives the owner's "more than one source line" case for the text
+optimizers. A fused instruction lands after the markers of all the lines
+that the fused instruction replaced (measured, D3).
+
+A statement that makes no code also leaves its marker next to the marker
+of the next statement. An opening brace and a declaration are examples. The last marker is then the line that made the code. GDB also
+shows the last row at an address as the line of that address (measured in
+phase 0). A first draft of this plan made the first line primary. In GDB
+that rule put `add` on its opening brace, and line 6, the `return`, had
+"no code" (measured).
 
 Three rules use the list:
 
 - `break file:LINE` stops at each address whose row lists LINE, primary
   or not.
 - `step` runs until PC leaves the address ranges of the current line and
-  arrives at a step point. A step point is a row with a primary line that
-  is not `nostmt`. The test uses address ranges, not line numbers, so a
-  one-line loop such as `while (x--);` stops after one pass.
-- dbg2elf writes the lines that are not primary as extra DWARF rows with
-  `is_stmt` off.
+  arrives at a step point. A step point is a row that is not `nostmt`.
+  The test uses address ranges, not line numbers, so a one-line loop such
+  as `while (x--);` stops after one pass.
+- dbg2elf writes each line of the group as a DWARF row at the same
+  address with `is_stmt` on, in source order. GDB sets no breakpoint on a
+  row with `is_stmt` off: with the lines that are not primary written as
+  `is_stmt` off, `break` on such a line said "No compiled code" (measured).
+  Only a `nostmt` marker gives `is_stmt` off.
 
 The other kinds of rewrite give these results:
 
@@ -839,6 +848,44 @@ The stub is off by default.
   about 25 minutes, and the build has a small timing margin (quoted from
   `CLAUDE.md`).
 
+## Phase 0 results
+
+GDB 18.1 was built on 2026-11-04 on this Mac (macOS 27, arm64), from
+`gdb-18.1.tar.xz`. The GNU signature was good (Joel Brobecker's key, from
+the GNU keyring). GDB 18.1 needs GMP and MPFR. MPFR came from Homebrew.
+
+```
+configure --target=z80-unknown-elf --disable-nls --disable-werror \
+    --with-python=/opt/homebrew/bin/python3.14 --with-gmp=/opt/homebrew \
+    --with-mpfr=/opt/homebrew --without-guile --disable-sim
+make -j10 all-gdb
+```
+
+The build took about one minute. `set architecture` lists z80,
+z80-strict, z80-full, r800, gbz80, z180, z80n, ez80-z80 and ez80-adl.
+
+The test program is a C file of 16 lines and a hand-written `.mac` of the
+same program with `;#line` markers. um80 and ul80 assembled the `.mac`,
+and a prototype of `dbg2elf` read the `.PRN` and wrote the ELF: ELFCLASS32,
+`e_machine` 220, `e_flags` 1, `.text` at 0100H, a symbol table, and DWARF
+4 `.debug_line`, `.debug_info` and `.debug_abbrev`. The ELF has 981 bytes.
+GDB loaded the ELF with no target and gave these results (measured):
+
+- GDB set the z80 architecture from the ELF.
+- `info functions`, `info variables`, `ptype` and `info address` were
+  correct. A global with `DW_OP_addr` is "static storage at address 0x122".
+- `info line FILE:N` and `info line *ADDR` gave the right ranges.
+- `break FILE:N` and `break FUNCTION` gave the right addresses. A
+  `nostmt` row (the loop increment) took no breakpoint, as D4 intends.
+- `list` and `disassemble /s` showed the C lines with the Z80 code. Two
+  lines at one address show as two source lines above the shared code.
+- With no stub, GDB warns that it found no `_break_handler` and that it
+  would write RST 08H for a breakpoint. The stub of phase 1 answers `Z0`,
+  so GDB writes nothing.
+
+Not tested yet: a run against a stub, `step` and `next`, a Python
+unwinder, and IX-relative locals. These need the phase 1 stub.
+
 ## Phases
 
 Each phase ends with a test that can fail. **Milestone A** is phases 1 to
@@ -848,7 +895,7 @@ before the other compilers start.
 
 | Phase | Work | Projects | Depends on | Acceptance |
 |---|---|---|---|---|
-| 0 | Decisions. Build GDB for z80. Load a hand-made ELF with `.debug_line` at 0100H. Test numeric `catch syscall`. Measure one branch in the cpmemu loop. | all | none | The results go into this file, with the commands. A failed measurement changes phase 1 or 7. |
+| 0 | Decisions. Build GDB for z80 (done). Load a hand-made ELF with `.debug_line` at 0100H (done, see above). Test numeric `catch syscall`. Measure one branch in the cpmemu loop. | all | none | The results go into this file, with the commands. A failed measurement changes phase 1 or 7. |
 | 1 | RSP stub in `gdbstub.cc`, shadow call stack, `--backtrace` | cpmemu | 0 | `tests/gdb_stub_test.py` passes in `run_tests.sh` on all three CI platforms. `--backtrace` prints the expected chain for a guest that ends with a fatal BDOS error. Speed is the same with no debugger attached (commit message). |
 | 2 | `--debug-info` in um80, ulib80 and ul80 (the line counter fix is done). `debug_info.md`. | um80_and_friends | none | For a test program with a macro, a JR promotion, a `.PHASE` block and a library module: the `.dbg` address of each label equals the ul80 address, and each instruction has a `.mac` line. |
 | 3 | udb80 core and CLI, `addr2line`, `sizes` | um80_and_friends | 1, 2 | Break on an assembler line, step, and `bt` (shadow stack) on a recursive assembler program under `cpmemu --gdb`. A golden test for `addr2line`. |
