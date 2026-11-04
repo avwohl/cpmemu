@@ -91,7 +91,7 @@ LIB_HEADERS = qkz80.h qkz80_cpu_flags.h qkz80_mem.h qkz80_reg_pair.h \
               qkz80_reg_set.h qkz80_trace.h qkz80_types.h
 
 # Application
-APP_SOURCES = cpmemu.cc
+APP_SOURCES = cpmemu.cc gdbstub.cc
 APP_OBJECTS = $(APP_SOURCES:.cc=.o)
 TARGET = cpmemu
 
@@ -124,6 +124,7 @@ $(LIB_SHARED): $(LIB_OBJECTS_PIC)
 endif
 
 # Build cpmemu linking against static library
+cpmemu.o gdbstub.o: gdbstub.h os/platform.h
 $(TARGET): $(APP_OBJECTS) $(PLATFORM_OBJECT) $(LIB_STATIC)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(APP_OBJECTS) $(PLATFORM_OBJECT) $(LIB_STATIC) -o $(TARGET)
 

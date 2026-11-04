@@ -4,7 +4,11 @@
 
 #include "../platform.h"
 
+// winsock2.h has to come before windows.h: windows.h pulls in the old winsock.h
+// unless WIN32_LEAN_AND_MEAN is set, and the two declare the same names.
 #define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <io.h>
 #include <fcntl.h>
@@ -12,6 +16,11 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
+
+#ifdef _MSC_VER
+#pragma comment(lib, "ws2_32.lib")
+#endif
 
 // Some older MinGW wincon.h headers are missing these console mode bits
 #ifndef ENABLE_QUICK_EDIT_MODE
@@ -684,6 +693,120 @@ int termination_requested() {
 void end_by_signal(int sig) {
     disable_raw_mode();
     std::exit(128 + sig);
+}
+
+// ============================================================================
+// Sockets (the GDB stub)
+// ============================================================================
+
+static bool winsock_started = false;
+
+static bool winsock_start() {
+    if (winsock_started) return true;
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        fprintf(stderr, "gdb stub: WSAStartup failed\n");
+        return false;
+    }
+    winsock_started = true;
+    return true;
+}
+
+socket_t net_listen_local(int port, int* bound_port) {
+    if (!winsock_start()) return kNoSocket;
+    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == INVALID_SOCKET) {
+        fprintf(stderr, "gdb stub: socket: error %d\n", (int)WSAGetLastError());
+        return kNoSocket;
+    }
+    // No SO_REUSEADDR: on Windows it lets a second process take the same
+    // port, which is not what a debugger port should allow.
+    struct sockaddr_in a;
+    memset(&a, 0, sizeof a);
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    a.sin_port = htons((unsigned short)port);
+    if (bind(s, (struct sockaddr*)&a, (int)sizeof a) != 0 || listen(s, 1) != 0) {
+        fprintf(stderr, "gdb stub: cannot listen on 127.0.0.1:%d: error %d\n",
+                port, (int)WSAGetLastError());
+        closesocket(s);
+        return kNoSocket;
+    }
+    int len = (int)sizeof a;
+    if (getsockname(s, (struct sockaddr*)&a, &len) != 0) {
+        fprintf(stderr, "gdb stub: getsockname: error %d\n", (int)WSAGetLastError());
+        closesocket(s);
+        return kNoSocket;
+    }
+    if (bound_port) *bound_port = (int)ntohs(a.sin_port);
+    return (socket_t)s;
+}
+
+socket_t net_accept(socket_t listener) {
+    SOCKET c = accept((SOCKET)listener, NULL, NULL);
+    if (c == INVALID_SOCKET) {
+        fprintf(stderr, "gdb stub: accept: error %d\n", (int)WSAGetLastError());
+        return kNoSocket;
+    }
+    BOOL one = TRUE;
+    setsockopt(c, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, (int)sizeof one);
+    return (socket_t)c;
+}
+
+// True when s can be read now, within timeout_ms.  select() on Windows takes
+// its first argument for compatibility only, so 0 is right.
+static int socket_readable(SOCKET s, int timeout_ms) {
+    fd_set rd;
+    FD_ZERO(&rd);
+    FD_SET(s, &rd);
+    struct timeval tv;
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    int n = select(0, &rd, NULL, NULL, timeout_ms < 0 ? NULL : &tv);
+    if (n == SOCKET_ERROR) return -1;
+    return n > 0 ? 1 : 0;
+}
+
+int net_recv(socket_t s, void* buf, int len, int timeout_ms) {
+    if (timeout_ms >= 0) {
+        int r = socket_readable((SOCKET)s, timeout_ms);
+        if (r < 0) return -1;
+        if (r == 0) return -2;
+    }
+    int n = recv((SOCKET)s, (char*)buf, len, 0);
+    if (n > 0) return n;
+    if (n == 0) return 0;
+    return -1;
+}
+
+bool net_send_all(socket_t s, const void* buf, int len) {
+    const char* p = (const char*)buf;
+    while (len > 0) {
+        int n = send((SOCKET)s, p, len, 0);
+        if (n == SOCKET_ERROR) return false;
+        p += n;
+        len -= n;
+    }
+    return true;
+}
+
+void net_close(socket_t s) {
+    if (s != kNoSocket) closesocket((SOCKET)s);
+}
+
+int wait_console_or_socket(socket_t s, int timeout_ms) {
+    // A console handle and a socket cannot be waited on together in one call
+    // that also understands a redirected stdin, so look at each in 10 ms
+    // slices.  The slice is also the latency of a ^C from the debugger.
+    DWORD start = GetTickCount();
+    for (;;) {
+        int mask = 0;
+        if (stdin_has_data()) mask |= 1;
+        if (s != kNoSocket && socket_readable((SOCKET)s, mask ? 0 : 10) != 0) mask |= 2;
+        if (mask) return mask;
+        if (s == kNoSocket) Sleep(10);
+        if (timeout_ms >= 0 && (int)(GetTickCount() - start) >= timeout_ms) return 0;
+    }
 }
 
 // ============================================================================

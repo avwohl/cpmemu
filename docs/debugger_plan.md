@@ -348,13 +348,15 @@ code. The rules:
    return address, the slot (the SP after the push) and the kind (`call`,
    `rst` or `irq`).
 2. On a RET or RETI that the CPU takes, the stub reads the SP before the
-   return. First drop each entry whose slot is below that SP. Such entries
-   come from a longjmp, an Ada exception, or a routine that pops its own
-   return address. Then pop the top entry if the slot of the entry is that
-   SP. Also pop the top entry if the return address of the entry is the
-   RET target.
-   uplm80 moves the return address in a REENTRANT epilogue (measured).
-   Otherwise mark the stack "out of step".
+   return. Pop the entry whose slot is that SP. If no entry has that slot,
+   pop the innermost entry whose return address is the RET target (the
+   uplm80 REENTRANT epilogue moves the return address, measured), and drop
+   the entries above it: they come from a longjmp, an Ada exception, or a
+   routine that pops its own return address. If no entry matches, mark the
+   stack "out of step". (As built in phase 1. The first text of this rule
+   dropped each entry with a slot below SP before the match. Read
+   literally, that drops the entry of the REENTRANT callee itself and
+   contradicts rule 4.)
 3. A BDOS or BIOS trap in cpmemu returns with no RET instruction. The
    stub applies rule 2 to the trap return.
 4. Do not drop entries when SP only rises. The uplm80 REENTRANT epilogue
@@ -615,11 +617,11 @@ speed test in `run_tests.sh` would fail at random on a loaded machine.
   thread), `Hg` and `Hc`, `qXfer:features:read:target.xml`.
 - An empty reply to each packet that the stub does not know. GDB requires
   this.
-- Run control: `?`, `c`, `s`, `vCont?` (reply `vCont;c;s;r`), `vCont`
+- Run control: `?`, `c`, `s`, `vCont?` (reply `vCont;c;C;s;S;r`), `vCont`
   with range stepping (`r`), `k` (end cpmemu), `D` (let the program run
   on), the 03H interrupt.
 - State: `g`, `G`, `p`, `P`, `m`, `M`, `X`. An address at 10000H or above
-  gets `E01`, because GDB's pc is 32 bits.
+  gets `E01`.
 - Breakpoints: `Z0`/`z0` and `Z1`/`z1`. The stub keeps the breakpoints
   and never writes into guest memory. A stop at a breakpoint replies
   `T05swbreak:;`.
@@ -627,10 +629,10 @@ speed test in `run_tests.sh` would fail at random on a loaded machine.
   `QCatchSyscalls` for BDOS calls, and `qRcmd` for `monitor` commands.
 
 **Registers.** GDB's z80 register order is af, bc, de, hl, sp, pc, ix, iy,
-af', bc', de', hl', ir. pc is 32 bits, and the other registers are 16 bits
-(read in `gdb/features/z80-cpu.xml`). The stub serves the same XML as
-`target.xml`. A test checks that the `g` reply has the length that the XML
-gives.
+af', bc', de', hl', ir. `gdb/features/z80-cpu.xml` gives pc 32 bits, and the
+other registers 16 bits. The stub serves the same XML as `target.xml`, with
+pc at 16 bits: see [Phase 1 results](#phase-1-results). A test checks that
+the `g` reply has the length that the XML gives.
 
 **Watchpoints.** A subclass of `qkz80_cpu_mem` overrides the virtual
 `store_mem` and `fetch_mem` (`qkz80_mem.h:14-15`, read in code). The qkz80
@@ -885,6 +887,38 @@ GDB loaded the ELF with no target and gave these results (measured):
 
 Not tested yet: a run against a stub, `step` and `next`, a Python
 unwinder, and IX-relative locals. These need the phase 1 stub.
+
+## Phase 1 results
+
+Phase 1 was built on 2026-11-04: `src/gdbstub.cc`, `src/gdbstub.h`, the socket
+functions in `src/os/*/platform.cc`, and `tests/gdb_stub_test.py`. The user
+view is [gdb_stub.md](gdb_stub.md). Three parts of this plan were wrong, and
+real GDB 18.1 showed all three (measured, against `cpmemu --gdb`):
+
+- **pc is 16 bits on the wire.** The plan said 32 bits, from
+  `z80-cpu.xml`. GDB 18.1 sizes a `code_ptr` register by the pointer size of
+  the architecture, 2 bytes for a Z80, and ignores `bitsize`. A 28-byte `g`
+  reply gave `Remote 'g' packet reply is too long (expected 26 bytes, got 28
+  bytes)`. The stub serves pc as 16 bits.
+- **`vCont?` must list `C`.** `vCont;c;s;r` made GDB turn `vCont` off, with
+  `Packet vCont (verbose-resume) is NOT supported`. GDB 18.1 needs `c` and
+  `C`. The stub answers `vCont;c;C;s;S;r`.
+- **`catch syscall` does not work on a Z80 in GDB 18.1.** The command answers
+  `The feature 'catch syscall' is not supported on this architecture yet`. The
+  stub implements `QCatchSyscalls` for other clients, and a client that sends
+  the packet itself can use the packet.
+
+One rule differed in the build. D7 rule 2 said to drop each entry with a
+slot below SP first. That drops the entry of the REENTRANT callee itself.
+The stub pops the entry with the slot equal to SP, or else the innermost entry
+with the RET target as return address, and then drops the entries above it.
+D7 now says so.
+
+With GDB 18.1 and the `dbg2elf_proto` ELF file for `sumto.com`, these worked:
+`break sumto.c:14`, `continue`, `info registers`, `step`, `next`,
+`print total`, `bt` (GDB's own unwinder showed both frames for this
+frameless program), `watch total` (a hardware watchpoint through `Z2`),
+`tbreak`, `stepi` and `continue` to `exited normally`.
 
 ## Phases
 

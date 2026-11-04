@@ -25,7 +25,7 @@ LIB_NAME = qkz80
 LIB_STATIC = lib$(LIB_NAME).a
 
 # Application
-APP_SOURCES = cpmemu.cc
+APP_SOURCES = cpmemu.cc gdbstub.cc
 APP_OBJECTS = $(APP_SOURCES:.cc=.o)
 TARGET = cpmemu.exe
 
@@ -41,7 +41,7 @@ $(LIB_STATIC): $(LIB_OBJECTS)
 
 # Build cpmemu linking against static library
 $(TARGET): $(APP_OBJECTS) $(PLATFORM_OBJECT) $(LIB_STATIC)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(APP_OBJECTS) $(PLATFORM_OBJECT) $(LIB_STATIC) -o $(TARGET)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(APP_OBJECTS) $(PLATFORM_OBJECT) $(LIB_STATIC) -lws2_32 -o $(TARGET)
 
 # Regular object files
 %.o: %.cc

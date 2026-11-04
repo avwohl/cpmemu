@@ -109,6 +109,42 @@ std::string basename(const std::string& path);
 int change_directory(const char* path);
 
 // ============================================================================
+// Sockets (the GDB stub)
+// ============================================================================
+
+// A TCP socket.  A plain integer on both hosts: a POSIX descriptor, or a
+// Winsock SOCKET, which is a handle and is small in practice.
+typedef intptr_t socket_t;
+const socket_t kNoSocket = -1;
+
+// Listen on 127.0.0.1 only.  Port 0 lets the system choose.  *bound_port gets
+// the port in use.  kNoSocket on failure, with the reason printed to stderr.
+socket_t net_listen_local(int port, int* bound_port);
+
+// Wait for one connection on a listening socket and return it.  kNoSocket on
+// failure, or when a termination signal arrived while waiting (POSIX).
+socket_t net_accept(socket_t listener);
+
+// Receive up to len bytes.  timeout_ms < 0 waits without limit, 0 only looks.
+// Returns the byte count (> 0), 0 when the peer closed the connection, -1 on
+// an error, -2 when the timeout ran out first, and -3 when a signal interrupted
+// the wait (POSIX), so the caller can look at termination_requested().
+int net_recv(socket_t s, void* buf, int len, int timeout_ms);
+
+// Send all len bytes.  False on failure.
+bool net_send_all(socket_t s, const void* buf, int len);
+
+// Close a socket.
+void net_close(socket_t s);
+
+// Wait until the console has input, or the socket is readable, or the timeout
+// runs out.  Returns a mask: 1 = the console has input (or is at end of input),
+// 2 = the socket is readable (or closed), 0 = timeout, -1 = interrupted by a
+// signal.  The GDB stub uses this so that ^C from the debugger reaches a guest
+// that is waiting for a key.  s may be kNoSocket: then only the console counts.
+int wait_console_or_socket(socket_t s, int timeout_ms);
+
+// ============================================================================
 // Termination
 // ============================================================================
 

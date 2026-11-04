@@ -141,6 +141,21 @@ jobs:
           CPMEMU_REQUIRE_MSVC: '1'
         run: tests\win_console.bat
 
+      # The GDB stub's sockets are Winsock here, and nothing else in this job
+      # reaches them.  The script assembles its guests with um80 and, with
+      # CPMEMU_REQUIRE_ALL set, fails instead of skipping when um80 is missing.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install the um80 assembler
+        run: python -m pip install um80
+
+      - name: Run the GDB stub tests
+        env:
+          CPMEMU_REQUIRE_ALL: '1'
+        run: python tests\gdb_stub_test.py src\cpmemu.exe
+
   # The instruction exercisers are not in the linux job above.  About 18 minutes
   # for the three, measured on the machine run_tests.sh was written on; measured
   # on an ubuntu runner, 6m23s - zexdoc 2m36s, zexall 2m33s, 8080exm 1m14s.  On

@@ -12,6 +12,42 @@ summarises and points; `git log` is the detail. Open work is in
 
 ## [Unreleased]
 
+**`--gdb`: a GDB remote stub, a shadow call stack and `--backtrace`.**
+Phase 1 of [docs/debugger_plan.md](docs/debugger_plan.md). `cpmemu --gdb prog.com`
+listens on 127.0.0.1 (port 1234, or `--gdb=PORT`, or `--gdb=0` with
+`--gdb-port-file=FILE`) and stops before 0100H until a debugger connects. The
+stub is in the new `src/gdbstub.cc`, with the sockets in `src/os/*/platform.cc`
+(POSIX and Winsock) and one small target interface, so qkz80 does not change.
+It keeps breakpoints in a table and writes nothing into guest memory, steps over
+a BDOS or BIOS trap in one step, stops a HLT that nothing can end, takes ^C
+while the guest waits for a key, answers `Z2`-`Z4` watchpoints and
+`QCatchSyscalls`, and reports every way out of the run with a `W` or `X`
+packet. `monitor bt` and `--backtrace` read the shadow call stack (D7 of the
+plan). [docs/gdb_stub.md](docs/gdb_stub.md) has the details. Measured: a loop of
+9.0e8 instructions takes 9.9 s without the options on the old binary and 9.9 s
+on the new one (three runs each), because the plain loop is unchanged and a
+second loop serves the options; with `--backtrace` it takes 15.0 s. GDB 18.1
+(z80) with the `dbg2elf_proto` ELF for `sumto.com`: `break sumto.c:14`,
+`continue`, `step`, `next`, `print total`, `bt`, `watch total` and `continue`
+to `exited normally` worked. Two plan details were wrong and are fixed in the
+plan: GDB 18.1 wants pc as 16 bits (a 32-bit pc gave `Remote 'g' packet reply is
+too long`), and `vCont?` must list `C`. GDB 18.1 refuses `catch syscall` on a
+Z80. 83 checks in `tests/gdb_stub_test.py`, run from `tests/run_tests.sh`: 246
+checks before, 329 after. The Windows half (Winsock) was not compiled on this
+machine; CI compiles it.
+
+**`--gdb` review fixes.** Input on stdin that is not a terminal (a pipe or a
+file) is no longer read while cpmemu waits for GDB to connect: `cpmemu --gdb
+prog.com < script.txt` lost the whole script before (measured: `q` piped
+before the connection, the guest still waited for a key after `c`). Now the
+guest gets `q`. New checks: that case, the shadow entry pop at a BDOS trap
+return (D7 rule 3; the check fails when the pop is removed), and a BIOS disk
+error that ends the run with `W01`, exit status 1 and a `--backtrace` chain
+(83 checks in the file, 329 in the suite, 323 before). The plan's D7 rule 2
+now says what the stub does; `docs/gdb_stub.md` says which exit paths no test
+reaches, that a breakpoint at 0100H is not reported by the first `c`, and
+that the Windows ^C latency is 10 ms.
+
 **HLT ran on like a NOP.** qkz80 sets `halted_` at a HLT, and nothing in
 cpmemu read it, so a program that waited for the timer with `EI` and `HLT` went
 straight on. HLT now waits: with `--int-cycles` the clock goes to the next tick
@@ -26,7 +62,7 @@ um80 and ul80, cpmemu, the RomWBW clients and z80fpga. cpmemu's part is a GDB
 remote stub on a TCP port, with a shadow call stack. Two measurements shaped
 the plan: LINK-80 3.44 refuses each extension item kind but 35H, so debug
 info goes in a sidecar file, and GDB has had a z80 target since GDB 11.1.
-Nothing is built yet.
+Phase 1, cpmemu's stub, is built: see the entry above.
 
 **A delete with `?` in the name deleted nothing.** BDOS 19 looked the FCB's
 name up as one file, so `TEST?.TXT` found no file of that name and answered

@@ -340,7 +340,8 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 162 checks live behind this gate (246 pass with um80, 84 without)
+    # 162 checks live behind this gate, and the 83 GDB stub checks below sit behind
+    # the same assembler (329 pass with um80, 84 without)
     skipped=$((skipped + 162))
     soft_skip assembler "drive mapping tests: 162 checks, no assembler (pip install um80)"
 else
@@ -1641,6 +1642,45 @@ else
         esac
         check_cpmtest "$prog"
     done
+fi
+
+# ---------------------------------------------------------------------------
+# GDB stub (--gdb) and --backtrace.
+#
+# tests/gdb_stub_test.py is a small GDB remote serial protocol client: it
+# assembles tests/gdb_*.asm with um80 and ul80, starts cpmemu on a port the
+# system chooses, and prints a PASS or FAIL line for each of its 83 checks.
+# No GDB is needed.  The run is counted here from those lines, as the Windows
+# console harness is below.  A run that prints no verdict at all is a failure,
+# so a crash of the script cannot pass as an empty success.
+# ---------------------------------------------------------------------------
+
+echo
+if [ -z "$assembler" ]; then
+    echo "SKIP  gdb stub tests (no assembler: pip install um80)"
+    skipped=$((skipped + 77))
+    soft_skip assembler "gdb stub tests: 83 checks, no assembler (pip install um80)"
+elif ! command -v python3 >/dev/null 2>&1; then
+    echo "SKIP  gdb stub tests (no python3)"
+    skipped=$((skipped + 77))
+    soft_skip python3 "gdb stub tests: 83 checks, no python3"
+else
+    run_bounded 300 python3 "$root/tests/gdb_stub_test.py" "$emu" >"$tmp/gdb.log" 2>&1
+    gdb_rc=$?
+    grep -e '^PASS  ' -e '^FAIL  ' -e '^        ' "$tmp/gdb.log"
+    if grep -q -e '^PASS  ' -e '^FAIL  ' "$tmp/gdb.log"; then
+        passed=$((passed + $(grep -c '^PASS  ' "$tmp/gdb.log")))
+        failed=$((failed + $(grep -c '^FAIL  ' "$tmp/gdb.log")))
+        if [ $gdb_rc -ne 0 ] && ! grep -q '^FAIL  ' "$tmp/gdb.log"; then
+            printf 'FAIL  gdb stub tests (exit %d with no FAIL line)\n' "$gdb_rc"
+            tail -5 "$tmp/gdb.log" | sed 's/^/        /'
+            failed=$((failed + 1))
+        fi
+    else
+        printf 'FAIL  gdb stub tests (gdb_stub_test.py reported nothing, exit %d)\n' "$gdb_rc"
+        tail -5 "$tmp/gdb.log" | sed 's/^/        /'
+        failed=$((failed + 1))
+    fi
 fi
 
 # ---------------------------------------------------------------------------

@@ -96,6 +96,7 @@ and the config file format.
 - [docs/cpm_disk_formats.md](docs/cpm_disk_formats.md) - CP/M on-disk structures
 - [docs/file_handling_notes.md](docs/file_handling_notes.md) - mode detection and file search order (its mapping section is older than [examples/README.md](examples/README.md), which is the reference)
 - [docs/macos-signing.md](docs/macos-signing.md) - signing and notarizing the macOS release
+- [docs/gdb_stub.md](docs/gdb_stub.md) - `--gdb`, the GDB remote stub, and `--backtrace`
 - [docs/debugger_plan.md](docs/debugger_plan.md) - the plan for source debugging and backtrace
 - `todo.txt` - open work
 

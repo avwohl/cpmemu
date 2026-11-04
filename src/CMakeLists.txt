@@ -15,6 +15,7 @@ set(LIB_SOURCES
 # Application sources
 set(APP_SOURCES
     cpmemu.cc
+    gdbstub.cc
 )
 
 # Platform-specific source
@@ -31,6 +32,10 @@ target_include_directories(qkz80 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # Create executable
 add_executable(cpmemu ${APP_SOURCES} ${PLATFORM_SOURCE})
 target_link_libraries(cpmemu PRIVATE qkz80)
+# Winsock, for the GDB stub in gdbstub.cc and os/windows/platform.cc
+if(WIN32)
+    target_link_libraries(cpmemu PRIVATE ws2_32)
+endif()
 
 # Compiler warnings
 if(MSVC)

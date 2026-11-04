@@ -481,7 +481,8 @@ The drive mapping sources, the two console end-of-input programs, `cli_tail.asm`
 `cli_fcb.asm`, `adm3a.asm`, `savemem.asm`, `bios_disk.asm`, `sectran.asm`, `fcb_io.asm`, `mem_top.asm` and `text_ops.asm` are assembled at
 test time instead, so no binary for them is committed. `tests/run_tests.sh` assembles them with
 **`um80` and `ul80`**, this project's own assembler and linker, and skips the
-whole group - 162 checks - when they are not on `PATH`:
+whole group - 162 checks, and the 83 GDB stub checks beside it - when they
+are not on `PATH`:
 ```bash
 pip install um80           # any platform; provides um80 and ul80
 ```
@@ -492,6 +493,36 @@ These sources carry `.z80` because um80 otherwise reads `LD` and `JR` as 8080
 mnemonics, and they carry **no `org 0100h`** because `ul80` bases a relocatable
 code segment at 0100h already - an ORG on top of that puts the code at 0200h
 behind 256 zero bytes, which still runs and is still wrong.
+
+## GDB stub checks
+
+`tests/gdb_stub_test.py` is a small client of the GDB remote serial protocol.
+It needs no GDB. It assembles `tests/gdb_main.asm`, `gdb_wait.asm`,
+`gdb_rec.asm`, `gdb_reent.asm`, `gdb_fill.asm`, `gdb_hlt.asm`, `gdb_spin.asm`, `gdb_bt.asm` and `gdb_bioserr.asm` with `um80` and `ul80` and starts cpmemu with `--gdb=0
+--gdb-port-file=FILE`. It prints a `PASS` or `FAIL` line for each of its 83
+checks, and `tests/run_tests.sh` counts those lines. The checks cover these
+cases:
+
+- the connection packets, `target.xml` and the length of the `g` reply
+- a breakpoint, a step, range stepping, a step over `CALL 5` and the exit packet
+- memory and register writes, and `E01` at 10000H and above
+- watchpoints (`Z2`, `Z3` and `Z4`) and `QCatchSyscalls`
+- `D` and `k`
+- ^C to a guest that waits for a key, ^C to a running guest, and SIGTERM
+- a HLT with a debugger attached
+- `monitor bt` on a recursive guest
+- the shadow call stack for the callee-pops epilogue of an uplm80 REENTRANT
+  procedure (D7 rule 2), written by hand in `gdb_reent.asm`
+- a guest that fills the TPA: no breakpoint byte reaches guest memory
+- bytes piped to stdin before GDB connects reach the guest
+- the pop of the shadow entry at a BDOS trap return (D7 rule 3)
+- a BIOS disk error (`CPM_BIOS_DISK=error`): the `W01` packet, exit status 1,
+  and `--backtrace`
+- `--backtrace`, on a guest that ends with a HLT
+
+The script is also `python3 tests/gdb_stub_test.py [path/to/cpmemu]`. It
+prints `SKIP` and exits 0 when `um80` is missing. The SIGTERM check is
+skipped on Windows. No Windows run of the script has been made.
 
 ## Known Issues
 
@@ -550,7 +581,7 @@ What is left is coverage of everything they do not reach:
    four terminal programs to try, and the bytes each key should print, are in
    `MANUAL_CHECKS.md` in the repo root.
 2. The drive mapping group needs an assembler. It takes `um80` and nothing
-   else, so on a machine without it 162 checks skip - more than half the
+   else, so on a machine without it 245 checks skip - more than two thirds of the
    suite. CI installs it with `pip install um80` on both runners and runs with
    `--require`, so the gate can no longer hide there; a local run on a machine
    without it still skips them, and committing those nineteen `.com` files as

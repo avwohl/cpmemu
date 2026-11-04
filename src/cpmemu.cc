@@ -11,6 +11,7 @@
 
 #include "qkz80.h"
 #include "os/platform.h"
+#include "gdbstub.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -123,6 +124,48 @@ static void do_save_memory() {
           written, start, (uint16_t)(start + size - 1), save_memory_file);
 }
 
+// How the run ended, for the debugger and for --backtrace.  Every exit of this
+// file goes through finish(), which records the status and whether the end was
+// abnormal and then calls exit(); the atexit hook below reports it.  An exit
+// that does not come through finish() - qkz80_global_fatal() calls exit(1)
+// from inside the CPU core - finds the defaults here, which say "status 1,
+// abnormal", so it is reported as what it is.
+//
+// The hook is only registered when --gdb or --backtrace asks for it, so a run
+// with neither is exactly what it was.
+static gdb::Tracker* end_tracker = nullptr;
+static gdb::Target* end_target = nullptr;
+static bool end_backtrace = false;
+static int end_code = 1;
+static bool end_abnormal = true;
+static bool end_reported = false;
+
+// Print the shadow stack if the end was abnormal and --backtrace is on, and
+// tell the debugger how the program ended: a W packet with the exit status, or
+// an X packet with the signal when sig is not 0.  The one place that does
+// either, and it does neither twice.
+static void report_end(int code, bool abnormal, int sig) {
+  if (end_reported) return;
+  end_reported = true;
+  if (abnormal && end_backtrace && end_tracker && end_target) {
+    fprintf(stderr, "Backtrace (shadow call stack, return addresses in hex):\n%s",
+            gdb::format_backtrace(end_tracker->stack(),
+                                  (uint16_t)end_target->read_reg(gdb::REG_PC)).c_str());
+  }
+  if (gdb::active_stub) {
+    if (sig) gdb::active_stub->report_signal(sig);
+    else gdb::active_stub->report_exit(code);
+  }
+}
+
+static void end_hook() { report_end(end_code, end_abnormal, 0); }
+
+[[noreturn]] static void finish(int code, bool abnormal) {
+  end_code = code;
+  end_abnormal = abnormal;
+  exit(code);
+}
+
 // The three ways a CP/M program finishes: BDOS 0 System Reset, BIOS WBOOT, and
 // a jump to 0x0000.  Each used to exit(0) from where it was noticed and only
 // the jump saved the memory image, so --save-memory wrote nothing at all for a
@@ -142,7 +185,7 @@ static void do_save_memory() {
 static void program_exit(const char* why) {
   fprintf(stderr, "%s\n", why);
   do_save_memory();
-  exit(0);
+  finish(0, false);
 }
 
 // Check for ^C and handle exit logic
@@ -182,7 +225,7 @@ static bool check_ctrl_c_exit(int ch) {
       if (close_guest_files) close_guest_files();
       do_save_memory();
       platform::disable_raw_mode();
-      exit(0);
+      finish(0, true);
     }
     consecutive_ctrl_c = 0;  // Switched off - keep the counter bounded
   }
@@ -213,6 +256,7 @@ static void end_if_terminated() {
   int sig = platform::termination_requested();
   if (!sig) return;
   if (close_guest_files) close_guest_files();
+  report_end(0, true, sig);
   platform::end_by_signal(sig);
 }
 
@@ -235,11 +279,15 @@ static void note_console_eof() {
     if (close_guest_files) close_guest_files();
     do_save_memory();
     platform::disable_raw_mode();
-    exit(0);
+    finish(0, false);
   }
 }
 
 static int console_getchar_blocking() {
+  // With a debugger attached, wait on the console and on the debugger's
+  // socket together, so that ^C from the debugger reaches a guest that is
+  // waiting for a key.  Throws gdb::Interrupt, which CpmTarget::step() catches.
+  if (gdb::active_stub && gdb::active_stub->attached()) gdb::active_stub->wait_console();
   int ch = platform::console_getchar();
   while (ch == 0 && platform::console_last_char_synthesized()) {
     ch = platform::console_getchar();
@@ -4059,7 +4107,7 @@ void CPMEmulator::check_write(qkz80_uint16 fcb_addr) {
   close_all_files();
   fprintf(stderr, "BDOS write to read-only drive %c: - exiting\n", 'A' + drive);
   do_save_memory();
-  exit(1);
+  finish(1, true);
 }
 
 void CPMEmulator::bdos_set_file_attributes() {
@@ -4200,7 +4248,7 @@ void CPMEmulator::bios_call(int offset) {
       // As every other end of the run does: a text file's change still only
       // in its image, and a made file not yet decided, reach the host.
       close_all_files();
-      exit(1);
+      finish(1, true);
     } else if (bios_disk_mode == 1) {
       // Fail mode - return error to caller.  A = 1 is the CP/M BIOS permanent
       // error, which READ and WRITE are the two calls documented to return;
@@ -4463,6 +4511,222 @@ static std::string resolve_program_name(const char* name) {
 }
 
 // Main program
+// Guest memory that notices the accesses a GDB watchpoint asks for.  It is
+// used only when --gdb is given, so the plain memory object, and with it the
+// plain run, is untouched.  It sees what the CPU reads and writes through
+// fetch_mem() and store_mem(); the BDOS and BIOS calls, which work on the raw
+// array, are not seen.  An instruction fetch is not a read.
+class WatchMem : public qkz80_cpu_mem {
+public:
+  WatchMem() : hit_(false), hit_addr_(0), hit_type_(0) {}
+
+  qkz80_uint8 fetch_mem(qkz80_uint16 addr, bool is_instruction = false) override {
+    if (!is_instruction && !watches_.empty()) note(addr, 3);
+    return qkz80_cpu_mem::fetch_mem(addr, is_instruction);
+  }
+  void store_mem(qkz80_uint16 addr, qkz80_uint8 abyte) override {
+    if (!watches_.empty()) note(addr, 2);
+    qkz80_cpu_mem::store_mem(addr, abyte);
+  }
+
+  void set(int type, uint16_t addr, uint16_t len, bool on) {
+    W w = {addr, len, type};
+    for (size_t i = 0; i < watches_.size(); i++) {
+      if (watches_[i].addr == addr && watches_[i].len == len && watches_[i].type == type) {
+        if (!on) watches_.erase(watches_.begin() + (std::ptrdiff_t)i);
+        if (watches_.empty()) hit_ = false;
+        return;
+      }
+    }
+    if (on) watches_.push_back(w);
+  }
+
+  bool take_hit(uint16_t& addr, int& type) {
+    if (!hit_) return false;
+    hit_ = false;
+    addr = hit_addr_;
+    type = hit_type_;
+    return true;
+  }
+
+private:
+  struct W { uint16_t addr; uint16_t len; int type; };
+  std::vector<W> watches_;
+  bool hit_;
+  uint16_t hit_addr_;
+  int hit_type_;
+
+  // access = 2 for a write and 3 for a read.  A type 4 watch takes either.
+  void note(uint16_t addr, int access) {
+    if (hit_) return;   // the first access of the instruction is the one reported
+    for (size_t i = 0; i < watches_.size(); i++) {
+      const W& w = watches_[i];
+      if ((uint16_t)(addr - w.addr) < w.len && (w.type == access || w.type == 4)) {
+        hit_ = true;
+        hit_addr_ = addr;
+        hit_type_ = w.type;
+        return;
+      }
+    }
+  }
+};
+
+// The instruction limit, as the run loops report it.  Not reachable from the
+// test suite - the limit is nine billion instructions, about eight minutes
+// here - so it is checked by reading rather than by running.
+static void report_instruction_limit(qkz80& cpu) {
+  fprintf(stderr, "Reached instruction limit\n");
+  fprintf(stderr, "PC = 0x%04X\n", cpu.regs.PC.get_pair16());
+}
+
+// The emulator as the GDB stub sees it (gdbstub.h).  step() is the body of the
+// plain run loop in main() once more, for the debug loop: it runs when --gdb or
+// --backtrace is given and at no other time, so the plain loop pays nothing
+// for the stub.  A change to one of the two loops has to be made in both.
+class CpmTarget : public gdb::Target {
+public:
+  CpmTarget(qkz80& c, CPMEmulator& m, WatchMem* w) : cpu(c), cpm(m), watch(w),
+      int_cycles(0), int_rst(7),
+      next_tick(0), count(0), max_instructions(0), progress_interval(0),
+      last_report(0), stop_on_halt(false) {}
+
+  qkz80& cpu;
+  CPMEmulator& cpm;
+  WatchMem* watch;     // null unless --gdb
+  unsigned long long int_cycles;
+  int int_rst;
+  unsigned long long next_tick;
+  long long count;
+  long long max_instructions;
+  long long progress_interval;
+  long long last_report;
+  bool stop_on_halt;   // a HLT that nothing can end stops the program, not the run
+
+  uint32_t read_reg(int index) override {
+    switch (index) {
+      case gdb::REG_AF:  return cpu.get_reg16(qkz80::regp_AF);
+      case gdb::REG_BC:  return cpu.regs.BC.get_pair16();
+      case gdb::REG_DE:  return cpu.regs.DE.get_pair16();
+      case gdb::REG_HL:  return cpu.regs.HL.get_pair16();
+      case gdb::REG_SP:  return cpu.regs.SP.get_pair16();
+      case gdb::REG_PC:  return cpu.regs.PC.get_pair16();
+      case gdb::REG_IX:  return cpu.regs.IX.get_pair16();
+      case gdb::REG_IY:  return cpu.regs.IY.get_pair16();
+      case gdb::REG_AF2: return cpu.regs.AF_.get_pair16();
+      case gdb::REG_BC2: return cpu.regs.BC_.get_pair16();
+      case gdb::REG_DE2: return cpu.regs.DE_.get_pair16();
+      case gdb::REG_HL2: return cpu.regs.HL_.get_pair16();
+      case gdb::REG_IR:  return (uint32_t)((cpu.regs.I << 8) | cpu.regs.R);
+    }
+    return 0;
+  }
+
+  void write_reg(int index, uint32_t v) override {
+    qkz80_uint16 w = (qkz80_uint16)(v & 0xFFFF);
+    switch (index) {
+      case gdb::REG_AF:  cpu.set_reg16(w, qkz80::regp_AF); break;
+      case gdb::REG_BC:  cpu.regs.BC.set_pair16(w); break;
+      case gdb::REG_DE:  cpu.regs.DE.set_pair16(w); break;
+      case gdb::REG_HL:  cpu.regs.HL.set_pair16(w); break;
+      case gdb::REG_SP:  cpu.regs.SP.set_pair16(w); break;
+      case gdb::REG_PC:  cpu.regs.PC.set_pair16(w); break;
+      case gdb::REG_IX:  cpu.regs.IX.set_pair16(w); break;
+      case gdb::REG_IY:  cpu.regs.IY.set_pair16(w); break;
+      case gdb::REG_AF2: cpu.regs.AF_.set_pair16(w); break;
+      case gdb::REG_BC2: cpu.regs.BC_.set_pair16(w); break;
+      case gdb::REG_DE2: cpu.regs.DE_.set_pair16(w); break;
+      case gdb::REG_HL2: cpu.regs.HL_.set_pair16(w); break;
+      case gdb::REG_IR:
+        cpu.regs.I = (qkz80_uint8)(w >> 8);
+        cpu.regs.R = (qkz80_uint8)(w & 0xFF);
+        break;
+    }
+  }
+
+  // The raw array, so the debugger's reads and writes have no side effect on
+  // the guest: nothing is fetched through the memory object.
+  uint8_t read_mem(uint16_t addr) override { return cpu.get_mem()[addr]; }
+  void write_mem(uint16_t addr, uint8_t v) override { cpu.get_mem()[addr] = v; }
+
+  bool is_z80() override { return cpu.get_cpu_mode() == qkz80::MODE_Z80; }
+  void check_signals() override { end_if_terminated(); }
+
+  int bdos_function_at(uint16_t pc) override {
+    return pc == BDOS_BASE ? (int)cpu.get_reg8(qkz80::reg_C) : -1;
+  }
+
+  bool watch_set(int type, uint16_t addr, uint16_t len, bool on) override {
+    if (!watch) return false;
+    watch->set(type, addr, len, on);
+    return true;
+  }
+  bool watch_hit(uint16_t& addr, int& type) override {
+    return watch && watch->take_hit(addr, type);
+  }
+
+  void step(gdb::StepEvents& ev) override {
+    ev = gdb::StepEvents();
+    qkz80_uint16 pc = cpu.regs.PC.get_pair16();
+
+    // A BDOS or BIOS trap is not an instruction.  A console read inside it
+    // can be interrupted by the debugger: PC is still at the trap then, so
+    // the call starts again when the program is resumed.
+    ev.exec_pc = pc;
+    ev.exec_sp = cpu.regs.SP.get_pair16();
+    try {
+      if (cpm.handle_pc(pc)) {
+        ev.trap = true;
+        return;
+      }
+    } catch (const gdb::Interrupt&) {
+      ev.interrupted = true;
+      return;
+    }
+
+    if (int_cycles > 0 && cpu.cycles >= next_tick) {
+      next_tick = cpu.cycles + int_cycles;
+      cpu.request_rst((qkz80_uint8)int_rst);
+    }
+
+    ev.irq = cpu.check_interrupts();
+    if (ev.irq) ev.irq_ret = pc;
+    ev.exec_pc = cpu.regs.PC.get_pair16();
+    ev.exec_sp = cpu.regs.SP.get_pair16();
+
+    cpu.execute();
+
+    if (cpu.is_halted()) {
+      if (int_cycles > 0 && cpu.regs.IFF1) {
+        if (cpu.cycles < next_tick) cpu.cycles = next_tick;
+        cpu.clear_halted();
+      } else if (stop_on_halt) {
+        cpu.clear_halted();   // the debugger can resume past the HLT
+        ev.halt = true;
+      } else {
+        fprintf(stderr, "HLT at %04X with no interrupt to end it - exiting\n", ev.exec_pc);
+        if (close_guest_files) close_guest_files();
+        do_save_memory();
+        finish(1, true);
+      }
+    }
+
+    count++;
+    if ((count & 0xFFF) == 0) end_if_terminated();
+
+    if (progress_interval > 0 && count - last_report >= progress_interval) {
+      fprintf(stderr, "Progress: %lldM instructions\n", count / 1000000);
+      last_report = count;
+    }
+
+    if (count >= max_instructions) {
+      report_instruction_limit(cpu);
+      if (close_guest_files) close_guest_files();
+      do_save_memory();
+      finish(0, true);
+    }
+  }
+};
+
 int main(int argc, char** argv) {
   if (argc < 2) {
     fprintf(stderr, "Usage: %s [options] <program.com|config.cfg> [args...]\n", argv[0]);
@@ -4481,6 +4745,9 @@ int main(int argc, char** argv) {
     fprintf(stderr, "  --int-rst=N         RST number for interrupt (0-7, default 7 = RST 38H)\n");
     fprintf(stderr, "  --ctrl-c-exit       Exit after 5 consecutive typed ^C (default)\n");
     fprintf(stderr, "  --no-ctrl-c-exit    Give every ^C to the program (WordStar page-down)\n");
+    fprintf(stderr, "  --gdb[=PORT]        Wait for GDB on 127.0.0.1:PORT (default 1234, 0 = any) before 0100H\n");
+    fprintf(stderr, "  --gdb-port-file=F   Write the port that --gdb listens on to file F\n");
+    fprintf(stderr, "  --backtrace         Keep a shadow call stack and print it if the run ends badly\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Environment variables:\n");
     fprintf(stderr, "  CPM_PROGRESS=N      Enable progress reporting every N million instructions\n");
@@ -4501,6 +4768,10 @@ int main(int argc, char** argv) {
   long long cli_progress_interval = 0;  // 0 = not set via CLI
   unsigned long long int_cycles = 0;  // 0 = interrupts disabled
   int int_rst = 7;  // Default RST 7 (address 0x38)
+  bool gdb_on = false;
+  int gdb_port = 1234;
+  const char* gdb_port_file = nullptr;
+  bool backtrace_on = false;
 
   // One definition of what an emulator option is, used both for the options
   // written before the program name and for any written after it.  Keeping
@@ -4533,6 +4804,21 @@ int main(int argc, char** argv) {
     } else if (strcmp(a, "--ctrl-c-exit") == 0) {
       ctrl_c_exit_enabled = true;
       ctrl_c_exit_from_cli = true;  // Outranks a 'ctrl_c_exit' config line
+    } else if (strcmp(a, "--gdb") == 0) {
+      gdb_on = true;
+    } else if (strncmp(a, "--gdb=", 6) == 0) {
+      char* end = nullptr;
+      long port = strtol(a + 6, &end, 10);
+      if (a[6] == 0 || *end != 0 || port < 0 || port > 65535) {
+        fprintf(stderr, "Error: %s: the port is a number from 0 to 65535\n", a);
+        exit(1);
+      }
+      gdb_on = true;
+      gdb_port = (int)port;
+    } else if (strncmp(a, "--gdb-port-file=", 16) == 0) {
+      gdb_port_file = a + 16;
+    } else if (strcmp(a, "--backtrace") == 0) {
+      backtrace_on = true;
     } else {
       return false;  // Not ours - the program's, or the program name itself
     }
@@ -4575,8 +4861,10 @@ int main(int argc, char** argv) {
   std::string program;
 
   // Create memory and CPU
-  qkz80_cpu_mem memory;
-  qkz80 cpu(&memory);
+  // The memory object that can watch is made for --gdb only
+  WatchMem* watch_mem = gdb_on ? new WatchMem() : nullptr;
+  std::unique_ptr<qkz80_cpu_mem> memory(watch_mem ? (qkz80_cpu_mem*)watch_mem : new qkz80_cpu_mem());
+  qkz80 cpu(memory.get());
   cpu.set_cpu_mode(mode_8080 ? qkz80::MODE_8080 : qkz80::MODE_Z80);
   fprintf(stderr, "CPU mode: %s\n", mode_8080 ? "8080" : "Z80");
 
@@ -4779,6 +5067,55 @@ int main(int argc, char** argv) {
   long long instruction_count = 0;
   long long last_report = 0;
 
+  // With --gdb or --backtrace the run goes through CpmTarget::step() instead
+  // of the loop below, which is left exactly as it was: it tests nothing for a
+  // debugger, so a run without either option pays nothing for the stub.
+  if (gdb_on || backtrace_on) {
+    CpmTarget target(cpu, cpm, watch_mem);
+    target.int_cycles = int_cycles;
+    target.int_rst = int_rst;
+    target.next_tick = next_tick_cycles_;
+    target.max_instructions = max_instructions;
+    target.progress_interval = progress_interval;
+    gdb::Tracker tracker;
+    gdb::Stub stub(target, tracker);
+
+    end_tracker = &tracker;
+    end_target = &target;
+    end_backtrace = backtrace_on;
+    atexit(end_hook);
+
+    if (gdb_on) {
+      // A failure before the program starts is not a run that ended badly:
+      // no backtrace, and nothing to tell a debugger.
+      if (!stub.listen(gdb_port, gdb_port_file)) { end_reported = true; return 1; }
+      fprintf(stderr, "Waiting for GDB to connect\n");
+      if (!stub.accept()) {
+        end_if_terminated();
+        end_reported = true;
+        return 1;
+      }
+      gdb::active_stub = &stub;
+      target.stop_on_halt = true;
+      stub.serve();
+      if (stub.killed()) {
+        fprintf(stderr, "GDB killed the program\n");
+        if (close_guest_files) close_guest_files();
+        do_save_memory();
+        finish(1, false);
+      }
+      // The debugger let go: the program runs on.
+      target.stop_on_halt = false;
+      gdb::active_stub = nullptr;
+    }
+
+    for (;;) {
+      gdb::StepEvents ev;
+      if (backtrace_on) tracker.step(target, ev);
+      else target.step(ev);
+    }
+  }
+
   while (true) {
     qkz80_uint16 pc = cpu.regs.PC.get_pair16();
 
@@ -4830,8 +5167,7 @@ int main(int argc, char** argv) {
     }
 
     if (instruction_count >= max_instructions) {
-      fprintf(stderr, "Reached instruction limit\n");
-      fprintf(stderr, "PC = 0x%04X\n", cpu.regs.PC.get_pair16());
+      report_instruction_limit(cpu);
       break;
     }
   }

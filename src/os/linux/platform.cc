@@ -6,12 +6,17 @@
 
 #include <unistd.h>
 #include <termios.h>
+#include <poll.h>
 #include <sys/select.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/stat.h>
 #include <dirent.h>
 #include <algorithm>
 #include <cerrno>
 #include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -401,6 +406,119 @@ int console_getchar() {
 bool console_last_char_synthesized() {
     // POSIX terminals hand us the raw bytes, so nothing is ever synthesized here
     return false;
+}
+
+// ============================================================================
+// Sockets (the GDB stub)
+// ============================================================================
+
+socket_t net_listen_local(int port, int* bound_port) {
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) {
+        fprintf(stderr, "gdb stub: socket: %s\n", strerror(errno));
+        return kNoSocket;
+    }
+    int one = 1;
+    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    struct sockaddr_in a;
+    memset(&a, 0, sizeof a);
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    a.sin_port = htons((unsigned short)port);
+    if (bind(s, (struct sockaddr*)&a, sizeof a) != 0 || listen(s, 1) != 0) {
+        fprintf(stderr, "gdb stub: cannot listen on 127.0.0.1:%d: %s\n", port, strerror(errno));
+        close(s);
+        return kNoSocket;
+    }
+    socklen_t len = sizeof a;
+    if (getsockname(s, (struct sockaddr*)&a, &len) != 0) {
+        fprintf(stderr, "gdb stub: getsockname: %s\n", strerror(errno));
+        close(s);
+        return kNoSocket;
+    }
+    if (bound_port) *bound_port = ntohs(a.sin_port);
+    return (socket_t)s;
+}
+
+socket_t net_accept(socket_t listener) {
+    for (;;) {
+        int c = accept((int)listener, NULL, NULL);
+        if (c >= 0) {
+            int one = 1;
+            setsockopt(c, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+#ifdef SO_NOSIGPIPE
+            setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+#endif
+            return (socket_t)c;
+        }
+        if (errno == EINTR) {
+            if (termination_requested()) return kNoSocket;
+            continue;
+        }
+        fprintf(stderr, "gdb stub: accept: %s\n", strerror(errno));
+        return kNoSocket;
+    }
+}
+
+int net_recv(socket_t s, void* buf, int len, int timeout_ms) {
+    if (timeout_ms >= 0) {
+        struct pollfd p;
+        p.fd = (int)s;
+        p.events = POLLIN;
+        p.revents = 0;
+        int n = poll(&p, 1, timeout_ms);
+        if (n < 0) return errno == EINTR ? -3 : -1;
+        if (n == 0) return -2;
+    }
+    ssize_t n = recv((int)s, buf, (size_t)len, 0);
+    if (n > 0) return (int)n;
+    if (n == 0) return 0;
+    return errno == EINTR ? -3 : -1;
+}
+
+bool net_send_all(socket_t s, const void* buf, int len) {
+    const char* p = (const char*)buf;
+#ifdef MSG_NOSIGNAL
+    const int flags = MSG_NOSIGNAL;
+#else
+    const int flags = 0;
+#endif
+    while (len > 0) {
+        ssize_t n = send((int)s, p, (size_t)len, flags);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return false;
+        }
+        p += n;
+        len -= (int)n;
+    }
+    return true;
+}
+
+void net_close(socket_t s) {
+    if (s != kNoSocket) close((int)s);
+}
+
+int wait_console_or_socket(socket_t s, int timeout_ms) {
+    struct pollfd p[2];
+    p[0].fd = STDIN_FILENO;
+    p[0].events = POLLIN;
+    p[0].revents = 0;
+    nfds_t count = 1;
+    if (s != kNoSocket) {
+        p[1].fd = (int)s;
+        p[1].events = POLLIN;
+        p[1].revents = 0;
+        count = 2;
+    }
+    int n = poll(p, count, timeout_ms);
+    if (n < 0) return -1;
+    int mask = 0;
+    // POLLHUP, POLLERR and POLLNVAL count as readable: the read that follows
+    // reports the end of input or the closed connection.
+    if (p[0].revents) mask |= 1;
+    if (count == 2 && p[1].revents) mask |= 2;
+    return mask;
 }
 
 // ============================================================================
