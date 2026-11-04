@@ -910,8 +910,9 @@ real GDB 18.1 showed all three (measured, against `cpmemu --gdb`):
 
 One rule differed in the build. D7 rule 2 said to drop each entry with a
 slot below SP first. That drops the entry of the REENTRANT callee itself.
-The stub pops the entry with the slot equal to SP, or else the innermost entry
-with the RET target as return address, and then drops the entries above it.
+The stub pops the entry with the slot equal to SP. If no slot is SP, the stub
+pops the innermost entry with the RET target as return address. Then the stub
+drops the entries above the popped entry.
 D7 now says so.
 
 With GDB 18.1 and the `dbg2elf_proto` ELF file for `sumto.com`, these worked:
