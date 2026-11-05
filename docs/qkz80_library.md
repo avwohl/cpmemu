@@ -88,6 +88,22 @@ and no version gate:
   other two name an install prefix, and an installed qkz80 - the `.pc` file
   pkg-config reads included - waits for `make install-lib`.
 
+### The GDB stub is a second channel
+
+`src/gdbstub.cc` and `src/gdbstub.h` are a channel of their own. romwbw_emu
+compiles `gdbstub.cc` out of this tree (decision 9 of the debugger plan),
+through `CPMEMU_SRC` in its `src/makefile`. It takes `gdbstub.h` and
+`os/platform.h` with `-idirafter`. romwbw_emu does not take `os/*/platform.cc`.
+The file `src/gdb_platform.cc` of romwbw_emu has the socket functions, and the
+return values must stay as `os/platform.h` documents them.
+
+A commit here that changes `gdbstub.cc`, `gdbstub.h` or the socket and console
+declarations of `os/platform.h` reaches romwbw_emu on its next build. No
+notification comes. The target interface (`gdb::Target`) stays small for this
+reason. Each hook that romwbw_emu needed is a virtual function with a default
+(`read_code`, `break_applies`, `monitor_command`), and the default keeps cpmemu
+as it was. ioscpm, z80cpmw and cpmdroid do not compile the stub yet.
+
 All four follow this repository's `main` rather than any tag, so a commit
 pushed here is what their next build takes. **Check them before changing
 qkz80's public surface.**

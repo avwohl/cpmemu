@@ -176,4 +176,6 @@ is on.
 - The stub serves one debugger on one thread.
 - The stub listens on 127.0.0.1 only.
 - Memory above 0FFFFH does not exist, so GDB cannot see a banked address.
+  romwbw_emu has banked memory and shows one bank at a time: see its
+  `docs/GDB.md`.
 - The stub does not offer `QStartNoAckMode`, `hwbreak` or no-stop mode.

@@ -12,6 +12,21 @@ summarises and points; `git log` is the detail. Open work is in
 
 ## [Unreleased]
 
+**The GDB stub serves banked memory: three hooks on `gdb::Target`, for romwbw_emu.**
+Phase 9 of [docs/debugger_plan.md](docs/debugger_plan.md). romwbw_emu now
+compiles `src/gdbstub.cc` from this tree behind a target of its own (decision
+9). The target interface gained `read_code()` (the shadow stack reads opcodes
+through the CPU's mapping, not through a memory view), `break_applies()` (a
+breakpoint can depend on the bank, and `Stub::set_rule_break()` adds an address
+that stops only when the target says so), `monitor_command()` (a `monitor`
+command other than `bt`), `StepEvents::poll` (a step in which the target waited
+asks the stub to look for ^C now) and `Tracker::reset()`/`seed()`. Each has a
+default that keeps cpmemu as it was: `tests/run_tests.sh` gives 329 passed, 0
+failed, 6 skipped before and after, and the cpmemu loop is not touched. The
+cost is one `empty()` test of a set per instruction in the loop that runs with
+`--gdb` only. [docs/qkz80_library.md](docs/qkz80_library.md#the-gdb-stub-is-a-second-channel)
+says who compiles the stub.
+
 **`--gdb`: a GDB remote stub, a shadow call stack and `--backtrace`.**
 Phase 1 of [docs/debugger_plan.md](docs/debugger_plan.md). `cpmemu --gdb prog.com`
 listens on 127.0.0.1 (port 1234, or `--gdb=PORT`, or `--gdb=0` with

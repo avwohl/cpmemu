@@ -950,6 +950,48 @@ Milestone A was built on 2026-11-04 (measured):
 - **Not met:** a step into an inlined call in GDB. `prog.dbg` holds the
   inline stack, but no ELF writer gives DWARF inline records yet (phase 7).
 
+## Phase 9 results: romwbw_emu
+
+Phase 9 was built on 2026-11-04 (measured). The code is in romwbw_emu and is
+described in its `docs/GDB.md`.
+
+- **Stub:** `romwbw_emu --gdb[=PORT] --gdb-port-file=FILE` compiles cpmemu's
+  `gdbstub.cc` from the sibling checkout behind `RomwbwTarget`
+  (`src/romwbw_gdb.cc`). Memory goes through `peek_mem` and `store_mem` at the
+  current mapping. `monitor bank XX`, `break-bank`, `wait-program`, `bt-reset`
+  and `status` are the monitor commands.
+- **Changes in cpmemu, additive:** `Target::read_code`, `break_applies` and
+  `monitor_command`, `Stub::set_rule_break`, `StepEvents::poll`,
+  `Tracker::reset` and `Tracker::seed`. `tests/run_tests.sh` gave 329 passed,
+  0 failed and 6 skipped before and after.
+- **Tests:** romwbw_emu `tests/gdb_stub_test.py` makes a `.COM` with um80 and
+  ul80, puts the `.COM` on a disk image with `util/cpm_disk.py`, boots, and
+  checks the stop at 0100H in bank 8EH by bytes and by SHA-256, the bank
+  views, `monitor bt`, `^C`, `D`, `k`, the instruction limit, HLT and `sim>`.
+  A mutation check that broke the bank view, the SHA-256 compare and the bank
+  8EH test failed the test in all three places.
+- **Speed with no `--gdb`:** 200M instructions of a DEC/OR/JR loop, 16
+  interleaved runs: 5.81 s before and 5.89 s after (1.4 percent) under a load
+  average of 12. Another reviewer run of 6 interleaved runs of 100M
+  instructions gave about 2.0 s for both binaries. The first version, with the
+  four turn lambdas not inlined, was 45 percent slower; `always_inline` fixed
+  that.
+- **udb80 acceptance, met with a patched copy only:** stock udb80 fails at
+  connect time, because `check_memory()` compares the bytes at 0100H before any
+  program is there. A patched copy that sends `qRcmd` with
+  `wait-program sha256 <image.length> <image.sha256>`, then `c`, and waits for
+  `T05swbreak`, stopped at 0100H in bank 8EH. `break inner`, `continue`, `bt`,
+  `finish`, `monitor` and a normal exit worked.
+- **Open, for the owner of um80_and_friends:** add `udb80 --wait-program` as
+  described in the item above. Nothing in um80_and_friends was edited.
+- **Open:** `monitor bt` says "out of step" after a BDOS call under the 3.6.0
+  CP/M 2.2 CBIOS, which jumps with `PUSH` then `RET`. The frames are right.
+  A breakpoint applies in every bank until `wait-program` fires or
+  `break-bank` is set. The wait rule knows only 0100H in bank 8EH, so CP/M 3 and
+  ZPM3 are not covered. The stub blocks in `serve()`, so z80cpmw needs a thread.
+- **Other clients:** ioscpm (`[MAC]`), z80cpmw (`[WINDOWS]`) and cpmdroid
+  (`[ANDROID]`) have a `todo.txt` item each.
+
 ## Phases
 
 Each phase ends with a test that can fail. **Milestone A** is phases 1 to
@@ -968,7 +1010,7 @@ before the other compilers start.
 | 6 | Frame records | compilers | 4 | `bt` from frame records equals the shadow stack for the phase 3 program and for a uc80 program. |
 | 7 | `dbg2elf`, GDB Python unwinder, `docs/gdb.md` | um80_and_friends | 0, 4 | The GDB acceptance list above, skipped only when no z80 GDB is present. |
 | 8 | Variables | compilers, um80, udb80, dbg2elf | 4 | A test program for each compiler: `print` of a local in each storage kind. |
-| 9 | romwbw_emu stub with banks, then ioscpm, z80cpmw and cpmdroid | RomWBW clients | 1, 3 | udb80 stops at 0100H in bank 8EH for a program run from a disk image in romwbw_emu. The other three clients: `MANUAL_CHECKS.md` items. |
+| 9 | romwbw_emu stub with banks, then ioscpm, z80cpmw and cpmdroid | RomWBW clients | 1, 3 | udb80 stops at 0100H in bank 8EH for a program run from a disk image in romwbw_emu. The other three clients: `todo.txt` items in each repository. |
 | 10 | Debug unit and Python bridge | z80fpga, udb80 | 1, 3, 6 | A breakpoint and a step in `sim/tb_romwbw`, then on the board. |
 
 Phases 1 and 2 can start at once and in parallel. Phase 1 is useful

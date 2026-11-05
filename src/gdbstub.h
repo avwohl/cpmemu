@@ -40,9 +40,10 @@ struct StepEvents {
   bool trap;          // that was a BDOS or BIOS trap, not an instruction
   bool halt;          // a HLT that nothing can end, with a debugger attached
   bool interrupted;   // ^C arrived while a console read waited; nothing ran
+  bool poll;          // the target waited (an idle sleep): look for ^C now
   StepEvents()
       : irq(false), irq_ret(0), exec_pc(0), exec_sp(0), trap(false),
-        halt(false), interrupted(false) {}
+        halt(false), interrupted(false), poll(false) {}
 };
 
 // Thrown by Stub::wait_console() when the debugger sends ^C while the guest
@@ -69,6 +70,27 @@ class Target {
   // cannot watch.  watch_hit() returns and clears the last access that hit.
   virtual bool watch_set(int type, uint16_t addr, uint16_t len, bool on) = 0;
   virtual bool watch_hit(uint16_t& addr, int& type) = 0;
+
+  // Hooks for a target with banked memory (romwbw_emu compiles this file out
+  // of the sibling checkout, docs/debugger_plan.md decision 9).  They are not
+  // pure, and the defaults keep cpmemu exactly as it was.
+  //
+  // The byte the CPU executes at addr under the current mapping.  The shadow
+  // stack reads opcodes through this call, so a memory view that
+  // read_mem() shows (another bank) cannot confuse the stack.
+  virtual uint8_t read_code(uint16_t addr) { return read_mem(addr); }
+  // Asked when pc is in the break table (rule false) or is a rule break
+  // (rule true, see Stub::set_rule_break).  False means: do not stop here.
+  virtual bool break_applies(uint16_t pc, bool rule) {
+    (void)pc; (void)rule;
+    return true;
+  }
+  // A "monitor" command other than bt.  True if the target handled it, with
+  // the text for the debugger in reply.
+  virtual bool monitor_command(const std::string& cmd, std::string& reply) {
+    (void)cmd; (void)reply;
+    return false;
+  }
 };
 
 // One call that the CPU took and has not yet returned from.
@@ -103,6 +125,10 @@ class Tracker {
  public:
   void step(Target& t, StepEvents& ev);
   const ShadowStack& stack() const { return stack_; }
+  // Forget the calls so far.  For a target that knows where the interesting
+  // part of the run starts (romwbw_emu, at the start of a CP/M program).
+  void reset() { stack_ = ShadowStack(); }
+  void seed(uint16_t ret, uint16_t slot) { stack_.push(ret, slot, Entry::CALL); }
  private:
   ShadowStack stack_;
 };
@@ -135,6 +161,12 @@ class Stub {
   void report_signal(int sig);
   // The debugger asked to kill the program ("k"), so no W packet is wanted.
   bool killed() const { return killed_; }
+  // An address that stops the program only if Target::break_applies(pc, true)
+  // says so.  For a target that decides by more than the address, such as
+  // "this is the program that the debugger waits for".  Never set in cpmemu.
+  void set_rule_break(uint16_t addr, bool on) {
+    if (on) rule_breaks_.insert(addr); else rule_breaks_.erase(addr);
+  }
 
  private:
   enum StopKind { STOP_BREAK, STOP_STEP, STOP_INT, STOP_HALT, STOP_SYSCALL,
@@ -150,6 +182,7 @@ class Stub {
   std::string inbuf_;
   std::string last_sent_;
   std::set<uint16_t> breaks_;
+  std::set<uint16_t> rule_breaks_;
   int watch_count_;
   uint16_t watch_addr_;
   int watch_type_;

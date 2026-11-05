@@ -89,7 +89,7 @@ void Tracker::step(Target& t, StepEvents& ev) {
   }
 
   uint16_t at = ev.exec_pc;
-  uint8_t op = t.read_mem(at);
+  uint8_t op = t.read_code(at);
   if (op == 0xCD || (op & 0xC7) == 0xC4) {
     // CALL, or CALL cc.  Taken if it pushed.
     if (sp == (uint16_t)(ev.exec_sp - 2)) stack_.push((uint16_t)(at + 3), sp, Entry::CALL);
@@ -99,7 +99,7 @@ void Tracker::step(Target& t, StepEvents& ev) {
     // RET, or RET cc.  Taken if it popped.
     if (sp == (uint16_t)(ev.exec_sp + 2)) stack_.ret(ev.exec_sp, pc);
   } else if (op == 0xED && t.is_z80()) {
-    uint8_t op2 = t.read_mem((uint16_t)(at + 1));
+    uint8_t op2 = t.read_code((uint16_t)(at + 1));
     // RETN and RETI: ED 45, ED 4D and the six undocumented copies.
     if ((op2 & 0xC7) == 0x45 && sp == (uint16_t)(ev.exec_sp + 2)) stack_.ret(ev.exec_sp, pc);
   }
@@ -422,6 +422,8 @@ std::string Stub::monitor(const std::string& cmd) {
   if (c == "bt" || c == "backtrace") {
     return format_backtrace(tr_.stack(), (uint16_t)t_.read_reg(REG_PC));
   }
+  std::string reply;
+  if (t_.monitor_command(c, reply)) return reply;
   return "monitor commands: bt\n";
 }
 
@@ -466,7 +468,11 @@ Stub::StopKind Stub::run(char mode, uint16_t lo, uint16_t hi) {
   // trap has run, below.
   for (;;) {
     uint16_t pc = (uint16_t)t_.read_reg(REG_PC);
-    if (!first && breaks_.count(pc)) return STOP_BREAK;
+    if (!first) {
+      if (breaks_.count(pc) && t_.break_applies(pc, false)) return STOP_BREAK;
+      if (!rule_breaks_.empty() && rule_breaks_.count(pc) && t_.break_applies(pc, true))
+        return STOP_BREAK;
+    }
 
     int func = -1;
     if (catching) {
@@ -524,8 +530,10 @@ Stub::StopKind Stub::run(char mode, uint16_t lo, uint16_t hi) {
       }
     }
 
-    if ((++n & 0xFFF) == 0) {
-      // Poll the debugger for ^C every 4096 instructions.
+    if ((++n & 0xFFF) == 0 || ev.poll) {
+      // Poll the debugger for ^C every 4096 instructions, and after a step
+      // in which the target waited (romwbw_emu sleeps 10 ms per console poll
+      // of an idle guest, so 4096 instructions can take seconds).
       char c;
       int r = platform::net_recv(sock_, &c, 1, 0);
       if (r == 1 && c == 0x03) return STOP_INT;
