@@ -10,7 +10,7 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
-## [Unreleased]
+## [4.11.0] - 2026-11-05
 
 **Docs: the README names `--gdb`, and `docs/gdb_stub.md` says what to install.**
 A Features line links [docs/gdb_stub.md](docs/gdb_stub.md), which before was
