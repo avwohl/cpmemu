@@ -8,8 +8,7 @@ and source files on the host. The design is in
 
 ## What you need
 
-- **cpmemu with `--gdb`.** The stub came after release v4.10.0. With v4.10.0
-  or an older release, build cpmemu from source (`make -C src`).
+- **cpmemu 4.11.0 or newer.** An older release has no `--gdb`.
 - **um80 0.4.0 or newer:** `pip install "um80>=0.4.0"`. The package holds
   `um80` and `ul80` with `--debug-info`, udb80, `dbg2elf` and the GDB Python
   scripts.
@@ -25,7 +24,8 @@ um80_and_friends documents
 [udb80.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/udb80.md).
 
 A check on 2026-11-05 started from a clean Python 3.12 venv with uc80 0.8.0
-and um80 0.4.0 from PyPI, and cpmemu built from this tree. A recursive C
+and um80 0.4.0 from PyPI. The cpmemu was first a build of this tree, then
+the binary of the 4.11.0 macOS release tarball. A recursive C
 program went through `uc80 -g`, `um80 --debug-info`, `ul80 --debug-info` and
 `dbg2elf`. In udb80 and in GDB 18.1, `break rs.c:4` stopped in the base case.
 `bt` showed 5 frames of `sum` and the frame of `main`.

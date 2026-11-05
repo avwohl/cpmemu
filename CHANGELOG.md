@@ -10,6 +10,13 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
+## [Unreleased]
+
+**Docs: `docs/gdb_stub.md` names 4.11.0 as the first release with `--gdb`.**
+The "What you need" list said to build from source; the released 4.11.0
+macOS binary ran the same udb80 and GDB 18.1 session (a 6-frame `bt` of a
+uc80 `-g` program from a clean PyPI venv).
+
 ## [4.11.0] - 2026-11-05
 
 **Docs: the README names `--gdb`, and `docs/gdb_stub.md` says what to install.**
