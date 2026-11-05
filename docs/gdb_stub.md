@@ -8,7 +8,8 @@ and source files on the host. The design is in
 
 ## What you need
 
-- **cpmemu 4.11.0 or newer.** An older release has no `--gdb`.
+- **cpmemu 4.11.0 or newer.** An older release has no `--gdb`. `--gdb-listen`
+  needs 4.12.0 or newer.
 - **um80 0.4.0 or newer:** `pip install "um80>=0.4.0"`. The package holds
   `um80` and `ul80` with `--debug-info`, udb80, `dbg2elf` and the GDB Python
   scripts.

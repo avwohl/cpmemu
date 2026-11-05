@@ -10,7 +10,9 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
-## [Unreleased]
+## [4.12.0] - 2026-11-05
+
+**Docs: `docs/gdb_stub.md` names 4.12.0 for `--gdb-listen`.**
 
 **The stub's rule stop is a plain `T05`, and `swbreak` follows `qSupported`.**
 A rule break (`set_rule_break`, the `wait-program` rule of romwbw_emu and the
