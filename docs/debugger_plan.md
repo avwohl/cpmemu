@@ -383,9 +383,11 @@ layout in uc80, in uada80 and in uplm80 REENTRANT procedures.
 IX holds the frame
 only between the `add ix,sp` and the `ld sp,ix` of the routine, so the
 routine record also gives that address range. Outside the range, and in
-a routine with no frame, the debugger uses the SP offset at the PC. The
-debugger calculates the offset from the routine's disassembly. GDB, a
-crash dump and z80fpga have no shadow stack, so they use this source.
+a routine with no frame, the debugger uses the stack depth at the PC. A
+walk over the code of the routine finds the depth: push, pop, `inc sp`,
+`dec sp` and the `pops` of each called routine. Two paths with two depths,
+or `ld sp,hl`, make the depth unknown, and the frame is then a guess. GDB,
+a crash dump and z80fpga have no shadow stack, so they use this source.
 
 **3. Stack scan (a guess).** A word on the stack that points at the byte
 after a CALL instruction in a code range is a possible return address. The
@@ -950,6 +952,29 @@ Milestone A was built on 2026-11-04 (measured):
 - **Not met:** a step into an inlined call in GDB. `prog.dbg` holds the
   inline stack, but no ELF writer gives DWARF inline records yet (phase 7).
 
+## Phase 4 to 7 results
+
+Built on 2026-11-04 (measured; each commit has the detail):
+
+- **Phase 4, other compilers.** uplm80 `d224954`: 212 builds, the same
+  `.COM` with and without `-g`, 0 routine bytes without a line, and a
+  REENTRANT backtrace in udb80. ucow `54b67a1`: 88 builds the same, 5713 of
+  5713 routine bytes with a line. mbasic `0588d8de`: `#line` for each BASIC
+  line, and udb80 breaks on a BASIC line. uada80 is out of scope.
+- **Phase 5, optnone.** uc80 `fd28b53` and upeepz80 `47a102b`. On the 36
+  examples, `--optnone=all` adds 27.4 percent of code. A 400-function
+  program does not run under `--optnone=all` and runs with
+  `--optnone=f0..f10,main`.
+- **Phase 6, frame records.** uc80 `73b219b` writes `ixbegin` and `ixend`
+  after the last text pass, and um80_and_friends `7127a7d` reads them in
+  udb80 and in the GDB unwinder. `bt frame` equals `bt shadow` at 11,727
+  stops of 9 uc80 programs. After a `longjmp`, the shadow stack keeps a
+  stale frame, and the frame records are right.
+- **Phase 7, GDB.** um80_and_friends `95555dd`: `dbg2elf` writes DWARF lines
+  and inline records, and a GDB Python unwinder gives the frames. In GDB
+  18.1, `step` enters an inlined call and `bt` shows the inline frame.
+- **Not met yet:** the `outer=` field (the C line below a BASIC line).
+
 ## Phase 9 results: romwbw_emu
 
 Phase 9 was built on 2026-11-04 (measured). The code is in romwbw_emu and is
@@ -982,8 +1007,9 @@ described in its `docs/GDB.md`.
   `wait-program sha256 <image.length> <image.sha256>`, then `c`, and waits for
   `T05swbreak`, stopped at 0100H in bank 8EH. `break inner`, `continue`, `bt`,
   `finish`, `monitor` and a normal exit worked.
-- **Open, for the owner of um80_and_friends:** add `udb80 --wait-program` as
-  described in the item above. Nothing in um80_and_friends was edited.
+- **udb80 `--wait-program`** (um80_and_friends `da44ce5`): the stock udb80
+  now stops at 0100H in bank 8EH for a program that CP/M starts from a disk
+  image, and `break`, `bt` and the exit work. The phase 9 acceptance is met.
 - **Open:** `monitor bt` says "out of step" after a BDOS call under the 3.6.0
   CP/M 2.2 CBIOS, which jumps with `PUSH` then `RET`. The frames are right.
   A breakpoint applies in every bank until `wait-program` fires or
