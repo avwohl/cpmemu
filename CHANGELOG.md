@@ -12,6 +12,16 @@ summarises and points; `git log` is the detail. Open work is in
 
 ## [Unreleased]
 
+**Docs: the README names `--gdb`, and `docs/gdb_stub.md` says what to install.**
+A Features line links [docs/gdb_stub.md](docs/gdb_stub.md), which before was
+only one entry near the end of the docs list. The new section "What you need"
+names cpmemu from source (the stub came after v4.10.0), um80>=0.4.0 and
+uc80>=0.8.0 from PyPI, and a GDB with the Z80 target, which udb80 does not
+need. "Most packages do not build it" became: the Homebrew `gdb` formula
+configures with `--enable-targets=all`, and a GDB 18.1 built with the
+formula's options ran a uc80 `-g` program from a clean PyPI venv to a 6-frame
+`bt`. The bottle itself was not installed.
+
 **The GDB stub serves banked memory: three hooks on `gdb::Target`, for romwbw_emu.**
 Phase 9 of [docs/debugger_plan.md](docs/debugger_plan.md). romwbw_emu now
 compiles `src/gdbstub.cc` from this tree behind a target of its own (decision

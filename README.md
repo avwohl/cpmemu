@@ -25,6 +25,8 @@ also installs as a standalone library.
 - **^C handling**: Ctrl+C reaches the guest; five within two seconds exit the
   emulator
 - **qkz80 library**: the CPU core installs with a `pkg-config` entry
+- **Debugging**: `--gdb` lets GDB or udb80 debug a program by source line, with
+  a backtrace - see [docs/gdb_stub.md](docs/gdb_stub.md)
 
 ## Install
 

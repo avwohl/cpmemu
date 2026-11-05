@@ -6,6 +6,30 @@ program keeps the console and all of its 64K. The debugger keeps its symbols
 and source files on the host. The design is in
 [debugger_plan.md](debugger_plan.md).
 
+## What you need
+
+- **cpmemu with `--gdb`.** The stub came after release v4.10.0. With v4.10.0
+  or an older release, build cpmemu from source (`make -C src`).
+- **um80 0.4.0 or newer:** `pip install "um80>=0.4.0"`. The package holds
+  `um80` and `ul80` with `--debug-info`, udb80, `dbg2elf` and the GDB Python
+  scripts.
+- **A compiler that writes the debug markers**, for a C program:
+  `pip install "uc80>=0.8.0"`, then compile with `uc80 -g`. An assembler
+  program needs only um80.
+- **GDB with the Z80 target**, but only if you use GDB. udb80 needs no GDB.
+  See [Connect GDB](#connect-gdb).
+
+The source-level steps (the ELF file, the unwinder, variables) are in the
+um80_and_friends documents
+[gdb.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/gdb.md) and
+[udb80.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/udb80.md).
+
+A check on 2026-11-05 started from a clean Python 3.12 venv with uc80 0.8.0
+and um80 0.4.0 from PyPI, and cpmemu built from this tree. A recursive C
+program went through `uc80 -g`, `um80 --debug-info`, `ul80 --debug-info` and
+`dbg2elf`. In udb80 and in GDB 18.1, `break rs.c:4` stopped in the base case.
+`bt` showed 5 frames of `sum` and the frame of `main`.
+
 ## Start
 
 ```
@@ -26,13 +50,24 @@ during the wait, so the program gets all of that input after GDB connects.
 
 ## Connect GDB
 
-GDB has had a Z80 target since GDB 11.1, but most packages do not build it.
-Build GDB from source with this option:
+GDB has had a Z80 target since GDB 11.1. A GDB that is built with
+`--enable-targets=all` has the target. The Homebrew formula `gdb` uses that
+option.
+
+A GDB 18.1 built with the configure options of the formula (2026-11-05,
+macOS 27 arm64) listed z80 in `set architecture` and ran the session above.
+The Homebrew bottle itself was not installed for that test. Other packages
+were not checked.
+
+To build GDB from source, use this option:
 
 ```
 configure --target=z80-unknown-elf
 make all-gdb
 ```
+
+The full build steps are in
+[gdb.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/gdb.md#build-gdb-181-for-the-z80).
 
 Then connect:
 
