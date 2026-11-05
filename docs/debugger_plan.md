@@ -973,7 +973,9 @@ Built on 2026-11-04 (measured; each commit has the detail):
 - **Phase 7, GDB.** um80_and_friends `95555dd`: `dbg2elf` writes DWARF lines
   and inline records, and a GDB Python unwinder gives the frames. In GDB
   18.1, `step` enters an inlined call and `bt` shows the inline frame.
-- **Not met yet:** the `outer=` field (the C line below a BASIC line).
+- **The `outer=` field** (the C line below a BASIC line): uc80 `b5aa5c2` writes
+  `outer=` when `#line` is in effect, and udb80 shows that level with
+  `set level outer`.
 
 ## Phase 9 results: romwbw_emu
 
@@ -990,9 +992,10 @@ described in its `docs/GDB.md`.
   `Tracker::reset` and `Tracker::seed`. `tests/run_tests.sh` gave 329 passed,
   0 failed and 6 skipped before and after.
 - **Tests:** romwbw_emu `tests/gdb_stub_test.py` makes a `.COM` with um80 and
-  ul80, puts the `.COM` on a disk image with `util/cpm_disk.py`, boots, and
-  checks the stop at 0100H in bank 8EH by bytes and by SHA-256, the bank
-  views, `monitor bt`, `^C`, `D`, `k`, the instruction limit, HLT and `sim>`.
+  ul80, and puts the `.COM` on a disk image with `util/cpm_disk.py`. Then the
+  test boots the image. The checks are the stop at 0100H in bank 8EH by bytes
+  and by SHA-256, the bank views, `monitor bt`, `^C`, `D`, `k`, the
+  instruction limit, HLT and `sim>`.
   A mutation check that broke the bank view, the SHA-256 compare and the bank
   8EH test failed the test in all three places.
 - **Speed with no `--gdb`:** 200M instructions of a DEC/OR/JR loop, 16
@@ -1007,9 +1010,9 @@ described in its `docs/GDB.md`.
   `wait-program sha256 <image.length> <image.sha256>`, then `c`, and waits for
   `T05swbreak`, stopped at 0100H in bank 8EH. `break inner`, `continue`, `bt`,
   `finish`, `monitor` and a normal exit worked.
-- **udb80 `--wait-program`** (um80_and_friends `da44ce5`): the stock udb80
-  now stops at 0100H in bank 8EH for a program that CP/M starts from a disk
-  image, and `break`, `bt` and the exit work. The phase 9 acceptance is met.
+- **udb80 `--wait-program`** (um80_and_friends `da44ce5`): CP/M starts the
+  program from a disk image, and the stock udb80 stops at 0100H in bank 8EH.
+  `break`, `bt` and the exit work. The phase 9 acceptance is met.
 - **Open:** `monitor bt` says "out of step" after a BDOS call under the 3.6.0
   CP/M 2.2 CBIOS, which jumps with `PUSH` then `RET`. The frames are right.
   A breakpoint applies in every bank until `wait-program` fires or
@@ -1017,6 +1020,30 @@ described in its `docs/GDB.md`.
   ZPM3 are not covered. The stub blocks in `serve()`, so z80cpmw needs a thread.
 - **Other clients:** ioscpm (`[MAC]`), z80cpmw (`[WINDOWS]`) and cpmdroid
   (`[ANDROID]`) have a `todo.txt` item each.
+
+## Phase 8 and 10 results
+
+Built on 2026-11-04 (measured; each commit has the detail):
+
+- **Phase 8, variables, for uc80.** um80_and_friends `d39debc` adds the
+  `;#var` and `;#type` records, the `prog.dbg` tables, `print`,
+  `info locals`, `frame` and `ptype` in udb80, and DWARF variables in
+  `dbg2elf`. uc80 `b5aa5c2` writes the records for each storage kind, and the
+  `.COM` stays the same with and without `-g`. In 138 programs uc80 wrote
+  1,070 records. Against `cpmemu --gdb`, udb80 printed each storage kind at
+  the known value, and the locals of the callers.
+- **Variables in GDB 18.1.** Static variables work natively. IX variables
+  work only with the udb80 unwinder loaded. The z80 port has no DWARF
+  register numbers, so register variables need the helper commands
+  `zprint` and `zlocals`.
+- **Phase 10, z80fpga** `6860400`, in simulation. The debug unit is behind
+  `DEBUG_UNIT`, which is 0 by default. At 0, the yosys netlist is the same as
+  before. With the unit, the build has about 535 more LUTs and 369 more
+  registers, and no block RAM. The benches pass: 305 to 317 checks, 196 on
+  RomWBW 3.6.0, and 0 of 1,604,000 CPU cases fail. GDB 18.1 worked through
+  the bridge against the simulated system.
+- **Not done:** the Vivado build and the run on the board (z80fpga
+  `MANUAL_CHECKS.md`), and variables for uplm80 and ucow.
 
 ## Phases
 
