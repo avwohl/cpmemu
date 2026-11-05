@@ -1103,10 +1103,15 @@ Notes from the agents, not acted on:
   breakpoint stops before the rule fires, so `wait-program` does nothing for
   GDB. romwbw_emu `docs/GDB.md` (Find the program with GDB) now has the
   steps, and the z80cpmw and cpmdroid pages, which gave `wait-program` and
-  `continue`, point to it. A stub that sends `swbreak` only when GDB set the
-  breakpoint, and only when GDB offered `swbreak+`, would let the rule stop
-  GDB too. udb80 0.4.1 needs `swbreak` in the rule's stop reply, so that
-  change needs a udb80 change first.
+  `continue`, point to it. Fixed afterwards at the owner's word: cpmemu
+  `365dfc2` stops a rule break with a plain `T05` and sends `swbreak` only to
+  a client that offered `swbreak+`. GDB 18.1 then stops at the program with
+  `monitor wait-program` and `continue` (SIGTRAP at 0100H in bank 8EH,
+  measured on romwbw_emu, also with `swbreak-feature-packet off`). udb80
+  0.4.1 refused the new reply (measured), so um80 0.4.2 (`0e44efb`) takes
+  `T05` or `T05swbreak` at the load address. romwbw_emu's test and the GDB
+  steps of all four GDB pages follow. z80fpga's bridge is separate code and
+  did not change (z80fpga `todo.txt`, `da28334`).
 - A change to the socket declarations of `os/platform.h` now reaches four
   platform layers: romwbw_emu's `gdb_platform.cc` (romwbw_emu and
   cpmdroid), ioscpm's `gdb_platform_ios.cc` and z80cpmw's
