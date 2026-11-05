@@ -12,6 +12,18 @@ summarises and points; `git log` is the detail. Open work is in
 
 ## [Unreleased]
 
+**The stub's rule stop is a plain `T05`, and `swbreak` follows `qSupported`.**
+A rule break (`set_rule_break`, the `wait-program` rule of romwbw_emu and the
+three GUI clients) stopped with `T05swbreak:;`. GDB set no breakpoint there,
+so GDB continued past the stop with no message, and `monitor wait-program`
+could not stop a GDB session. The rule's stop is now `STOP_RULE`, reply `T05`,
+and GDB 18.1 on romwbw_emu reports `Program received signal SIGTRAP` at the
+program's first line. A breakpoint the debugger set still replies
+`T05swbreak:;`, but only to a client that said `swbreak+` in `qSupported`
+(and to one that sent no `qSupported`); `T05` otherwise, as the RSP asks.
+udb80 0.4.1 refuses a rule stop without `swbreak`, so use um80 0.4.2 or later.
+`tests/gdb_stub_test.py` has `case_no_swbreak` (2 checks).
+
 **Docs: the debugger plan records the GDB stub in ioscpm, z80cpmw and
 cpmdroid.** `docs/debugger_plan.md` gains "Phase 9 results: ioscpm, z80cpmw
 and cpmdroid" (what each built and ran on this Mac, what the reviews found,

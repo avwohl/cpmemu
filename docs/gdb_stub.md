@@ -176,7 +176,13 @@ Measured on 2026-11-05 (macOS 27 arm64): with `--gdb-listen=0.0.0.0`, GDB
 
 - The stub keeps the breakpoints (`Z0` and `Z1`) in a table. It tests the table
   before each instruction. It never writes a breakpoint byte into guest memory.
-  The stop reply is `T05swbreak:;`.
+  The stop reply is `T05swbreak:;` when the debugger said `swbreak+` in
+  `qSupported`, as GDB and udb80 do. Otherwise the reply is `T05`.
+- A target can add a rule break (`Stub::set_rule_break`), for example the
+  `wait-program` rule of romwbw_emu. No debugger set that breakpoint, so its
+  stop reply is `T05`, with no `swbreak`. GDB then reports a SIGTRAP stop.
+  With `swbreak`, GDB would continue past a breakpoint that GDB does not
+  know. udb80 0.4.2 and later take both replies.
 - A step at a BDOS or BIOS trap address (0FD00H, 0FF00H to 0FF1FH) runs the
   trap once and stops at the return address.
 - `vCont` with range stepping (`r`) steps until PC leaves the range.

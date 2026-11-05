@@ -374,6 +374,25 @@ def case_listen(emu, wd, g):
 
 
 @scenario
+def case_no_swbreak(emu, wd, g):
+    # The RSP rule: swbreak in a stop reply only for a client that offered
+    # swbreak+ in qSupported (GDB with "set remote swbreak-feature-packet off"
+    # does not).  Such a client gets a plain T05 at its breakpoint.
+    gm = g["gdb_main"]
+    r = Run(emu, wd, gm)
+    try:
+        c = r.rsp
+        c.cmd("qSupported:multiprocess+;hwbreak+;vContSupported+")
+        check("without swbreak+ a breakpoint is accepted", c.cmd("Z0,%x,1" % gm.sub1) == "OK")
+        reply = c.cmd("c")
+        check("without swbreak+ continue stops at the breakpoint with a plain T05",
+              reply == "T05" and c.pc() == gm.sub1, reply)
+        c.cmd("D")
+    finally:
+        r.finish()
+
+
+@scenario
 def case_main(emu, wd, g):
     gm = g["gdb_main"]
     r = Run(emu, wd, gm)
@@ -726,7 +745,7 @@ def main():
             except Exception as e:
                 check("assembling tests/%s.asm" % n, False, str(e))
                 return 1
-        for case in (case_connection, case_listen, case_main, case_syscall, case_detach_kill,
+        for case in (case_connection, case_listen, case_no_swbreak, case_main, case_syscall, case_detach_kill,
                      case_console_interrupt, case_piped_input, case_running_interrupt,
                      case_bios_error, case_hlt,
                      case_backtrace_recursive, case_reentrant, case_fill,

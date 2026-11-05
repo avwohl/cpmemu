@@ -239,7 +239,7 @@ Stub::Stub(Target& t, Tracker& tr)
     : t_(t), tr_(tr), listener_(platform::kNoSocket), sock_(platform::kNoSocket),
       attached_(false), killed_(false), exit_sent_(false),
       watch_count_(0), watch_addr_(0), watch_type_(0),
-      catch_all_syscalls_(false), pending_syscall_return_(-1),
+      catch_all_syscalls_(false), swbreak_ok_(true), pending_syscall_return_(-1),
       last_syscall_(0), last_syscall_entry_(true) {}
 
 Stub::~Stub() {
@@ -473,7 +473,8 @@ bool Stub::syscall_wanted(int func) {
 std::string Stub::stop_reply(StopKind k) {
   char b[64];
   switch (k) {
-    case STOP_BREAK:   return "T05swbreak:;";
+    case STOP_BREAK:   return swbreak_ok_ ? "T05swbreak:;" : "T05";
+    case STOP_RULE:    return "T05";
     case STOP_INT:     return "T02";
     case STOP_SYSCALL:
       snprintf(b, sizeof b, "T05syscall_%s:%x;",
@@ -509,7 +510,7 @@ Stub::StopKind Stub::run(char mode, uint16_t lo, uint16_t hi) {
     if (!first) {
       if (breaks_.count(pc) && t_.break_applies(pc, false)) return STOP_BREAK;
       if (!rule_breaks_.empty() && rule_breaks_.count(pc) && t_.break_applies(pc, true))
-        return STOP_BREAK;
+        return STOP_RULE;
     }
 
     int func = -1;
@@ -773,6 +774,9 @@ bool Stub::handle(const std::string& pkt, bool& resumed, bool& detached) {
     return true;
   }
   if (pkt.compare(0, 10, "qSupported") == 0) {
+    // swbreak only for a client that asked for it (the RSP rule).  GDB does;
+    // with "set remote swbreak-feature-packet off" it does not.
+    swbreak_ok_ = pkt.find("swbreak+") != std::string::npos;
     char b[160];
     snprintf(b, sizeof b,
              "PacketSize=%x;qXfer:features:read+;swbreak+;vContSupported+;QCatchSyscalls+",

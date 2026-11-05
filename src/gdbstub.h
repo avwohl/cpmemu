@@ -181,7 +181,11 @@ class Stub {
   }
 
  private:
-  enum StopKind { STOP_BREAK, STOP_STEP, STOP_INT, STOP_HALT, STOP_SYSCALL,
+  // STOP_BREAK is a breakpoint the debugger set (Z0/Z1).  STOP_RULE is a
+  // rule break (set_rule_break), which no debugger set: its reply has no
+  // swbreak, so GDB reports a SIGTRAP stop instead of continuing past a
+  // breakpoint it does not know.
+  enum StopKind { STOP_BREAK, STOP_RULE, STOP_STEP, STOP_INT, STOP_HALT, STOP_SYSCALL,
                   STOP_WATCH, STOP_DETACH };
 
   Target& t_;
@@ -199,6 +203,9 @@ class Stub {
   uint16_t watch_addr_;
   int watch_type_;
   bool catch_all_syscalls_;
+  // The client said swbreak+ in qSupported.  True until a qSupported says
+  // otherwise, for a client that sends no qSupported at all.
+  bool swbreak_ok_;
   std::set<int> catch_syscalls_;
   int pending_syscall_return_;
 
