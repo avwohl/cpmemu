@@ -412,7 +412,7 @@ bool console_last_char_synthesized() {
 // Sockets (the GDB stub)
 // ============================================================================
 
-socket_t net_listen_local(int port, int* bound_port) {
+socket_t net_listen(uint32_t addr, int port, int* bound_port) {
     int s = socket(AF_INET, SOCK_STREAM, 0);
     if (s < 0) {
         fprintf(stderr, "gdb stub: socket: %s\n", strerror(errno));
@@ -423,10 +423,12 @@ socket_t net_listen_local(int port, int* bound_port) {
     struct sockaddr_in a;
     memset(&a, 0, sizeof a);
     a.sin_family = AF_INET;
-    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    a.sin_addr.s_addr = htonl(addr);
     a.sin_port = htons((unsigned short)port);
     if (bind(s, (struct sockaddr*)&a, sizeof a) != 0 || listen(s, 1) != 0) {
-        fprintf(stderr, "gdb stub: cannot listen on 127.0.0.1:%d: %s\n", port, strerror(errno));
+        fprintf(stderr, "gdb stub: cannot listen on %u.%u.%u.%u:%d: %s\n",
+                (unsigned)(addr >> 24), (unsigned)(addr >> 16) & 255u,
+                (unsigned)(addr >> 8) & 255u, (unsigned)addr & 255u, port, strerror(errno));
         close(s);
         return kNoSocket;
     }
@@ -438,6 +440,10 @@ socket_t net_listen_local(int port, int* bound_port) {
     }
     if (bound_port) *bound_port = ntohs(a.sin_port);
     return (socket_t)s;
+}
+
+socket_t net_listen_local(int port, int* bound_port) {
+    return net_listen(INADDR_LOOPBACK, port, bound_port);
 }
 
 socket_t net_accept(socket_t listener) {

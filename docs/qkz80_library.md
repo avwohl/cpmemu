@@ -95,7 +95,10 @@ compiles `gdbstub.cc` out of this tree (decision 9 of the debugger plan),
 through `CPMEMU_SRC` in its `src/makefile`. It takes `gdbstub.h` and
 `os/platform.h` with `-idirafter`. romwbw_emu does not take `os/*/platform.cc`.
 The file `src/gdb_platform.cc` of romwbw_emu has the socket functions, and the
-return values must stay as `os/platform.h` documents them.
+return values must stay as `os/platform.h` documents them. The stub calls
+`net_listen(addr, port, bound)`, so a platform layer must have
+`net_listen` and not only `net_listen_local`. romwbw_emu added `net_listen`
+in 18df746, before the stub used it.
 
 A commit here that changes `gdbstub.cc`, `gdbstub.h` or the socket and console
 declarations of `os/platform.h` reaches romwbw_emu on its next build. No

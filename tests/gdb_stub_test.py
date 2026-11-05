@@ -65,8 +65,8 @@ def escape(data):
 
 
 class Rsp:
-    def __init__(self, port):
-        self.sock = socket.create_connection(("127.0.0.1", port), timeout=20)
+    def __init__(self, port, host="127.0.0.1"):
+        self.sock = socket.create_connection((host, port), timeout=20)
         self.buf = b""
 
     def close(self):
@@ -184,7 +184,8 @@ def build(workdir, name):
 class Run:
     """cpmemu started with --gdb=0, and a connected client."""
 
-    def __init__(self, emu, workdir, guest, stdin=subprocess.DEVNULL, extra=(), env=None, pre_connect=None):
+    def __init__(self, emu, workdir, guest, stdin=subprocess.DEVNULL, extra=(), env=None, pre_connect=None,
+                 host="127.0.0.1"):
         self.workdir = workdir
         portfile = os.path.join(workdir, "port.%d" % os.getpid())
         if os.path.exists(portfile):
@@ -210,9 +211,10 @@ class Run:
         if port is None:
             self.kill()
             raise RuntimeError("cpmemu gave no port: %s" % self.proc.stderr.read().decode(errors="replace"))
+        self.port = port
         if pre_connect:
             pre_connect(self)
-        self.rsp = Rsp(port)
+        self.rsp = Rsp(port, host)
         self.guest = guest
 
     def kill(self):
@@ -276,6 +278,99 @@ def case_connection(emu, wd, g):
         r.rsp.cmd("D")
     finally:
         r.finish()
+
+
+def lan_address():
+    """An IPv4 address of this host that is not loopback, or None.  A UDP
+    connect sends nothing; it only makes the system choose an interface."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("192.0.2.1", 9))
+        addr = s.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        s.close()
+    return None if addr.startswith("127.") or addr == "0.0.0.0" else addr
+
+
+def refused(host, port):
+    try:
+        socket.create_connection((host, port), timeout=5).close()
+    except OSError:
+        return True
+    return False
+
+
+@scenario
+def case_listen(emu, wd, g):
+    com = g["gdb_main"].com
+    p = subprocess.run([emu, "--gdb-listen=0.0.0.0", com], stdin=subprocess.DEVNULL,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=wd, timeout=30)
+    check("--gdb-listen without --gdb is an error (exit 1)",
+          p.returncode == 1 and b"--gdb-listen needs --gdb" in p.stderr, p.stderr)
+    for bad in ("1.2.3", "256.0.0.1", "1.2.3.4.5", "localhost", "", "1..2.3"):
+        p = subprocess.run([emu, "--gdb", "--gdb-listen=" + bad, com], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=wd, timeout=30)
+        check("--gdb-listen=%s is refused (exit 1)" % bad,
+              p.returncode == 1 and b"IPv4 address" in p.stderr, p.stderr)
+
+    lan = lan_address()
+    # The default stays on loopback: no warning, and the LAN address is refused.
+    r = Run(emu, wd, g["gdb_main"])
+    try:
+        if lan:
+            check("without --gdb-listen the stub refuses %s" % lan, refused(lan, r.port))
+        r.rsp.handshake()
+        r.rsp.cmd("D")
+    finally:
+        _, _, err = r.finish()
+    check("without --gdb-listen: listening on 127.0.0.1, no warning",
+          "listening on 127.0.0.1:" in err and "WARNING" not in err, err)
+
+    r = Run(emu, wd, g["gdb_main"], extra=["--gdb-listen=127.0.0.1"])
+    try:
+        r.rsp.handshake()
+        r.rsp.cmd("D")
+    finally:
+        _, _, err = r.finish()
+    check("--gdb-listen=127.0.0.1: no warning", "WARNING" not in err, err)
+
+    r = Run(emu, wd, g["gdb_main"], extra=["--gdb-listen=0.0.0.0"])
+    try:
+        r.rsp.handshake()
+        check("--gdb-listen=0.0.0.0: a client on 127.0.0.1 stops before 0100H",
+              r.rsp.cmd("?") == "T05" and r.rsp.pc() == 0x100)
+        r.rsp.cmd("D")
+    finally:
+        _, _, err = r.finish()
+    check("--gdb-listen=0.0.0.0 prints the warning and the address",
+          "WARNING: listening on 0.0.0.0" in err and "listening on 0.0.0.0:" in err, err)
+
+    if lan:
+        r = Run(emu, wd, g["gdb_main"], extra=["--gdb-listen=0.0.0.0"], host=lan)
+        try:
+            r.rsp.handshake()
+            check("--gdb-listen=0.0.0.0: a client on %s stops before 0100H" % lan,
+                  r.rsp.cmd("?") == "T05" and r.rsp.pc() == 0x100)
+            r.rsp.cmd("D")
+        finally:
+            r.finish()
+
+        # A stub on the LAN address only: 127.0.0.1 is refused.
+        r = Run(emu, wd, g["gdb_main"], extra=["--gdb-listen=" + lan], host=lan,
+                pre_connect=lambda run: check("--gdb-listen=%s: 127.0.0.1 is refused" % lan,
+                                              refused("127.0.0.1", run.port)))
+        try:
+            r.rsp.handshake()
+            check("--gdb-listen=%s: a client on %s stops before 0100H" % (lan, lan),
+                  r.rsp.cmd("?") == "T05" and r.rsp.pc() == 0x100)
+            r.rsp.cmd("D")
+        finally:
+            _, _, err = r.finish()
+        check("--gdb-listen=%s prints the warning" % lan, "WARNING: listening on %s" % lan in err, err)
+    else:
+        print("NOTE  gdb: no LAN address on this host; the LAN cases were not run")
 
 
 @scenario
@@ -631,7 +726,7 @@ def main():
             except Exception as e:
                 check("assembling tests/%s.asm" % n, False, str(e))
                 return 1
-        for case in (case_connection, case_main, case_syscall, case_detach_kill,
+        for case in (case_connection, case_listen, case_main, case_syscall, case_detach_kill,
                      case_console_interrupt, case_piped_input, case_running_interrupt,
                      case_bios_error, case_hlt,
                      case_backtrace_recursive, case_reentrant, case_fill,

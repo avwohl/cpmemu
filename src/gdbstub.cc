@@ -247,11 +247,49 @@ Stub::~Stub() {
   platform::net_close(listener_);
 }
 
+bool parse_listen_address(const char* text, uint32_t* addr) {
+  if (!text) return false;
+  uint32_t v = 0;
+  const char* p = text;
+  for (int part = 0; part < 4; part++) {
+    if (part > 0) {
+      if (*p != '.') return false;
+      p++;
+    }
+    if (*p < '0' || *p > '9') return false;
+    unsigned n = 0;
+    int digits = 0;
+    while (*p >= '0' && *p <= '9') {
+      n = n * 10 + (unsigned)(*p - '0');
+      if (++digits > 3 || n > 255) return false;
+      p++;
+    }
+    v = (v << 8) | n;
+  }
+  if (*p != 0) return false;
+  if (addr) *addr = v;
+  return true;
+}
+
 bool Stub::listen(int port, const char* port_file) {
+  return listen(kLoopback, port, port_file);
+}
+
+bool Stub::listen(uint32_t addr, int port, const char* port_file) {
   int bound = 0;
-  listener_ = platform::net_listen_local(port, &bound);
+  listener_ = platform::net_listen(addr, port, &bound);
   if (listener_ == platform::kNoSocket) return false;
-  fprintf(stderr, "GDB stub listening on 127.0.0.1:%d\n", bound);
+  char text[16];
+  snprintf(text, sizeof text, "%u.%u.%u.%u", (unsigned)(addr >> 24),
+           (unsigned)(addr >> 16) & 255u, (unsigned)(addr >> 8) & 255u, (unsigned)addr & 255u);
+  if ((addr >> 24) != 127) {
+    fprintf(stderr,
+            "gdb stub: WARNING: listening on %s, not on 127.0.0.1.  The stub has no password.\n"
+            "Anyone who can reach this address can read and write the guest's memory, and\n"
+            "through the guest write host files.  Use it on a network you trust.\n",
+            text);
+  }
+  fprintf(stderr, "GDB stub listening on %s:%d\n", text, bound);
   if (port_file) {
     FILE* f = fopen(port_file, "w");
     if (!f) {

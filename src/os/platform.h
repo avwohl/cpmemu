@@ -117,8 +117,13 @@ int change_directory(const char* path);
 typedef intptr_t socket_t;
 const socket_t kNoSocket = -1;
 
-// Listen on 127.0.0.1 only.  Port 0 lets the system choose.  *bound_port gets
-// the port in use.  kNoSocket on failure, with the reason printed to stderr.
+// Listen on the IPv4 address addr, in host byte order: 0x7F000001 is
+// 127.0.0.1, 0 is every interface.  Port 0 lets the system choose.
+// *bound_port gets the port in use.  kNoSocket on failure, with the reason
+// printed to stderr.
+socket_t net_listen(uint32_t addr, int port, int* bound_port);
+
+// net_listen on 127.0.0.1.
 socket_t net_listen_local(int port, int* bound_port);
 
 // Wait for one connection on a listening socket and return it.  kNoSocket on

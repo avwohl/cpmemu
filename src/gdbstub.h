@@ -137,6 +137,14 @@ class Tracker {
 // each later frame is a return address from the shadow stack, innermost first.
 std::string format_backtrace(const ShadowStack& s, uint16_t pc);
 
+// The address for Stub::listen: "127.0.0.1", "0.0.0.0" (every interface) or
+// the IPv4 address of one interface, four decimal numbers from 0 to 255.
+// *addr gets it in host byte order.  False when text is not such an address.
+bool parse_listen_address(const char* text, uint32_t* addr);
+
+// The address that Stub::listen uses when it gets none: 127.0.0.1.
+const uint32_t kLoopback = 0x7F000001u;
+
 class Stub {
  public:
   Stub(Target& t, Tracker& tr);
@@ -144,6 +152,10 @@ class Stub {
   // Listen on 127.0.0.1:port (0 = the system chooses), say so on stderr and
   // write the port to port_file if it is not null.  False on failure.
   bool listen(int port, const char* port_file);
+  // The same on the IPv4 address addr (host byte order, see
+  // parse_listen_address).  An address outside 127.0.0.0/8 gets a warning on
+  // stderr: the stub has no password, and the debugger can write guest memory.
+  bool listen(uint32_t addr, int port, const char* port_file);
   // Wait for the debugger to connect.  False on failure.
   bool accept();
   // Answer packets until the debugger detaches or kills the program.  Returns

@@ -12,6 +12,19 @@ summarises and points; `git log` is the detail. Open work is in
 
 ## [Unreleased]
 
+**`--gdb-listen=ADDR`: the GDB stub on a network address, off by default.**
+`--gdb` listens on 127.0.0.1, and a debugger on a different machine needed
+an SSH tunnel. `--gdb-listen=0.0.0.0` (or the IPv4 address of one interface)
+puts the stub on the network, with a warning on stderr for any address
+outside 127.0.0.0/8: the stub has no password, and the debugger can write
+the memory of a guest that can write host files. The option needs `--gdb`,
+and a bad address is exit 1. The platform layer gains
+`net_listen(addr, port, bound)`, which `net_listen_local` now calls, and
+`Stub::listen` an address form with `gdb::parse_listen_address`.
+romwbw_emu's `gdb_platform.cc` added `net_listen` first (18df746).
+`tests/gdb_stub_test.py` has a `case_listen` (16 checks), and GDB 18.1
+connected to the LAN address of the Mac with `--gdb-listen=0.0.0.0`.
+
 **Docs: debug from another machine through an SSH tunnel.** The stub listens
 on 127.0.0.1 only, and `docs/gdb_stub.md` did not say how a debugger on a
 different machine reaches it. The new section "Debug from another machine"

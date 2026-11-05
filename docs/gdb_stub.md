@@ -36,11 +36,14 @@ program went through `uc80 -g`, `um80 --debug-info`, `ul80 --debug-info` and
 cpmemu --gdb prog.com
 cpmemu --gdb=4000 prog.com
 cpmemu --gdb=0 --gdb-port-file=port.txt prog.com
+cpmemu --gdb --gdb-listen=0.0.0.0 prog.com
 ```
 
 `--gdb` listens on 127.0.0.1 port 1234. `--gdb=PORT` chooses the port. Port 0
 lets the system choose, and `--gdb-port-file=FILE` writes the chosen port to
 FILE. A test can then start many cpmemu processes at the same time.
+`--gdb-listen=ADDR` listens on a different IPv4 address. See
+[Debug from another machine](#debug-from-another-machine).
 
 cpmemu prints `GDB stub listening on 127.0.0.1:PORT` and waits. When the
 debugger connects, cpmemu stops before the instruction at 0100H. While cpmemu
@@ -92,13 +95,17 @@ A local run on 2026-11-04 used GDB 18.1 and the ELF file of the
 
 ## Debug from another machine
 
-The stub listens on 127.0.0.1 only. A debugger on a different machine cannot
-connect to the stub directly, because the stub has no password and the
-debugger can write guest memory. A guest can write host files through BDOS,
-so a stub on the network would let any user of the network write files as
-you.
+By default the stub listens on 127.0.0.1 only, and a debugger on a different
+machine cannot connect. The stub has no password, and the debugger can write
+guest memory. A guest can write host files through BDOS. Thus a stub on the
+network lets any user of the network write files as you.
 
-Use an SSH tunnel. On the machine with the debugger:
+There are two ways. An SSH tunnel keeps the stub on 127.0.0.1 and is the
+safer way. `--gdb-listen` puts the stub on the network.
+
+### An SSH tunnel
+
+On the machine with the debugger:
 
 ```
 ssh -N -L 1234:127.0.0.1:1234 USER@EMULATOR-HOST
@@ -127,6 +134,43 @@ refused. `ssh -L 5711:127.0.0.1:4711` to the LAN address of the same Mac
 forwarded the port. GDB 18.1 on port 5711 stopped at `break rs.c:4`, and
 `bt` showed 6 frames. A tunnel between two different machines was not
 measured.
+
+### --gdb-listen
+
+`--gdb-listen=ADDR` makes the stub listen on the IPv4 address ADDR.
+`0.0.0.0` is every interface. The address of one interface, for example
+`192.168.1.5`, is that interface only. A name such as `localhost` is not
+accepted. The option needs `--gdb`.
+
+```
+cpmemu --gdb --gdb-listen=0.0.0.0 prog.com
+```
+
+On the machine with the debugger:
+
+```
+gdb prog.elf
+(gdb) target remote EMULATOR-HOST:1234
+```
+
+```
+udb80 prog.dbg --connect EMULATOR-HOST:1234
+```
+
+For an address outside 127.0.0.0/8, cpmemu prints a warning before
+`GDB stub listening on ADDR:PORT`. Use the option only on a network that you
+trust, and only while you debug. A firewall can also block the port.
+
+`tests/gdb_stub_test.py` checks the option:
+
+- A bad address is refused.
+- Without the option, the stub refuses the LAN address of the host.
+- `0.0.0.0` takes a client on 127.0.0.1 and a client on the LAN address.
+- The address of one interface refuses 127.0.0.1.
+
+Measured on 2026-11-05 (macOS 27 arm64): with `--gdb-listen=0.0.0.0`, GDB
+18.1 on the same Mac connected to the LAN address 10.3.0.132 and showed a
+6-frame `bt`. A debugger on a different machine was not measured.
 
 ## What the stub does
 

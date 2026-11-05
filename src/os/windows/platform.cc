@@ -712,7 +712,7 @@ static bool winsock_start() {
     return true;
 }
 
-socket_t net_listen_local(int port, int* bound_port) {
+socket_t net_listen(uint32_t addr, int port, int* bound_port) {
     if (!winsock_start()) return kNoSocket;
     SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == INVALID_SOCKET) {
@@ -724,10 +724,12 @@ socket_t net_listen_local(int port, int* bound_port) {
     struct sockaddr_in a;
     memset(&a, 0, sizeof a);
     a.sin_family = AF_INET;
-    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    a.sin_addr.s_addr = htonl(addr);
     a.sin_port = htons((unsigned short)port);
     if (bind(s, (struct sockaddr*)&a, (int)sizeof a) != 0 || listen(s, 1) != 0) {
-        fprintf(stderr, "gdb stub: cannot listen on 127.0.0.1:%d: error %d\n",
+        fprintf(stderr, "gdb stub: cannot listen on %u.%u.%u.%u:%d: error %d\n",
+                (unsigned)(addr >> 24), (unsigned)(addr >> 16) & 255u,
+                (unsigned)(addr >> 8) & 255u, (unsigned)addr & 255u,
                 port, (int)WSAGetLastError());
         closesocket(s);
         return kNoSocket;
@@ -740,6 +742,10 @@ socket_t net_listen_local(int port, int* bound_port) {
     }
     if (bound_port) *bound_port = (int)ntohs(a.sin_port);
     return (socket_t)s;
+}
+
+socket_t net_listen_local(int port, int* bound_port) {
+    return net_listen(INADDR_LOOPBACK, port, bound_port);
 }
 
 socket_t net_accept(socket_t listener) {

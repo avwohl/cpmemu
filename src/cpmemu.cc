@@ -4747,6 +4747,8 @@ int main(int argc, char** argv) {
     fprintf(stderr, "  --no-ctrl-c-exit    Give every ^C to the program (WordStar page-down)\n");
     fprintf(stderr, "  --gdb[=PORT]        Wait for GDB on 127.0.0.1:PORT (default 1234, 0 = any) before 0100H\n");
     fprintf(stderr, "  --gdb-port-file=F   Write the port that --gdb listens on to file F\n");
+    fprintf(stderr, "  --gdb-listen=ADDR   Listen on IPv4 address ADDR (0.0.0.0 = every interface), not\n");
+    fprintf(stderr, "                      127.0.0.1.  No password: anyone who reaches ADDR controls the guest\n");
     fprintf(stderr, "  --backtrace         Keep a shadow call stack and print it if the run ends badly\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Environment variables:\n");
@@ -4771,6 +4773,8 @@ int main(int argc, char** argv) {
   bool gdb_on = false;
   int gdb_port = 1234;
   const char* gdb_port_file = nullptr;
+  const char* gdb_listen = nullptr;           // --gdb-listen=ADDR, as typed
+  uint32_t gdb_addr = gdb::kLoopback;
   bool backtrace_on = false;
 
   // One definition of what an emulator option is, used both for the options
@@ -4817,6 +4821,12 @@ int main(int argc, char** argv) {
       gdb_port = (int)port;
     } else if (strncmp(a, "--gdb-port-file=", 16) == 0) {
       gdb_port_file = a + 16;
+    } else if (strncmp(a, "--gdb-listen=", 13) == 0) {
+      if (!gdb::parse_listen_address(a + 13, &gdb_addr)) {
+        fprintf(stderr, "Error: %s: the address is an IPv4 address such as 0.0.0.0 or 192.168.1.5\n", a);
+        exit(1);
+      }
+      gdb_listen = a + 13;
     } else if (strcmp(a, "--backtrace") == 0) {
       backtrace_on = true;
     } else {
@@ -4854,6 +4864,11 @@ int main(int argc, char** argv) {
       continue;
     }
     guest_argv.push_back(argv[i]);
+  }
+
+  if (gdb_listen && !gdb_on) {
+    fprintf(stderr, "Error: --gdb-listen needs --gdb\n");
+    return 1;
   }
 
   const char* arg1 = argv[arg_offset];
@@ -5088,7 +5103,7 @@ int main(int argc, char** argv) {
     if (gdb_on) {
       // A failure before the program starts is not a run that ended badly:
       // no backtrace, and nothing to tell a debugger.
-      if (!stub.listen(gdb_port, gdb_port_file)) { end_reported = true; return 1; }
+      if (!stub.listen(gdb_addr, gdb_port, gdb_port_file)) { end_reported = true; return 1; }
       fprintf(stderr, "Waiting for GDB to connect\n");
       if (!stub.accept()) {
         end_if_terminated();
