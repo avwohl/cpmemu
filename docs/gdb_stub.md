@@ -90,6 +90,44 @@ A local run on 2026-11-04 used GDB 18.1 and the ELF file of the
 `watch total`, `tbreak` and `stepi` worked, and `continue` ended with
 `exited normally`.
 
+## Debug from another machine
+
+The stub listens on 127.0.0.1 only. A debugger on a different machine cannot
+connect to the stub directly, because the stub has no password and the
+debugger can write guest memory. A guest can write host files through BDOS,
+so a stub on the network would let any user of the network write files as
+you.
+
+Use an SSH tunnel. On the machine with the debugger:
+
+```
+ssh -N -L 1234:127.0.0.1:1234 USER@EMULATOR-HOST
+```
+
+On the emulator machine, start `cpmemu --gdb prog.com`. Then connect the
+debugger to port 1234 on its own machine:
+
+```
+gdb prog.elf
+(gdb) target remote :1234
+```
+
+```
+udb80 prog.dbg --connect 127.0.0.1:1234
+```
+
+Keep `prog.dbg`, `prog.elf`, `prog.com` and the source files on the machine
+with the debugger. udb80 and dbg2elf check the program image against
+`prog.dbg`. The `ssh` client of Windows 10 and later takes the same
+command.
+
+Measured on 2026-11-05 (macOS 27 arm64): the cpmemu 4.11.0 release listened
+on 127.0.0.1:4711, and a connection to the LAN address on port 4711 was
+refused. `ssh -L 5711:127.0.0.1:4711` to the LAN address of the same Mac
+forwarded the port. GDB 18.1 on port 5711 stopped at `break rs.c:4`, and
+`bt` showed 6 frames. A tunnel between two different machines was not
+measured.
+
 ## What the stub does
 
 - The stub keeps the breakpoints (`Z0` and `Z1`) in a table. It tests the table

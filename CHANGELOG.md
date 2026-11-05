@@ -12,6 +12,15 @@ summarises and points; `git log` is the detail. Open work is in
 
 ## [Unreleased]
 
+**Docs: debug from another machine through an SSH tunnel.** The stub listens
+on 127.0.0.1 only, and `docs/gdb_stub.md` did not say how a debugger on a
+different machine reaches it. The new section "Debug from another machine"
+gives the `ssh -L` command and the reason the stub stays on loopback (no
+password, and `M`/`X` packets write guest memory of a guest that can write
+host files). Measured with the 4.11.0 release: a connection to the LAN
+address was refused, and GDB 18.1 through `ssh -L` to the LAN address of
+the same Mac stopped at a breakpoint with a 6-frame `bt`.
+
 **Docs: `docs/gdb_stub.md` names 4.11.0 as the first release with `--gdb`.**
 The "What you need" list said to build from source; the released 4.11.0
 macOS binary ran the same udb80 and GDB 18.1 session (a 6-frame `bt` of a
