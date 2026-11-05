@@ -1156,6 +1156,50 @@ Built on 2026-11-04 (measured; each commit has the detail):
   ucow stores `int32` in 16 bits, so a large or negative value
   prints wrong.
 
+## Releases
+
+All published on 2026-11-05 (UTC). The PyPI packages publish through
+trusted publishing when the GitHub release is published. cpmemu and
+romwbw_emu attach their packages to the release.
+
+| Release | What it carries for the debugger | Checked |
+|---|---|---|
+| upeepz80 0.2.8 | keeps the `;#` markers and gives the same code with them | uplm80 CI with `-g` (3185 passed) |
+| um80 0.4.0 | `--debug-info` in um80, ul80 and ulib80; udb80; dbg2elf; the GDB scripts | a clean venv from PyPI debugged a uc80 `-g` program |
+| uc80 0.8.0 | `-g` and `--optnone` (needs upeepz80 0.2.8, uc_core 0.4.2) | the same venv |
+| uplm80 0.5.0 | `-g`, with `;#var` and `;#type` | CI 3185 passed; a clean venv with the cpmemu 4.11.0 release |
+| cpmemu 4.11.0 | `--gdb`, the shadow call stack, `--backtrace` | the macOS binary with udb80 and GDB 18.1 |
+| romwbw_emu 1.50 | `--gdb` with banks and `wait-program` | the dry-run `.deb` holds the stub |
+| um80 0.4.1 | the man pages, udb80 and dbg2elf among them, in the wheel | `man -w udb80` after a PyPI install |
+| um80 0.4.2 | udb80 `--wait-program` takes the rule stop as `T05` or `T05swbreak` | PyPI 0.4.2 against romwbw_emu with the new stub |
+| romwbw_emu 1.51 | the rule stop as `T05`, so `monitor wait-program` stops GDB; `--gdb-listen` | see below |
+| cpmemu 4.12.0 | `--gdb-listen`; `swbreak` by `qSupported`; the rule stop as `T05` | see below |
+
+**romwbw_emu 1.51** (published 14:09Z, 8 packages). The release clones
+cpmemu `main` for the stub. Thus a dispatch of `release.yml` with
+`version=1.51` ran first (run 42041866485, 14:06Z, after cpmemu `f248438`
+was pushed). Its amd64 `.deb` had the `--gdb-listen` usage and errors, the
+stub's `GDB stub listening on %s:%d` and the network warning.
+
+The new reply of the rule writes no text into the binary. That part of the
+check comes from the order of the commits and from the local test
+(`tests/gdb_stub_test.py` ALL PASSED at 1.51). The release build and the
+Tests run on the release commit passed. udb80 `--wait-program` against 1.51
+needs um80 0.4.2 or later. Against 1.50, 0.4.1 and 0.4.2 both work.
+
+**cpmemu 4.12.0** (published 14:18Z, 10 packages). Minor, for the new
+option. qkz80 is unchanged since 4.11.0, so `LIB_VERSION_MAJOR` stays 4.
+`tests/run_tests.sh` gave 347 passed, 0 failed and 6 skipped after the bump.
+The release build and the Tests run on the release commit passed.
+
+The macOS binary from `cpmemu-macos-universal.tar.gz`, with
+`--gdb-listen=0.0.0.0`, printed the warning and listened on 0.0.0.0. GDB
+18.1 connected to the LAN address 10.3.0.132, stopped at `break rs.c:4` in a
+uc80 `-g` program, and showed 6 frames.
+
+Not released: ioscpm, z80cpmw and cpmdroid. Each one has the stub on its
+default branch, and the stub reaches a user at the next build of the app.
+
 ## Phases
 
 Each phase ends with a test that can fail. **Milestone A** is phases 1 to

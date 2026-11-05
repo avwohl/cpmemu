@@ -10,6 +10,13 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
+## [Unreleased]
+
+**Docs: the debugger plan lists the releases.** A new "Releases" section in
+`docs/debugger_plan.md` lists the ten releases that carry the debugger work,
+with what each one carries and how it was checked, and gives cpmemu 4.12.0
+and romwbw_emu 1.51 in full.
+
 ## [4.12.0] - 2026-11-05
 
 **Docs: `docs/gdb_stub.md` names 4.12.0 for `--gdb-listen`.**
