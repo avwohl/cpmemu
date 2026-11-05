@@ -993,9 +993,9 @@ described in its `docs/GDB.md`.
   0 failed and 6 skipped before and after.
 - **Tests:** romwbw_emu `tests/gdb_stub_test.py` makes a `.COM` with um80 and
   ul80, and puts the `.COM` on a disk image with `util/cpm_disk.py`. Then the
-  test boots the image. The checks are the stop at 0100H in bank 8EH by bytes
-  and by SHA-256, the bank views, `monitor bt`, `^C`, `D`, `k`, the
-  instruction limit, HLT and `sim>`.
+  test boots the image. The test checks the stop at 0100H in bank 8EH by
+  bytes and by SHA-256. The test also checks the bank views, `monitor bt`,
+  `^C`, `D`, `k`, the instruction limit, HLT and `sim>`.
   A mutation check that broke the bank view, the SHA-256 compare and the bank
   8EH test failed the test in all three places.
 - **Speed with no `--gdb`:** 200M instructions of a DEC/OR/JR loop, 16
@@ -1042,8 +1042,22 @@ Built on 2026-11-04 (measured; each commit has the detail):
   registers, and no block RAM. The benches pass: 305 to 317 checks, 196 on
   RomWBW 3.6.0, and 0 of 1,604,000 CPU cases fail. GDB 18.1 worked through
   the bridge against the simulated system.
+- **Phase 8 for uplm80 and ucow.** uplm80 `f5422fc`: BYTE, ADDRESS, arrays,
+  structures and BASED variables, in `??AUTO`, at labels and in REENTRANT IX
+  frames. 220 builds are the same with and without `-g`, and udb80 prints each
+  kind at the known value at `-O0` to `-O3`. ucow `a353e2d`: the records name
+  the subroutine of a shared workspace slot, so udb80 prints the variable of
+  the frame that owns the slot. 96 builds are the same with and without `-g`.
+- **The frame walker** (um80_and_friends `ba7958a`) now follows a return
+  address that a routine pops into a register pair and puts back with
+  `ex (sp),hl`. Before, `bt frame` listed a uplm80 procedure with three
+  arguments twice.
 - **Not done:** the Vivado build and the run on the board (z80fpga
-  `MANUAL_CHECKS.md`), and variables for uplm80 and ucow.
+  `MANUAL_CHECKS.md`). The stub in ioscpm, z80cpmw and cpmdroid (a `todo.txt`
+  item in each, because this Mac builds none of them). Releases of upeepz80
+  and um80 on PyPI, so that uplm80's CI runs its `-g` tests (uplm80
+  `todo.txt`). ucow stores `int32` in 16 bits, so a large or negative value
+  prints wrong.
 
 ## Phases
 
