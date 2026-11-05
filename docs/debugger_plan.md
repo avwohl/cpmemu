@@ -802,15 +802,18 @@ release can support scalars, pointers and arrays.
 
 | Client | Platforms | Stub transport | Test | Can build on this Mac |
 |---|---|---|---|---|
-| cpmemu | Linux, macOS, Windows | TCP on 127.0.0.1 | `tests/gdb_stub_test.py` in `run_tests.sh`, all three CI jobs | yes |
-| romwbw_emu | Linux, macOS | TCP on 127.0.0.1 | a Python RSP test in its suite | yes |
-| ioscpm | iOS, macOS | TCP. The iOS app listens on the device network. | `MANUAL_CHECKS.md` | no (needs Xcode) |
-| z80cpmw | Windows | TCP on 127.0.0.1 | `MANUAL_CHECKS.md`, or a test with no window | no (needs MSVC) |
-| cpmdroid | Android | TCP, reached with `adb forward` | `MANUAL_CHECKS.md` | no (needs the Android SDK) |
+| cpmemu | Linux, macOS, Windows | TCP on 127.0.0.1; `--gdb-listen=ADDR` for the network | `tests/gdb_stub_test.py` in `run_tests.sh`, all three CI jobs | yes |
+| romwbw_emu | Linux, macOS | TCP on 127.0.0.1; `--gdb-listen=ADDR` for the network | a Python RSP test in its suite | yes |
+| ioscpm | iOS, Mac Catalyst | TCP on 127.0.0.1, or 0.0.0.0 with a setting (a real device needs it) | `Tests/gdb_stub_test.py` in `Tests/run_tests.sh`, and `MANUAL_CHECKS.md` | yes (Xcode 27.2) |
+| z80cpmw | Windows | TCP on 127.0.0.1, or 0.0.0.0 with a setting | `tests/test_gdb_session.cpp` (no window), and `MANUAL_CHECKS.md` | no (needs MSVC); the session suite builds with clang++ |
+| cpmdroid | Android | TCP on 127.0.0.1 with `adb forward`, or 0.0.0.0 with a setting | `MANUAL_CHECKS.md` | the C++ only (an NDK is installed); no SDK, no Gradle |
 | z80fpga | Nexys A7 board | serial line to a Python bridge | `sim/tb_romwbw`, then the board | no |
 
-Each GUI client gets a setting that turns the stub on and sets the port.
-The stub is off by default.
+Each GUI client gets a setting that turns the stub on and sets the port,
+and a second setting that puts the stub on the network. Both are off by
+default. The owner chose on 2026-11-05 to let the command-line emulators
+listen on the network too, with `--gdb-listen`, off by default and with a
+warning, in place of the SSH tunnel only.
 
 ### RomWBW clients
 
@@ -1018,8 +1021,96 @@ described in its `docs/GDB.md`.
   A breakpoint applies in every bank until `wait-program` fires or
   `break-bank` is set. The wait rule knows only 0100H in bank 8EH, so CP/M 3 and
   ZPM3 are not covered. The stub blocks in `serve()`, so z80cpmw needs a thread.
-- **Other clients:** ioscpm (`[MAC]`), z80cpmw (`[WINDOWS]`) and cpmdroid
-  (`[ANDROID]`) have a `todo.txt` item each.
+- **From another machine** (2026-11-05): the stub listens on 127.0.0.1. An
+  SSH tunnel (`ssh -N -L 1234:127.0.0.1:1234`) to the LAN address of the Mac
+  carried a GDB 18.1 session with a 6-frame `bt`. cpmemu `07468a3` and
+  romwbw_emu `8e3bf89` add `--gdb-listen=ADDR` (`0.0.0.0` or the address of
+  one interface). The option needs `--gdb`, and an address outside
+  127.0.0.0/8 prints a warning, since the stub has no password. The platform
+  layer gained `net_listen(addr, port, bound)`. romwbw_emu added the function
+  (`18df746`) before cpmemu called it, so the pair linked at each commit.
+  cpmemu `case_listen` has 16 checks, and romwbw_emu `case_listen` has 11.
+  Both pass on macOS with the LAN address 10.3.0.132. The cpmemu checks also
+  pass on the Linux, macOS and Windows CI jobs, each with its own LAN
+  address. A debugger on a different machine was not measured.
+- **Other clients:** see the next section.
+
+## Phase 9 results: ioscpm, z80cpmw and cpmdroid
+
+Built on 2026-11-05 at the owner's word ("all three now"), by one agent per
+client. A second agent reviewed each change, and the first agent then fixed
+the findings that were real. Each client has `docs/gdb.md`, a CHANGELOG
+entry, and a `todo.txt` item for what this Mac cannot check. The three
+clients use the same design:
+
+- cpmemu's `gdbstub.cc` and romwbw_emu's `romwbw_gdb.cc`, compiled from the
+  sibling checkouts, never copied: ioscpm through symlinks in
+  `iOSCPM/Core`, z80cpmw through its vcxproj, cpmdroid through its
+  `CMakeLists.txt`.
+- The stub is off by default. A setting turns it on and sets the port
+  (1234). A network setting is off by default (127.0.0.1); on, it gives
+  0.0.0.0, with the no-password warning beside it.
+- `Stub::serve()` runs on a thread that is not the UI thread. In z80cpmw and
+  cpmdroid, the normal run loop gives the CPU to that thread while a
+  debugger holds the machine. In ioscpm, the session runs on the emulation
+  queue before the run loop starts, and the stub's step function runs the
+  CPU.
+- Each target takes `monitor wait-program`. udb80 `--wait-program` was run
+  against ioscpm's core and z80cpmw's session code, not against cpmdroid.
+  Plain GDB needs `monitor break-bank 8E` and `break *0x100` (romwbw_emu
+  `docs/GDB.md`, Find the program with GDB).
+
+| Client | Commits | Platform layer | Built here | Run here | Not verified |
+|---|---|---|---|---|---|
+| ioscpm | `9283f76`, `531fdb0` | `gdb_platform_ios.cc`: romwbw_emu's sockets, with waits in 100 ms slices that look at a cancel flag | xcodebuild for the iOS Simulator and Mac Catalyst: BUILD SUCCEEDED at `9283f76`. At `531fdb0` only the Simulator build was made again. MARKETING_VERSION unchanged. | `Tests/run_tests.sh`: ALL TESTS PASSED, 1441 PASS at `9283f76` (1412 before), and ALL TESTS PASSED again at `531fdb0`. `Tests/gdb_stub_test.py` drives the app's `HBIOSEmulator` over TCP: T05 at 0000, step, `M`/`m`, `Z0`, HLT, ^C, detach, cancel, port in use, and the network setting on and off with the LAN address. udb80 `--wait-program` and GDB 18.1 stopped at `INNER` with a 3-frame `bt`. | The Settings screen and Play in the real app; a real iPhone or iPad; the Local Network prompt; a debugger on a different machine. |
+| z80cpmw | `313d294`, `f54162a` | `gdb_platform_windows.cpp`: Winsock, from cpmemu's `os/windows/platform.cc`, with waits in 100 ms slices | Nothing with MSVC or wxWidgets. clang++ `-fsyntax-only` of `GdbSession.cpp`, and of `EmulatorEngine.cpp` with a stand-in `pch.h` at `313d294` only (`f54162a` changed `EmulatorEngine.cpp` and `MainWindow.cpp`, and neither was compiled after). A full clang++ build of `tests/test_gdb_session.cpp`, also with `-fsanitize=thread`. | `tests/test_gdb_session.cpp` with a POSIX copy of the sockets: 47 checks, 0 failed. ThreadSanitizer found one race (a plain stop flag), now an atomic. GDB 18.1 and udb80 `--wait-program` connected, also on the LAN address, through a scratch driver around `GdbSession` with the POSIX sockets. | No debugger has connected to `z80cpmw.exe`. All of the Windows build (x64 and ARM64), the Winsock file, the wx Debugger page, `Config.cpp`, the Firewall prompt. `todo.txt` has the `[WINDOWS]` item, and `MANUAL_CHECKS.md` section 16 has the checks. |
+| cpmdroid | `52ceac8`, `7e07da6` | romwbw_emu's `gdb_platform.cc`, unchanged; a SIGURG to the stub thread ends a blocked `accept()` or `poll()` | An NDK at `/opt/homebrew/Caskroom/android-ndk/30` (the project pins 28.0.13004108) compiled and linked every C++ source into `libcpmdroid.so` for aarch64, armv7a, x86_64 and i686 at API 24, with `-Wl,--no-undefined` and no warnings. 35 JNI names on each side, the same. | A macOS harness (in the agent's scratchpad, not in the repository) around the real `emu_io_android.cpp` with a fake `JNIEnv`: 26 checks, 0 failed, at `52ceac8`, four runs; 30 checks, 0 failed, at `7e07da6`, three runs. GDB 18.1 connected to the harness. | udb80 `--wait-program`. The Kotlin (no kotlinc), a Gradle build, R8 and `verifyJniNamesSurviveR8`, a device, `adb forward`, the Wi-Fi address on Android 11 and later. `todo.txt` has the `[ANDROID]` item, and `MANUAL_CHECKS.md` section 12 has the checks. |
+
+What the reviews found and the fixes changed:
+
+- **cpmdroid:** a data race. Only `nativeRun` and the stub's step took the
+  new CPU lock. While a debugger held the machine, `nativeLoadDisk`,
+  `nativeCloseDisk`, `nativeGetDiskData` and the dirty flags could touch disk
+  storage under the running CPU. 20 JNI functions now take the lock, and the
+  calls that replace a disk or the ROM end the session first. New harness
+  checks cover the case (26 checks before the fix, 30 after). Also fixed: stale GDB settings after a disk change
+  in Settings, and a status line that kept the GDB text after a detach.
+- **z80cpmw:** the status line on the UI thread read the PC and a plain
+  instruction counter while the debug thread ran the CPU. While the stub is
+  on, the status line now shows the GDB text or `Running`, with no PC and no
+  instruction count. A failure text no
+  longer stays after the stub is turned off. A torn Dazzler picture during a
+  session is documented, not fixed.
+- **ioscpm:** Stop then Play within about 100 ms could meet the old
+  listener, and the old block could clear the new run's running flag.
+  `start()` now waits for the block of the run before. The docs say that iOS
+  suspends the app in the background or with the screen locked, so the wait
+  and the session do not go on. What a locked screen does was not measured
+  (`MANUAL_CHECKS.md` item 24). Not changed: the
+  `volatile bool` flags, because the shared `romwbw_gdb.h` takes
+  `volatile bool*`.
+
+Notes from the agents, not acted on:
+
+- romwbw_emu's `gdb_platform.cc` waits forever in `accept()` and `recv()`.
+  ioscpm and z80cpmw each needed sockets with a cancel, and cpmdroid uses a
+  signal. A shared platform layer with a cancel would remove the copies.
+- A GDB user (not udb80) on a RomWBW target needs `monitor break-bank 8E`
+  and `break *0x100`. Measured afterwards with GDB 18.1 on romwbw_emu:
+  `wait-program` and `continue` alone never stop (the stub's `T05swbreak` is
+  at an address where GDB set no breakpoint, so GDB continues). Without
+  `break-bank`, GDB stops at 0100H in ROM bank 01. With both, GDB's own
+  breakpoint stops before the rule fires, so `wait-program` does nothing for
+  GDB. romwbw_emu `docs/GDB.md` (Find the program with GDB) now has the
+  steps, and the z80cpmw and cpmdroid pages, which gave `wait-program` and
+  `continue`, point to it. A stub that sends `swbreak` only when GDB set the
+  breakpoint, and only when GDB offered `swbreak+`, would let the rule stop
+  GDB too. udb80 0.4.1 needs `swbreak` in the rule's stop reply, so that
+  change needs a udb80 change first.
+- A change to the socket declarations of `os/platform.h` now reaches four
+  platform layers: romwbw_emu's `gdb_platform.cc` (romwbw_emu and
+  cpmdroid), ioscpm's `gdb_platform_ios.cc` and z80cpmw's
+  `gdb_platform_windows.cpp`, as well as cpmemu's own two.
 
 ## Phase 8 and 10 results
 
@@ -1053,10 +1144,11 @@ Built on 2026-11-04 (measured; each commit has the detail):
   `ex (sp),hl`. Before, `bt frame` listed a uplm80 procedure with three
   arguments twice.
 - **Not done:** the Vivado build and the run on the board (z80fpga
-  `MANUAL_CHECKS.md`). The stub in ioscpm, z80cpmw and cpmdroid (a `todo.txt`
-  item in each, because this Mac builds none of them). Releases of upeepz80
-  and um80 on PyPI, so that uplm80's CI runs its `-g` tests (uplm80
-  `todo.txt`). ucow stores `int32` in 16 bits, so a large or negative value
+  `MANUAL_CHECKS.md`). The stub in ioscpm, z80cpmw and cpmdroid was built on
+  2026-11-05 (see Phase 9 results: ioscpm, z80cpmw and cpmdroid). Each one's
+  `todo.txt` now names only what this Mac cannot verify. upeepz80 0.2.8 and
+  um80 0.4.0 went to PyPI on 2026-11-04, and uplm80's CI runs its `-g` tests.
+  ucow stores `int32` in 16 bits, so a large or negative value
   prints wrong.
 
 ## Phases

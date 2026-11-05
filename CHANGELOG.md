@@ -12,6 +12,13 @@ summarises and points; `git log` is the detail. Open work is in
 
 ## [Unreleased]
 
+**Docs: the debugger plan records the GDB stub in ioscpm, z80cpmw and
+cpmdroid.** `docs/debugger_plan.md` gains "Phase 9 results: ioscpm, z80cpmw
+and cpmdroid" (what each built and ran on this Mac, what the reviews found,
+what is not verified) and the `--gdb-listen` and SSH tunnel results; its
+Platforms table is current. `docs/qkz80_library.md` names the three new
+consumers of `gdbstub.cc` and their platform layers.
+
 **`--gdb-listen=ADDR`: the GDB stub on a network address, off by default.**
 `--gdb` listens on 127.0.0.1, and a debugger on a different machine needed
 an SSH tunnel. `--gdb-listen=0.0.0.0` (or the IPv4 address of one interface)

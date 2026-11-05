@@ -105,7 +105,18 @@ declarations of `os/platform.h` reaches romwbw_emu on its next build. No
 notification comes. The target interface (`gdb::Target`) stays small for this
 reason. Each hook that romwbw_emu needed is a virtual function with a default
 (`read_code`, `break_applies`, `monitor_command`), and the default keeps cpmemu
-as it was. ioscpm, z80cpmw and cpmdroid do not compile the stub yet.
+as it was.
+
+Since 2026-11-05 ioscpm, z80cpmw and cpmdroid compile the stub too: ioscpm
+through symlinks in `iOSCPM/Core`, z80cpmw through its vcxproj, cpmdroid
+through its `CMakeLists.txt`. Each takes romwbw_emu's `romwbw_gdb.cc` as the
+target. The platform layers are romwbw_emu's `gdb_platform.cc` (romwbw_emu
+and cpmdroid), ioscpm's `gdb_platform_ios.cc` and z80cpmw's
+`gdb_platform_windows.cpp`. A new `platform::` function that `gdbstub.cc`
+calls must go into all three, and into cpmemu's two, before `gdbstub.cc`
+calls it. No CI job builds ioscpm, z80cpmw or cpmdroid, so a break shows
+on the next build by hand: Xcode for ioscpm, MSVC for z80cpmw, the Android
+SDK for cpmdroid.
 
 All four follow this repository's `main` rather than any tag, so a commit
 pushed here is what their next build takes. **Check them before changing
