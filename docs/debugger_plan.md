@@ -869,7 +869,7 @@ the GNU keyring). GDB 18.1 needs GMP and MPFR. MPFR came from Homebrew.
 
 ```
 configure --target=z80-unknown-elf --disable-nls --disable-werror \
-    --with-python=/opt/homebrew/bin/python3.14 --with-gmp=/opt/homebrew \
+    --with-python=/opt/homebrew/bin/python3 --with-gmp=/opt/homebrew \
     --with-mpfr=/opt/homebrew --without-guile --disable-sim
 make -j10 all-gdb
 ```
