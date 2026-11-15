@@ -829,7 +829,7 @@ exists: the packaging change reaches nobody until a release is cut, while the
   wants is Python 3.7: it imports `sys`, `os`, `struct` and `argparse` and
   nothing else, and the two floors are f-strings and
   `add_subparsers(required=True)`. Its 26 tests pass under Apple's 3.9.6 and
-  Homebrew 3.14.5. macOS ships no Python of its own and a tarball can declare
+  under Homebrew's Python. macOS ships no Python of its own and a tarball can declare
   nothing, so `docs/BUILDING.md` says in prose what a tarball user needs.
 
 ### Changed
