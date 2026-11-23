@@ -10,7 +10,7 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
-## [Unreleased]
+## [4.13.0] - 2026-11-23
 
 **BDOS calls answer in HL, with A = L and B = H, as CP/M 2.2 does (issue
 #5).** The 2.2 BDOS clears its result word on entry and leaves through
