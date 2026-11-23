@@ -10,7 +10,7 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
-## [Unreleased]
+## [4.13.1] - 2026-11-23
 
 **The emulator's own lines end in CR LF on a raw terminal (issue #5).** On
 Linux and macOS, raw mode clears `OPOST`, so that a guest's bare LF moves down
