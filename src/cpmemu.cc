@@ -113,15 +113,15 @@ static void do_save_memory() {
 
   FILE* fp = fopen(save_memory_file, "wb");
   if (!fp) {
-    fprintf(stderr, "Failed to save memory to %s: %s\n", save_memory_file, strerror(errno));
+    platform::diag("Failed to save memory to %s: %s\n", save_memory_file, strerror(errno));
     return;
   }
 
   size_t written = fwrite(&mem[start], 1, size, fp);
   fclose(fp);
 
-  fprintf(stderr, "Saved %zu bytes (0x%04X-0x%04X) to %s\n",
-          written, start, (uint16_t)(start + size - 1), save_memory_file);
+  platform::diag("Saved %zu bytes (0x%04X-0x%04X) to %s\n",
+                 written, start, (uint16_t)(start + size - 1), save_memory_file);
 }
 
 // How the run ended, for the debugger and for --backtrace.  Every exit of this
@@ -148,9 +148,9 @@ static void report_end(int code, bool abnormal, int sig) {
   if (end_reported) return;
   end_reported = true;
   if (abnormal && end_backtrace && end_tracker && end_target) {
-    fprintf(stderr, "Backtrace (shadow call stack, return addresses in hex):\n%s",
-            gdb::format_backtrace(end_tracker->stack(),
-                                  (uint16_t)end_target->read_reg(gdb::REG_PC)).c_str());
+    platform::diag("Backtrace (shadow call stack, return addresses in hex):\n%s",
+                   gdb::format_backtrace(end_tracker->stack(),
+                                         (uint16_t)end_target->read_reg(gdb::REG_PC)).c_str());
   }
   if (gdb::active_stub) {
     if (sig) gdb::active_stub->report_signal(sig);
@@ -183,7 +183,7 @@ static void end_hook() { report_end(end_code, end_abnormal, 0); }
 // was never made raw has nothing to put back.  The ^C and end-of-input paths
 // call it directly as belt and braces, not because they are a special case.
 static void program_exit(const char* why) {
-  fprintf(stderr, "%s\n", why);
+  platform::diag("%s\n", why);
   do_save_memory();
   finish(0, false);
 }
@@ -221,7 +221,7 @@ static bool check_ctrl_c_exit(int ch) {
   // every one of them was measured against first_ctrl_c_ms on the way in
   if (consecutive_ctrl_c >= CTRL_C_EXIT_COUNT) {
     if (ctrl_c_exit_enabled) {
-      fprintf(stderr, "\n[Exiting: %d consecutive ^C received]\n", CTRL_C_EXIT_COUNT);
+      platform::diag("\n[Exiting: %d consecutive ^C received]\n", CTRL_C_EXIT_COUNT);
       if (close_guest_files) close_guest_files();
       do_save_memory();
       platform::disable_raw_mode();
@@ -274,8 +274,8 @@ static void note_console_eof() {
     // Nothing is going to change: stdin is finished and the guest is still
     // asking.  Leaving is better than spinning, and it is what a warm boot
     // amounts to here anyway.
-    fprintf(stderr, "\n[Exiting: %d console reads past end of input]\n",
-            consecutive_console_eof);
+    platform::diag("\n[Exiting: %d console reads past end of input]\n",
+                   consecutive_console_eof);
     if (close_guest_files) close_guest_files();
     do_save_memory();
     platform::disable_raw_mode();
@@ -1036,7 +1036,7 @@ void CPMEmulator::setup_command_line(int argc, char** argv, int program_arg_inde
   }
 
   if (debug) {
-    fprintf(stderr, "Command line (%d bytes): '%s'\n", (int)cmdline.length(), cmdline.c_str());
+    platform::diag("Command line (%d bytes): '%s'\n", (int)cmdline.length(), cmdline.c_str());
   }
 }
 
@@ -1045,7 +1045,7 @@ void CPMEmulator::add_file_mapping(const std::string& cpm_name, const std::strin
   file_map[normalized] = unix_path;
 
   if (debug) {
-    fprintf(stderr, "File mapping: '%s' -> '%s'\n", normalized.c_str(), unix_path.c_str());
+    platform::diag("File mapping: '%s' -> '%s'\n", normalized.c_str(), unix_path.c_str());
   }
 }
 
@@ -1059,10 +1059,10 @@ void CPMEmulator::add_file_mapping_ex(const std::string& cpm_pattern, const std:
   file_mappings.push_back(mapping);
 
   if (debug) {
-    fprintf(stderr, "File mapping: '%s' -> '%s' (mode: %s, eol: %s)\n",
-            mapping.cpm_pattern.c_str(), unix_pattern.c_str(),
-            mode == MODE_TEXT ? "text" : mode == MODE_BINARY ? "binary" : "auto",
-            eol_convert ? "yes" : "no");
+    platform::diag("File mapping: '%s' -> '%s' (mode: %s, eol: %s)\n",
+                   mapping.cpm_pattern.c_str(), unix_pattern.c_str(),
+                   mode == MODE_TEXT ? "text" : mode == MODE_BINARY ? "binary" : "auto",
+                   eol_convert ? "yes" : "no");
   }
 }
 
@@ -1698,7 +1698,7 @@ bool CPMEmulator::close_open_file(OpenFile& of) {
   if (of.img) {
     ok = write_back(*of.img);
     std::string path = of.img->path;
-    if (!ok) fprintf(stderr, "cpmemu: %s: a change could not be written back\n", path.c_str());
+    if (!ok) platform::diag("cpmemu: %s: a change could not be written back\n", path.c_str());
     of.img.reset();
     auto it = text_images.find(path);
     if (it != text_images.end() && it->second.use_count() == 1) text_images.erase(it);
@@ -1776,7 +1776,7 @@ bool CPMEmulator::write_record(OpenFile& of, uint32_t record, const uint8_t* buf
 bool CPMEmulator::load_config_file(const std::string& cfg_path) {
   std::ifstream cfg(cfg_path.c_str());
   if (!cfg.is_open()) {
-    fprintf(stderr, "Cannot open config file: %s\n", cfg_path.c_str());
+    platform::diag("Cannot open config file: %s\n", cfg_path.c_str());
     return false;
   }
 
@@ -1801,7 +1801,7 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
     // Parse key = value
     size_t eq = line.find('=');
     if (eq == std::string::npos) {
-      fprintf(stderr, "Config line %d: invalid format (missing =)\n", line_num);
+      platform::diag("Config line %d: invalid format (missing =)\n", line_num);
       continue;
     }
 
@@ -1818,7 +1818,7 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
     value = (vb == std::string::npos) ? "" : value.substr(vb, value.find_last_not_of(" \t") - vb + 1);
 
     if (key.empty()) {
-      fprintf(stderr, "Config line %d: missing key before '='\n", line_num);
+      platform::diag("Config line %d: missing key before '='\n", line_num);
       continue;
     }
 
@@ -1832,10 +1832,10 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
     } else if (key == "cd" || key == "chdir") {
       // Change working directory
       if (platform::change_directory(value.c_str()) != 0) {
-        fprintf(stderr, "Config line %d: Cannot change directory to '%s': %s\n",
-                line_num, value.c_str(), strerror(errno));
+        platform::diag("Config line %d: Cannot change directory to '%s': %s\n",
+                       line_num, value.c_str(), strerror(errno));
       } else if (debug) {
-        fprintf(stderr, "Changed directory to: %s\n", value.c_str());
+        platform::diag("Changed directory to: %s\n", value.c_str());
       }
     } else if (key == "default_mode") {
       if (value == "text") default_mode = MODE_TEXT;
@@ -1865,22 +1865,22 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
       // file called DRIVE_B and did nothing.
       char letter = toupper(key[6]);
       if (letter < 'A' || letter > 'P') {
-        fprintf(stderr, "Config line %d: '%s' is not a drive between A and P\n",
-                line_num, key.c_str());
+        platform::diag("Config line %d: '%s' is not a drive between A and P\n",
+                       line_num, key.c_str());
       } else if (value.empty()) {
-        fprintf(stderr, "Config line %d: drive %c: given no directory\n",
-                line_num, letter);
+        platform::diag("Config line %d: drive %c: given no directory\n",
+                       line_num, letter);
       } else {
         int idx = letter - 'A';
         if (platform::get_file_type(value.c_str()) != platform::FileType::Directory) {
           // Not fatal: the directory may be created before the guest runs.
-          fprintf(stderr, "Config line %d: warning: drive %c: '%s' is not a directory\n",
-                  line_num, letter, value.c_str());
+          platform::diag("Config line %d: warning: drive %c: '%s' is not a directory\n",
+                         line_num, letter, value.c_str());
         }
         drive_dirs[idx] = value;
         login_vector |= (qkz80_uint16)(1u << idx);
         if (debug) {
-          fprintf(stderr, "Drive %c: -> %s\n", letter, value.c_str());
+          platform::diag("Drive %c: -> %s\n", letter, value.c_str());
         }
       }
     } else {
@@ -1897,10 +1897,10 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
       bool warned = false;
       for (size_t d = 0; d < sizeof(kDirectives) / sizeof(kDirectives[0]); d++) {
         if (key_lower == kDirectives[d]) {
-          fprintf(stderr,
-                  "Config line %d: '%s' is being read as a file mapping; the "
-                  "directive is spelled '%s'\n",
-                  line_num, key.c_str(), kDirectives[d]);
+          platform::diag(
+              "Config line %d: '%s' is being read as a file mapping; the "
+              "directive is spelled '%s'\n",
+              line_num, key.c_str(), kDirectives[d]);
           warned = true;
           break;
         }
@@ -1912,10 +1912,10 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
           key.find('.') == std::string::npos && key.find('*') == std::string::npos &&
           value.find('/') == std::string::npos &&
           platform::get_file_type(value.c_str()) == platform::FileType::NotFound) {
-        fprintf(stderr,
-                "Config line %d: '%s' is not a directive, so it is a file "
-                "mapping to '%s' - which does not exist\n",
-                line_num, key.c_str(), value.c_str());
+        platform::diag(
+            "Config line %d: '%s' is not a directive, so it is a file "
+            "mapping to '%s' - which does not exist\n",
+            line_num, key.c_str(), value.c_str());
       }
 
       // Assume it's a file mapping: pattern = path [mode]
@@ -1956,10 +1956,10 @@ void CPMEmulator::set_printer_file(const std::string& path) {
   if (printer_file) fclose(printer_file);
   printer_file = fopen(path.c_str(), "w");
   if (!printer_file) {
-    fprintf(stderr, "Warning: Cannot open printer file '%s': %s\n",
-            path.c_str(), strerror(errno));
+    platform::diag("Warning: Cannot open printer file '%s': %s\n",
+                   path.c_str(), strerror(errno));
   } else if (debug) {
-    fprintf(stderr, "Printer output redirected to: %s\n", path.c_str());
+    platform::diag("Printer output redirected to: %s\n", path.c_str());
   }
 }
 
@@ -1967,10 +1967,10 @@ void CPMEmulator::set_aux_input_file(const std::string& path) {
   if (aux_in_file) fclose(aux_in_file);
   aux_in_file = fopen(path.c_str(), "r");
   if (!aux_in_file) {
-    fprintf(stderr, "Warning: Cannot open aux input file '%s': %s\n",
-            path.c_str(), strerror(errno));
+    platform::diag("Warning: Cannot open aux input file '%s': %s\n",
+                   path.c_str(), strerror(errno));
   } else if (debug) {
-    fprintf(stderr, "Auxiliary input redirected from: %s\n", path.c_str());
+    platform::diag("Auxiliary input redirected from: %s\n", path.c_str());
   }
 }
 
@@ -1978,10 +1978,10 @@ void CPMEmulator::set_aux_output_file(const std::string& path) {
   if (aux_out_file) fclose(aux_out_file);
   aux_out_file = fopen(path.c_str(), "w");
   if (!aux_out_file) {
-    fprintf(stderr, "Warning: Cannot open aux output file '%s': %s\n",
-            path.c_str(), strerror(errno));
+    platform::diag("Warning: Cannot open aux output file '%s': %s\n",
+                   path.c_str(), strerror(errno));
   } else if (debug) {
-    fprintf(stderr, "Auxiliary output redirected to: %s\n", path.c_str());
+    platform::diag("Auxiliary output redirected to: %s\n", path.c_str());
   }
 }
 
@@ -2081,7 +2081,7 @@ static void fill_fcb_field(qkz80_uint8* mem, qkz80_uint16 at, size_t width,
       return;
     }
     if (c != '?' && !is_valid_cpm_char(c)) {
-      fprintf(stderr, "Warning: invalid CP/M character '%c' in filename '%s'\n", c, whole.c_str());
+      platform::diag("Warning: invalid CP/M character '%c' in filename '%s'\n", c, whole.c_str());
       c = '_';  // Replace with underscore
     }
     mem[at + i] = static_cast<qkz80_uint8>(c);
@@ -2244,7 +2244,7 @@ void CPMEmulator::bdos_return_registers(qkz80_uint8 func) {
 
 void CPMEmulator::bdos_call(qkz80_uint8 func) {
   if (debug || debug_bdos_funcs.count(func)) {
-    fprintf(stderr, "BDOS call %d\n", func);
+    platform::diag("BDOS call %d\n", func);
   }
 
   // Every file call reads and writes its FCB as mem[DE + n], and the guest
@@ -2256,8 +2256,8 @@ void CPMEmulator::bdos_call(qkz80_uint8 func) {
   int fcb_len = fcb_bytes_used(func);
   if (fcb_len && cpu->get_reg16(qkz80::regp_DE) > 0x10000 - fcb_len) {
     if (debug || debug_bdos_funcs.count(func)) {
-      fprintf(stderr, "BDOS %d: FCB at %04X runs past FFFFh, refused\n", func,
-              cpu->get_reg16(qkz80::regp_DE));
+      platform::diag("BDOS %d: FCB at %04X runs past FFFFh, refused\n", func,
+                     cpu->get_reg16(qkz80::regp_DE));
     }
     cpu->set_reg8(0xFF, qkz80::reg_A);
     return;
@@ -2442,7 +2442,7 @@ void CPMEmulator::bdos_call(qkz80_uint8 func) {
     break;
 
   default:
-    fprintf(stderr, "Unimplemented BDOS function %d\n", func);
+    platform::diag("Unimplemented BDOS function %d\n", func);
     cpu->set_reg8(0xFF, qkz80::reg_A);
     break;
   }
@@ -2740,7 +2740,7 @@ void CPMEmulator::bdos_get_version() {
 void CPMEmulator::bdos_get_set_dma() {
   current_dma = cpu->get_reg16(qkz80::regp_DE);
   if (debug) {
-    fprintf(stderr, "Set DMA to 0x%04X\n", current_dma);
+    platform::diag("Set DMA to 0x%04X\n", current_dma);
   }
 }
 
@@ -2758,7 +2758,7 @@ void CPMEmulator::bdos_set_drive() {
   qkz80_uint8* mem = cpu->get_mem();
   mem[DRVUSER_ADDR] = (mem[DRVUSER_ADDR] & 0xF0) | current_drive;
   if (debug) {
-    fprintf(stderr, "Set drive to %c:\n", 'A' + current_drive);
+    platform::diag("Set drive to %c:\n", 'A' + current_drive);
   }
 }
 
@@ -2779,7 +2779,7 @@ bool CPMEmulator::open_fcb_file(qkz80_uint16 fcb_addr, int func) {
 
   if (!validate_fcb_name(cpu->get_mem(), fcb_addr)) {
     if (trace) {
-      fprintf(stderr, "BDOS Open: rejected invalid FCB filename\n");
+      platform::diag("BDOS Open: rejected invalid FCB filename\n");
     }
     cpu->set_reg8(0xFF, qkz80::reg_A);
     return false;
@@ -2795,9 +2795,9 @@ bool CPMEmulator::open_fcb_file(qkz80_uint16 fcb_addr, int func) {
   if (!unix_path.empty()) unix_path = tracked_path(unix_path);
 
   if (trace) {
-    fprintf(stderr, "BDOS Open: '%s' -> '%s' (mode: %s)\n", filename.c_str(),
-            unix_path.empty() ? "(not found)" : unix_path.c_str(),
-            unix_path.empty() ? "none" : mode == MODE_TEXT ? "text" : "binary");
+    platform::diag("BDOS Open: '%s' -> '%s' (mode: %s)\n", filename.c_str(),
+                   unix_path.empty() ? "(not found)" : unix_path.c_str(),
+                   unix_path.empty() ? "none" : mode == MODE_TEXT ? "text" : "binary");
   }
 
   if (unix_path.empty()) {
@@ -2915,8 +2915,8 @@ void CPMEmulator::bdos_open_file() {
   uint32_t ex = mem[fcb_addr + FCB_EX] & 0x1F;
   if (ex >= extents) {
     if (debug || debug_bdos_funcs.count(15)) {
-      fprintf(stderr, "BDOS Open: '%s' has %u records, no extent %u\n",
-              it->second.cpm_name.c_str(), records, ex);
+      platform::diag("BDOS Open: '%s' has %u records, no extent %u\n",
+                     it->second.cpm_name.c_str(), records, ex);
     }
     std::string path = it->second.unix_path;
     close_open_file(it->second);
@@ -2936,14 +2936,14 @@ void CPMEmulator::bdos_close_file() {
   qkz80_uint16 fcb_addr = cpu->get_reg16(qkz80::regp_DE);
 
   if (debug || debug_bdos_funcs.count(16)) {
-    fprintf(stderr, "Close file: FCB at %04X\n", fcb_addr);
+    platform::diag("Close file: FCB at %04X\n", fcb_addr);
   }
 
   bool closed = true;
   auto it = open_files.find(fcb_addr);
   if (it != open_files.end()) {
     if (debug || debug_bdos_funcs.count(16)) {
-      fprintf(stderr, "Close file: closing '%s'\n", it->second.cpm_name.c_str());
+      platform::diag("Close file: closing '%s'\n", it->second.cpm_name.c_str());
     }
     std::string path = it->second.unix_path;
     closed = close_open_file(it->second);
@@ -2951,7 +2951,7 @@ void CPMEmulator::bdos_close_file() {
     settle_made_file(path, debug || debug_bdos_funcs.count(16));
   } else {
     if (debug || debug_bdos_funcs.count(16)) {
-      fprintf(stderr, "Close file: file not open (OK)\n");
+      platform::diag("Close file: file not open (OK)\n");
     }
   }
   // Success, whether or not the FCB was open - CP/M close is idempotent -
@@ -2959,7 +2959,7 @@ void CPMEmulator::bdos_close_file() {
   cpu->set_reg8(closed ? 0 : 0xFF, qkz80::reg_A);
 
   if (debug || debug_bdos_funcs.count(16)) {
-    fprintf(stderr, "Close file: returning A=%02X\n", cpu->get_reg8(qkz80::reg_A));
+    platform::diag("Close file: returning A=%02X\n", cpu->get_reg8(qkz80::reg_A));
   }
 }
 
@@ -2990,7 +2990,7 @@ OpenFile* CPMEmulator::fcb_open_file(qkz80_uint16 fcb_addr, int func) {
   auto it = open_files.find(fcb_addr);
   if (it != open_files.end()) return &it->second;
   if (debug || debug_bdos_funcs.count(func)) {
-    fprintf(stderr, "BDOS %d: FCB %04X not open, opening it from its name\n", func, fcb_addr);
+    platform::diag("BDOS %d: FCB %04X not open, opening it from its name\n", func, fcb_addr);
   }
   if (!open_fcb_file(fcb_addr, func)) return nullptr;  // A = 0xFF
   return &open_files.find(fcb_addr)->second;
@@ -3032,8 +3032,8 @@ void CPMEmulator::bdos_read_sequential() {
   if (nread == 0) {
     cpu->set_reg8(1, qkz80::reg_A);  // EOF - no data available
     if (trace) {
-      fprintf(stderr, "Read sequential: FCB %04X file '%s' record %u -> EOF (no data)\n",
-              fcb_addr, of->cpm_name.c_str(), record);
+      platform::diag("Read sequential: FCB %04X file '%s' record %u -> EOF (no data)\n",
+                     fcb_addr, of->cpm_name.c_str(), record);
     }
     return;
   }
@@ -3047,8 +3047,8 @@ void CPMEmulator::bdos_read_sequential() {
   cpu->set_reg8(0, qkz80::reg_A);  // Success
 
   if (trace) {
-    fprintf(stderr, "Read sequential: FCB %04X file '%s' record %u read %zu bytes, returning A=0\n",
-            fcb_addr, of->cpm_name.c_str(), record, nread);
+    platform::diag("Read sequential: FCB %04X file '%s' record %u read %zu bytes, returning A=0\n",
+                   fcb_addr, of->cpm_name.c_str(), record, nread);
   }
 
   // The record after: CR + 1, so CR = 128 after an extent's last record.  A
@@ -3083,8 +3083,8 @@ void CPMEmulator::bdos_write_sequential() {
   dma_get(buffer, 128);
   bool ok = write_record(*of, record, buffer);
   if (trace) {
-    fprintf(stderr, "Write sequential: FCB %04X file '%s' record %u %s\n", fcb_addr,
-            of->cpm_name.c_str(), record, ok ? "written" : "FAILED");
+    platform::diag("Write sequential: FCB %04X file '%s' record %u %s\n", fcb_addr,
+                   of->cpm_name.c_str(), record, ok ? "written" : "FAILED");
   }
   if (!ok) {
     cpu->set_reg8(0xFF, qkz80::reg_A);  // Error
@@ -3150,7 +3150,7 @@ void CPMEmulator::bdos_make_file() {
 
   if (!validate_fcb_name(cpu->get_mem(), fcb_addr)) {
     if (debug || debug_bdos_funcs.count(22)) {
-      fprintf(stderr, "Make file: rejected invalid FCB filename\n");
+      platform::diag("Make file: rejected invalid FCB filename\n");
     }
     cpu->set_reg8(0xFF, qkz80::reg_A);
     return;
@@ -3199,8 +3199,8 @@ void CPMEmulator::bdos_make_file() {
       mode = found_mode;
       eol_convert = found_eol;
       if (debug || debug_bdos_funcs.count(22)) {
-        fprintf(stderr, "Make file: %s exists, extent %u added to it\n", found.c_str(),
-                cpu->get_mem()[fcb_addr + FCB_EX] & 0x1Fu);
+        platform::diag("Make file: %s exists, extent %u added to it\n", found.c_str(),
+                       cpu->get_mem()[fcb_addr + FCB_EX] & 0x1Fu);
       }
     }
   }
@@ -3214,11 +3214,11 @@ void CPMEmulator::bdos_make_file() {
   }
   if (!extending) make_file_mode(filename, unix_name, &mode, &eol_convert, &kind);
   if (debug || debug_bdos_funcs.count(22)) {
-    fprintf(stderr, "Make file: %s -> %s (mode: %s%s)\n", filename.c_str(), unix_name.c_str(),
-            mode == MODE_TEXT ? "text" : "binary",
-            extending ? ", as it was"
-            : kind == MAKE_GUESSED ? ", until renamed"
-            : kind == MAKE_BY_CONTENT ? ", text at its close if it is text" : "");
+    platform::diag("Make file: %s -> %s (mode: %s%s)\n", filename.c_str(), unix_name.c_str(),
+                   mode == MODE_TEXT ? "text" : "binary",
+                   extending ? ", as it was"
+                   : kind == MAKE_GUESSED ? ", until renamed"
+                   : kind == MAKE_BY_CONTENT ? ", text at its close if it is text" : "");
   }
   if (extending) {
     // the file is what it was; a rename decides it as before, if at all
@@ -3278,7 +3278,7 @@ void CPMEmulator::bdos_delete_file() {
 
   if (!validate_fcb_name(cpu->get_mem(), fcb_addr)) {
     if (debug || debug_bdos_funcs.count(19)) {
-      fprintf(stderr, "Delete file: rejected invalid FCB filename\n");
+      platform::diag("Delete file: rejected invalid FCB filename\n");
     }
     cpu->set_reg8(0xFF, qkz80::reg_A);
     return;
@@ -3310,8 +3310,8 @@ void CPMEmulator::bdos_delete_file() {
     unix_path = tracked_path(unix_path);  // before it is gone
     bool ok = platform::delete_file(unix_path.c_str());
     if (debug || debug_bdos_funcs.count(19)) {
-      fprintf(stderr, "Delete file: %s -> %s%s\n", filename.c_str(), unix_path.c_str(),
-              ok ? "" : " (failed)");
+      platform::diag("Delete file: %s -> %s%s\n", filename.c_str(), unix_path.c_str(),
+                     ok ? "" : " (failed)");
     }
     if (!ok) continue;
     made_guessed.erase(unix_path);
@@ -3323,7 +3323,7 @@ void CPMEmulator::bdos_delete_file() {
     deleted++;
   }
   if (paths.empty() && (debug || debug_bdos_funcs.count(19))) {
-    fprintf(stderr, "Delete file: %s -> (not found)\n", filename.c_str());
+    platform::diag("Delete file: %s -> (not found)\n", filename.c_str());
   }
 
   cpu->set_reg8(deleted ? 0 : 0xFF, qkz80::reg_A);
@@ -3362,8 +3362,8 @@ void CPMEmulator::bdos_read_random() {
   size_t nread = read_record(*of, record_num, buffer, false);
 
   if (debug || debug_bdos_funcs.count(33)) {
-    fprintf(stderr, "Read random: FCB %04X file '%s' record %u read %zu bytes\n",
-            fcb_addr, of->cpm_name.c_str(), record_num, nread);
+    platform::diag("Read random: FCB %04X file '%s' record %u read %zu bytes\n",
+                   fcb_addr, of->cpm_name.c_str(), record_num, nread);
   }
 
   if (nread == 0) {
@@ -3396,8 +3396,8 @@ void CPMEmulator::bdos_write_random() {
   }
 
   if (debug || debug_bdos_funcs.count(34)) {
-    fprintf(stderr, "Write random: FCB %04X file '%s' record %u %s\n",
-            fcb_addr, of->cpm_name.c_str(), record_num, ok ? "written" : "FAILED");
+    platform::diag("Write random: FCB %04X file '%s' record %u %s\n",
+                   fcb_addr, of->cpm_name.c_str(), record_num, ok ? "written" : "FAILED");
   }
   cpu->set_reg8(ok ? 0 : 0xFF, qkz80::reg_A);
 }
@@ -3408,7 +3408,7 @@ void CPMEmulator::bdos_file_size() {
 
   if (!validate_fcb_name(mem, fcb_addr)) {
     if (debug || debug_bdos_funcs.count(35)) {
-      fprintf(stderr, "File size: rejected invalid FCB filename\n");
+      platform::diag("File size: rejected invalid FCB filename\n");
     }
     cpu->set_reg8(0xFF, qkz80::reg_A);
     return;
@@ -3486,7 +3486,7 @@ void CPMEmulator::bdos_rename_file() {
   if (!validate_fcb_name(cpu->get_mem(), fcb_addr) ||
       !validate_fcb_name(cpu->get_mem(), fcb_addr + 16)) {
     if (debug || debug_bdos_funcs.count(23)) {
-      fprintf(stderr, "Rename: rejected invalid FCB filename\n");
+      platform::diag("Rename: rejected invalid FCB filename\n");
     }
     cpu->set_reg8(0xFF, qkz80::reg_A);
     return;
@@ -3523,7 +3523,7 @@ void CPMEmulator::bdos_rename_file() {
   }
 
   if (debug || debug_bdos_funcs.count(23)) {
-    fprintf(stderr, "Rename: %s -> %s\n", old_path.c_str(), new_path.c_str());
+    platform::diag("Rename: %s -> %s\n", old_path.c_str(), new_path.c_str());
   }
 
   // The file the rename replaces, by the spelling it is known by, or none
@@ -3617,8 +3617,8 @@ void CPMEmulator::renamed_made_file(const std::string& old_path, const std::stri
     return;
   }
   if (kind == MAKE_AS_MODE && (mode != MODE_TEXT || !eol_convert)) {
-    if (trace) fprintf(stderr, "Rename: %s left as written: its name is not converted text\n",
-                       new_path.c_str());
+    if (trace) platform::diag("Rename: %s left as written: its name is not converted text\n",
+                              new_path.c_str());
     made_raw.insert(new_path);  // still as written, for a rename after this one
     if (random) made_random.insert(new_path);
     return;
@@ -3633,8 +3633,8 @@ void CPMEmulator::renamed_made_file(const std::string& old_path, const std::stri
   // closed stayed CR LF and ^Z padding.
   for (const auto& pair : open_files) {
     if (pair.second.is_open() && pair.second.unix_path == old_path) {
-      if (trace) fprintf(stderr, "Rename: %s still open, decided at its last close\n",
-                         new_path.c_str());
+      if (trace) platform::diag("Rename: %s still open, decided at its last close\n",
+                                new_path.c_str());
       if (kind == MAKE_AS_MODE) {
         made_to_text.insert(new_path);
       } else {
@@ -3747,7 +3747,7 @@ bool CPMEmulator::convert_made_file_to_text(const std::string& path, const char*
     }
   }
   if (why) {
-    if (trace) fprintf(stderr, "%s: %s left as written: %s\n", who, path.c_str(), why);
+    if (trace) platform::diag("%s: %s left as written: %s\n", who, path.c_str(), why);
     return false;
   }
 
@@ -3756,8 +3756,8 @@ bool CPMEmulator::convert_made_file_to_text(const std::string& path, const char*
   bool ok = host.empty() || fwrite(host.data(), 1, host.size(), fp) == host.size();
   ok = (fclose(fp) == 0) && ok;
   if (trace) {
-    fprintf(stderr, "%s: %s converted to host text, %zu bytes to %zu%s\n", who, path.c_str(),
-            raw.size(), host.size(), ok ? "" : " (WRITE FAILED)");
+    platform::diag("%s: %s converted to host text, %zu bytes to %zu%s\n", who, path.c_str(),
+                   raw.size(), host.size(), ok ? "" : " (WRITE FAILED)");
   }
   return ok;
 }
@@ -3781,8 +3781,8 @@ bool CPMEmulator::write_made_file_as_text(const std::string& path, const char* w
   bool ok = host.empty() || fwrite(host.data(), 1, host.size(), fp) == host.size();
   ok = (fclose(fp) == 0) && ok;
   if (trace) {
-    fprintf(stderr, "%s: %s written as host text, %zu bytes to %zu%s\n", who, path.c_str(),
-            raw.size(), host.size(), ok ? "" : " (WRITE FAILED)");
+    platform::diag("%s: %s written as host text, %zu bytes to %zu%s\n", who, path.c_str(),
+                   raw.size(), host.size(), ok ? "" : " (WRITE FAILED)");
   }
   return ok;
 }
@@ -3996,13 +3996,13 @@ void CPMEmulator::bdos_search_first() {
                    std::string(reinterpret_cast<const char*>(&mem[fcb_addr + 9]), 3);
 
   if (debug || debug_bdos_funcs.count(17)) {
-    fprintf(stderr, "Search First: pattern='%s'\n", search_pattern.c_str());
+    platform::diag("Search First: pattern='%s'\n", search_pattern.c_str());
   }
 
   search_results = directory_matches(fcb_addr);
 
   if (debug || debug_bdos_funcs.count(17)) {
-    fprintf(stderr, "Search First: found %zu files\n", search_results.size());
+    platform::diag("Search First: found %zu files\n", search_results.size());
   }
 
   // One directory entry per logical extent, as a CP/M directory has them,
@@ -4099,7 +4099,7 @@ void CPMEmulator::write_dir_entry(const SearchResult& r) {
 
 void CPMEmulator::bdos_search_next() {
   if (debug || debug_bdos_funcs.count(18)) {
-    fprintf(stderr, "Search Next: index=%zu/%zu\n", search_index, search_results.size());
+    platform::diag("Search Next: index=%zu/%zu\n", search_index, search_results.size());
   }
 
   if (search_index >= search_results.size()) {
@@ -4159,7 +4159,7 @@ void CPMEmulator::check_write(qkz80_uint16 fcb_addr) {
   console_output('\n');
   fflush(stdout);
   close_all_files();
-  fprintf(stderr, "BDOS write to read-only drive %c: - exiting\n", 'A' + drive);
+  platform::diag("BDOS write to read-only drive %c: - exiting\n", 'A' + drive);
   do_save_memory();
   finish(1, true);
 }
@@ -4192,7 +4192,7 @@ void CPMEmulator::bdos_write_random_zero_fill() {
 
 void CPMEmulator::bios_call(int offset) {
   if (debug || debug_bios_offsets.count(offset)) {
-    fprintf(stderr, "BIOS call offset %d\n", offset);
+    platform::diag("BIOS call offset %d\n", offset);
   }
 
   switch (offset) {
@@ -4233,7 +4233,7 @@ void CPMEmulator::bios_call(int offset) {
   case BIOS_SELDSK: {
     qkz80_uint8 drive = cpu->get_reg8(qkz80::reg_C);
     if (debug || debug_bios_offsets.count(offset)) {
-      fprintf(stderr, "BIOS SELDSK: drive %c\n", 'A' + drive);
+      platform::diag("BIOS SELDSK: drive %c\n", 'A' + drive);
     }
     if (drive < 16) {
       // Every drive letter is selectable, because an unconfigured drive is
@@ -4281,8 +4281,8 @@ void CPMEmulator::bios_call(int offset) {
     // also what clears H on that path, the MVI H,0 of the skeletal listing.
     cpu->set_reg16(phys, qkz80::regp_HL);
     if (debug || debug_bios_offsets.count(offset)) {
-      fprintf(stderr, "BIOS SECTRAN: sector %04X table %04X -> %04X\n",
-              (unsigned)sector, (unsigned)table, (unsigned)phys);
+      platform::diag("BIOS SECTRAN: sector %04X table %04X -> %04X\n",
+                     (unsigned)sector, (unsigned)table, (unsigned)phys);
     }
     break;
   }
@@ -4296,9 +4296,9 @@ void CPMEmulator::bios_call(int offset) {
   case BIOS_WRITE:
     if (bios_disk_mode == 2) {
       // Error mode - exit emulator
-      fprintf(stderr, "FATAL: Unimplemented BIOS disk function at offset %d\n", offset);
-      fprintf(stderr, "This emulator handles file I/O at the BDOS level.\n");
-      fprintf(stderr, "Set CPM_BIOS_DISK=ok or CPM_BIOS_DISK=fail to change this behavior.\n");
+      platform::diag("FATAL: Unimplemented BIOS disk function at offset %d\n", offset);
+      platform::diag("This emulator handles file I/O at the BDOS level.\n");
+      platform::diag("Set CPM_BIOS_DISK=ok or CPM_BIOS_DISK=fail to change this behavior.\n");
       // As every other end of the run does: a text file's change still only
       // in its image, and a made file not yet decided, reach the host.
       close_all_files();
@@ -4313,20 +4313,20 @@ void CPMEmulator::bios_call(int offset) {
       // and every CPM_BIOS_DISK=fail run behaved as CPM_BIOS_DISK=ok.
       cpu->set_reg8(0x01, qkz80::reg_A);  // Return failure
       if (debug || debug_bios_offsets.count(offset)) {
-        fprintf(stderr, "BIOS disk function at offset %d - returning failure\n", offset);
+        platform::diag("BIOS disk function at offset %d - returning failure\n", offset);
       }
     } else {
       // OK mode (default) - return success
       cpu->set_reg8(0x00, qkz80::reg_A);  // Return success (0 = OK for BIOS disk)
       if (debug || debug_bios_offsets.count(offset)) {
-        fprintf(stderr, "BIOS disk function at offset %d - returning success\n", offset);
+        platform::diag("BIOS disk function at offset %d - returning success\n", offset);
       }
     }
     break;
 
   default:
     if (debug) {
-      fprintf(stderr, "Unimplemented BIOS function at offset %d\n", offset);
+      platform::diag("Unimplemented BIOS function at offset %d\n", offset);
     }
     break;
   }
@@ -4629,8 +4629,8 @@ private:
 // test suite - the limit is nine billion instructions, about eight minutes
 // here - so it is checked by reading rather than by running.
 static void report_instruction_limit(qkz80& cpu) {
-  fprintf(stderr, "Reached instruction limit\n");
-  fprintf(stderr, "PC = 0x%04X\n", cpu.regs.PC.get_pair16());
+  platform::diag("Reached instruction limit\n");
+  platform::diag("PC = 0x%04X\n", cpu.regs.PC.get_pair16());
 }
 
 // The emulator as the GDB stub sees it (gdbstub.h).  step() is the body of the
@@ -4757,7 +4757,7 @@ public:
         cpu.clear_halted();   // the debugger can resume past the HLT
         ev.halt = true;
       } else {
-        fprintf(stderr, "HLT at %04X with no interrupt to end it - exiting\n", ev.exec_pc);
+        platform::diag("HLT at %04X with no interrupt to end it - exiting\n", ev.exec_pc);
         if (close_guest_files) close_guest_files();
         do_save_memory();
         finish(1, true);
@@ -4768,7 +4768,7 @@ public:
     if ((count & 0xFFF) == 0) end_if_terminated();
 
     if (progress_interval > 0 && count - last_report >= progress_interval) {
-      fprintf(stderr, "Progress: %lldM instructions\n", count / 1000000);
+      platform::diag("Progress: %lldM instructions\n", count / 1000000);
       last_report = count;
     }
 
@@ -4783,38 +4783,38 @@ public:
 
 int main(int argc, char** argv) {
   if (argc < 2) {
-    fprintf(stderr, "Usage: %s [options] <program.com|config.cfg> [args...]\n", argv[0]);
-    fprintf(stderr, "\n");
-    fprintf(stderr, "Options may also be written after the program; they are\n");
-    fprintf(stderr, "applied and kept out of the CP/M command tail.\n");
-    fprintf(stderr, "\n");
-    fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  --8080              Run in 8080 mode\n");
-    fprintf(stderr, "  --z80               Run in Z80 mode (default)\n");
-    fprintf(stderr, "  --progress[=N]      Enable progress reporting every N million instructions\n");
-    fprintf(stderr, "                      (default N=100 if not specified, off by default)\n");
-    fprintf(stderr, "  --save-memory=FILE  Save memory to FILE on exit (for MOVCPM/SYSGEN)\n");
-    fprintf(stderr, "  --save-range=S-E    Save only range S to E (hex, e.g., DC00-FFFF)\n");
-    fprintf(stderr, "  --int-cycles=N      Enable timer interrupt every N cycles (e.g., 50000)\n");
-    fprintf(stderr, "  --int-rst=N         RST number for interrupt (0-7, default 7 = RST 38H)\n");
-    fprintf(stderr, "  --ctrl-c-exit       Exit after 5 consecutive typed ^C (default)\n");
-    fprintf(stderr, "  --no-ctrl-c-exit    Give every ^C to the program (WordStar page-down)\n");
-    fprintf(stderr, "  --gdb[=PORT]        Wait for GDB on 127.0.0.1:PORT (default 1234, 0 = any) before 0100H\n");
-    fprintf(stderr, "  --gdb-port-file=F   Write the port that --gdb listens on to file F\n");
-    fprintf(stderr, "  --gdb-listen=ADDR   Listen on IPv4 address ADDR (0.0.0.0 = every interface), not\n");
-    fprintf(stderr, "                      127.0.0.1.  No password: anyone who reaches ADDR controls the guest\n");
-    fprintf(stderr, "  --backtrace         Keep a shadow call stack and print it if the run ends badly\n");
-    fprintf(stderr, "\n");
-    fprintf(stderr, "Environment variables:\n");
-    fprintf(stderr, "  CPM_PROGRESS=N      Enable progress reporting every N million instructions\n");
-    fprintf(stderr, "\n");
-    fprintf(stderr, "Examples:\n");
-    fprintf(stderr, "  %s program.com              # Run CP/M program (default: Z80 mode)\n", argv[0]);
-    fprintf(stderr, "  %s --z80 program.com        # Run in Z80 mode\n", argv[0]);
-    fprintf(stderr, "  %s --progress program.com   # With progress reporting (every 100M)\n", argv[0]);
-    fprintf(stderr, "  %s --progress=50 prog.com   # Report every 50M instructions\n", argv[0]);
-    fprintf(stderr, "  %s program.com file.dat     # With file arguments\n", argv[0]);
-    fprintf(stderr, "  %s config.cfg               # With config file\n", argv[0]);
+    platform::diag("Usage: %s [options] <program.com|config.cfg> [args...]\n", argv[0]);
+    platform::diag("\n");
+    platform::diag("Options may also be written after the program; they are\n");
+    platform::diag("applied and kept out of the CP/M command tail.\n");
+    platform::diag("\n");
+    platform::diag("Options:\n");
+    platform::diag("  --8080              Run in 8080 mode\n");
+    platform::diag("  --z80               Run in Z80 mode (default)\n");
+    platform::diag("  --progress[=N]      Enable progress reporting every N million instructions\n");
+    platform::diag("                      (default N=100 if not specified, off by default)\n");
+    platform::diag("  --save-memory=FILE  Save memory to FILE on exit (for MOVCPM/SYSGEN)\n");
+    platform::diag("  --save-range=S-E    Save only range S to E (hex, e.g., DC00-FFFF)\n");
+    platform::diag("  --int-cycles=N      Enable timer interrupt every N cycles (e.g., 50000)\n");
+    platform::diag("  --int-rst=N         RST number for interrupt (0-7, default 7 = RST 38H)\n");
+    platform::diag("  --ctrl-c-exit       Exit after 5 consecutive typed ^C (default)\n");
+    platform::diag("  --no-ctrl-c-exit    Give every ^C to the program (WordStar page-down)\n");
+    platform::diag("  --gdb[=PORT]        Wait for GDB on 127.0.0.1:PORT (default 1234, 0 = any) before 0100H\n");
+    platform::diag("  --gdb-port-file=F   Write the port that --gdb listens on to file F\n");
+    platform::diag("  --gdb-listen=ADDR   Listen on IPv4 address ADDR (0.0.0.0 = every interface), not\n");
+    platform::diag("                      127.0.0.1.  No password: anyone who reaches ADDR controls the guest\n");
+    platform::diag("  --backtrace         Keep a shadow call stack and print it if the run ends badly\n");
+    platform::diag("\n");
+    platform::diag("Environment variables:\n");
+    platform::diag("  CPM_PROGRESS=N      Enable progress reporting every N million instructions\n");
+    platform::diag("\n");
+    platform::diag("Examples:\n");
+    platform::diag("  %s program.com              # Run CP/M program (default: Z80 mode)\n", argv[0]);
+    platform::diag("  %s --z80 program.com        # Run in Z80 mode\n", argv[0]);
+    platform::diag("  %s --progress program.com   # With progress reporting (every 100M)\n", argv[0]);
+    platform::diag("  %s --progress=50 prog.com   # Report every 50M instructions\n", argv[0]);
+    platform::diag("  %s program.com file.dat     # With file arguments\n", argv[0]);
+    platform::diag("  %s config.cfg               # With config file\n", argv[0]);
     return 1;
   }
 
@@ -4868,7 +4868,7 @@ int main(int argc, char** argv) {
       char* end = nullptr;
       long port = strtol(a + 6, &end, 10);
       if (a[6] == 0 || *end != 0 || port < 0 || port > 65535) {
-        fprintf(stderr, "Error: %s: the port is a number from 0 to 65535\n", a);
+        platform::diag("Error: %s: the port is a number from 0 to 65535\n", a);
         exit(1);
       }
       gdb_on = true;
@@ -4877,7 +4877,7 @@ int main(int argc, char** argv) {
       gdb_port_file = a + 16;
     } else if (strncmp(a, "--gdb-listen=", 13) == 0) {
       if (!gdb::parse_listen_address(a + 13, &gdb_addr)) {
-        fprintf(stderr, "Error: %s: the address is an IPv4 address such as 0.0.0.0 or 192.168.1.5\n", a);
+        platform::diag("Error: %s: the address is an IPv4 address such as 0.0.0.0 or 192.168.1.5\n", a);
         exit(1);
       }
       gdb_listen = a + 13;
@@ -4894,8 +4894,8 @@ int main(int argc, char** argv) {
   }
 
   if (argc < arg_offset + 1) {
-    fprintf(stderr, "Error: No program specified\n");
-    fprintf(stderr, "Usage: %s [options] <program.com|config.cfg> [args...]\n", argv[0]);
+    platform::diag("Error: No program specified\n");
+    platform::diag("Usage: %s [options] <program.com|config.cfg> [args...]\n", argv[0]);
     return 1;
   }
 
@@ -4913,15 +4913,15 @@ int main(int argc, char** argv) {
   }
   for (int i = arg_offset + 1; i < argc; i++) {
     if (argv[i][0] == '-' && try_option(argv[i])) {
-      fprintf(stderr, "Note: '%s' taken as an emulator option, not passed to the program\n",
-              argv[i]);
+      platform::diag("Note: '%s' taken as an emulator option, not passed to the program\n",
+                     argv[i]);
       continue;
     }
     guest_argv.push_back(argv[i]);
   }
 
   if (gdb_listen && !gdb_on) {
-    fprintf(stderr, "Error: --gdb-listen needs --gdb\n");
+    platform::diag("Error: --gdb-listen needs --gdb\n");
     return 1;
   }
 
@@ -4935,15 +4935,15 @@ int main(int argc, char** argv) {
   std::unique_ptr<qkz80_cpu_mem> memory(watch_mem ? (qkz80_cpu_mem*)watch_mem : new qkz80_cpu_mem());
   qkz80 cpu(memory.get());
   cpu.set_cpu_mode(mode_8080 ? qkz80::MODE_8080 : qkz80::MODE_Z80);
-  fprintf(stderr, "CPU mode: %s\n", mode_8080 ? "8080" : "Z80");
+  platform::diag("CPU mode: %s\n", mode_8080 ? "8080" : "Z80");
 
   // Set up memory save if requested
   save_memory_cpu = &cpu;
   if (save_memory_file) {
-    fprintf(stderr, "Memory will be saved to %s on exit\n", save_memory_file);
+    platform::diag("Memory will be saved to %s on exit\n", save_memory_file);
     if (save_memory_start || save_memory_end) {
-      fprintf(stderr, "  Range: 0x%04X-0x%04X\n", save_memory_start,
-              save_memory_end ? save_memory_end : 0xFFFF);
+      platform::diag("  Range: 0x%04X-0x%04X\n", save_memory_start,
+                     save_memory_end ? save_memory_end : 0xFFFF);
     }
   }
 
@@ -4966,7 +4966,7 @@ int main(int argc, char** argv) {
 
     // Get program name from config
     if (cpm.config_program.empty()) {
-      fprintf(stderr, "No 'program' directive in config file\n");
+      platform::diag("No 'program' directive in config file\n");
       return 1;
     }
     program = resolve_program_name(cpm.config_program.c_str());
@@ -5000,15 +5000,15 @@ int main(int argc, char** argv) {
   if (bios_disk) {
     if (strcmp(bios_disk, "ok") == 0 || strcmp(bios_disk, "OK") == 0) {
       cpm.bios_disk_mode = 0;
-      fprintf(stderr, "BIOS disk functions will return success\n");
+      platform::diag("BIOS disk functions will return success\n");
     } else if (strcmp(bios_disk, "fail") == 0 || strcmp(bios_disk, "FAIL") == 0) {
       cpm.bios_disk_mode = 1;
-      fprintf(stderr, "BIOS disk functions will return failure\n");
+      platform::diag("BIOS disk functions will return failure\n");
     } else if (strcmp(bios_disk, "error") == 0 || strcmp(bios_disk, "ERROR") == 0) {
       cpm.bios_disk_mode = 2;
-      fprintf(stderr, "BIOS disk functions will cause emulator to exit\n");
+      platform::diag("BIOS disk functions will cause emulator to exit\n");
     } else {
-      fprintf(stderr, "Warning: Invalid CPM_BIOS_DISK value '%s' (use ok, fail, or error)\n", bios_disk);
+      platform::diag("Warning: Invalid CPM_BIOS_DISK value '%s' (use ok, fail, or error)\n", bios_disk);
     }
   }
 
@@ -5016,7 +5016,7 @@ int main(int argc, char** argv) {
   const char* debug_env = getenv("CPM_DEBUG");
   if (debug_env && (strcmp(debug_env, "1") == 0 || strcmp(debug_env, "true") == 0 || strcmp(debug_env, "yes") == 0)) {
     cpm.set_debug(true);
-    fprintf(stderr, "Debug mode enabled\n");
+    platform::diag("Debug mode enabled\n");
   }
 
   // Parse selective debug settings
@@ -5029,11 +5029,11 @@ int main(int argc, char** argv) {
       cpm.debug_bdos_funcs.insert(func);
     }
     if (!cpm.debug_bdos_funcs.empty()) {
-      fprintf(stderr, "Debug enabled for BDOS functions:");
+      platform::diag("Debug enabled for BDOS functions:");
       for (int f : cpm.debug_bdos_funcs) {
-        fprintf(stderr, " %d", f);
+        platform::diag(" %d", f);
       }
-      fprintf(stderr, "\n");
+      platform::diag("\n");
     }
   }
 
@@ -5046,11 +5046,11 @@ int main(int argc, char** argv) {
       cpm.debug_bios_offsets.insert(offset);
     }
     if (!cpm.debug_bios_offsets.empty()) {
-      fprintf(stderr, "Debug enabled for BIOS offsets:");
+      platform::diag("Debug enabled for BIOS offsets:");
       for (int o : cpm.debug_bios_offsets) {
-        fprintf(stderr, " %d", o);
+        platform::diag(" %d", o);
       }
-      fprintf(stderr, "\n");
+      platform::diag("\n");
     }
   }
 
@@ -5093,7 +5093,7 @@ int main(int argc, char** argv) {
   // Load .COM file at 0x0100
   FILE* fp = fopen(program.c_str(), "rb");
   if (!fp) {
-    fprintf(stderr, "Cannot open %s: %s\n", program.c_str(), strerror(errno));
+    platform::diag("Cannot open %s: %s\n", program.c_str(), strerror(errno));
     return 1;
   }
 
@@ -5101,7 +5101,7 @@ int main(int argc, char** argv) {
   size_t loaded = fread(&mem[TPA_START], 1, BDOS_BASE - TPA_START, fp);
   fclose(fp);
 
-  fprintf(stderr, "Loaded %zu bytes from %s\n", loaded, program.c_str());
+  platform::diag("Loaded %zu bytes from %s\n", loaded, program.c_str());
 
   // Set PC to start of TPA
   cpu.regs.PC.set_pair16(TPA_START);
@@ -5118,13 +5118,13 @@ int main(int argc, char** argv) {
     }
   }
   if (progress_interval > 0) {
-    fprintf(stderr, "Progress reporting enabled every %lldM instructions\n", progress_interval / 1000000);
+    platform::diag("Progress reporting enabled every %lldM instructions\n", progress_interval / 1000000);
   }
 
   // Interrupt setup
   unsigned long long next_tick_cycles_ = 0;
   if (int_cycles > 0) {
-    fprintf(stderr, "Interrupts enabled: RST %d every %llu cycles\n", int_rst, int_cycles);
+    platform::diag("Interrupts enabled: RST %d every %llu cycles\n", int_rst, int_cycles);
     next_tick_cycles_ = int_cycles;
     cpu.regs.IFF1 = 1;  // Enable interrupts
     cpu.regs.IFF2 = 1;
@@ -5155,10 +5155,15 @@ int main(int argc, char** argv) {
     atexit(end_hook);
 
     if (gdb_on) {
+      // The stub's own lines go through platform::diag like the rest, so they
+      // too end in CR LF while the terminal is raw.  The stub cannot call
+      // platform::diag itself: the programs that compile it out of this tree
+      // have platform layers of their own.
+      gdb::message_sink = [](const char* text) { platform::diag("%s", text); };
       // A failure before the program starts is not a run that ended badly:
       // no backtrace, and nothing to tell a debugger.
       if (!stub.listen(gdb_addr, gdb_port, gdb_port_file)) { end_reported = true; return 1; }
-      fprintf(stderr, "Waiting for GDB to connect\n");
+      platform::diag("Waiting for GDB to connect\n");
       if (!stub.accept()) {
         end_if_terminated();
         end_reported = true;
@@ -5168,7 +5173,7 @@ int main(int argc, char** argv) {
       target.stop_on_halt = true;
       stub.serve();
       if (stub.killed()) {
-        fprintf(stderr, "GDB killed the program\n");
+        platform::diag("GDB killed the program\n");
         if (close_guest_files) close_guest_files();
         do_save_memory();
         finish(1, false);
@@ -5216,7 +5221,7 @@ int main(int argc, char** argv) {
         if (cpu.cycles < next_tick_cycles_) cpu.cycles = next_tick_cycles_;
         cpu.clear_halted();
       } else {
-        fprintf(stderr, "HLT at %04X with no interrupt to end it - exiting\n", pc);
+        platform::diag("HLT at %04X with no interrupt to end it - exiting\n", pc);
         if (close_guest_files) close_guest_files();
         do_save_memory();
         exit(1);
@@ -5231,7 +5236,7 @@ int main(int argc, char** argv) {
 
     // Progress report (if enabled)
     if (progress_interval > 0 && instruction_count - last_report >= progress_interval) {
-      fprintf(stderr, "Progress: %lldM instructions\n", instruction_count / 1000000);
+      platform::diag("Progress: %lldM instructions\n", instruction_count / 1000000);
       last_report = instruction_count;
     }
 

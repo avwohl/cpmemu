@@ -9,6 +9,7 @@
 
 #include "gdbstub.h"
 
+#include <cstdarg>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -16,6 +17,29 @@
 namespace gdb {
 
 Stub* active_stub = nullptr;
+void (*message_sink)(const char* text) = nullptr;
+
+// The stub's own lines, printf-style, to message_sink or else to stderr.
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((format(printf, 1, 2)))
+#endif
+static void say(const char* fmt, ...) {
+  va_list ap, ap2;
+  va_start(ap, fmt);
+  va_copy(ap2, ap);
+  int n = vsnprintf(nullptr, 0, fmt, ap);
+  va_end(ap);
+  if (n < 0) {
+    va_end(ap2);
+    return;
+  }
+  std::string text(static_cast<size_t>(n) + 1, '\0');
+  vsnprintf(&text[0], text.size(), fmt, ap2);
+  va_end(ap2);
+  text.resize(static_cast<size_t>(n));
+  if (message_sink) message_sink(text.c_str());
+  else fputs(text.c_str(), stderr);
+}
 
 // ---------------------------------------------------------------------------
 // Shadow call stack
@@ -283,17 +307,16 @@ bool Stub::listen(uint32_t addr, int port, const char* port_file) {
   snprintf(text, sizeof text, "%u.%u.%u.%u", (unsigned)(addr >> 24),
            (unsigned)(addr >> 16) & 255u, (unsigned)(addr >> 8) & 255u, (unsigned)addr & 255u);
   if ((addr >> 24) != 127) {
-    fprintf(stderr,
-            "gdb stub: WARNING: listening on %s, not on 127.0.0.1.  The stub has no password.\n"
-            "Anyone who can reach this address can read and write the guest's memory, and\n"
-            "through the guest write host files.  Use it on a network you trust.\n",
-            text);
+    say("gdb stub: WARNING: listening on %s, not on 127.0.0.1.  The stub has no password.\n"
+        "Anyone who can reach this address can read and write the guest's memory, and\n"
+        "through the guest write host files.  Use it on a network you trust.\n",
+        text);
   }
-  fprintf(stderr, "GDB stub listening on %s:%d\n", text, bound);
+  say("GDB stub listening on %s:%d\n", text, bound);
   if (port_file) {
     FILE* f = fopen(port_file, "w");
     if (!f) {
-      fprintf(stderr, "gdb stub: cannot write %s\n", port_file);
+      say("gdb stub: cannot write %s\n", port_file);
       return false;
     }
     fprintf(f, "%d\n", bound);
@@ -321,7 +344,7 @@ bool Stub::accept() {
     if (r & 1) {
       int c = platform::console_getchar();
       if (c == 0x03) {
-        fprintf(stderr, "\n[Exiting: ^C while waiting for GDB]\n");
+        say("\n[Exiting: ^C while waiting for GDB]\n");
         return false;
       }
       if (c == -1) watch_console = false;
@@ -332,7 +355,7 @@ bool Stub::accept() {
   listener_ = platform::kNoSocket;
   if (sock_ == platform::kNoSocket) return false;
   attached_ = true;
-  fprintf(stderr, "GDB connected\n");
+  say("GDB connected\n");
   return true;
 }
 

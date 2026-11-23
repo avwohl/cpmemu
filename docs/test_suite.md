@@ -22,15 +22,26 @@ The guest programs live in `tests/con_guests.h` and are shared with the Windows
 harness, so a case named the same on both platforms runs the same code and the
 two results can be read side by side.
 
-Nine of its cases pin seven-bit console input, in two groups. Five cover the
-mask itself - one per console read site, plus a pipe twin of the BDOS 1 case,
-because a pty case alone cannot tell the emulator's mask from a line discipline
-that strips the bit. Until they were written the only tests asserting any of
-this were the four code-page cases in `tests/win_console.cc`, which have never
-been executed on any machine. One of the five asserts a loss rather than a
-value: BDOS 6 spells "no character" 0, so the byte that masks to zero is
-consumed and never delivered. That case is the tripwire - giving the guest
-eight bits means rewriting it deliberately.
+Two cases check the messages that the emulator itself writes to stderr. The
+first case sends stdout and stderr to the terminal. The guest prints `A`, a
+bare LF, `B` and CR LF, then calls BDOS 102. The terminal must receive
+`Loaded N bytes ...`, `Unimplemented BDOS function 102` and `System reset`,
+each with CR LF, and the bare LF of the guest without a CR. The build before
+the fix sent the three messages with a bare LF (issue #5).
+
+The second case sends stderr to a pipe. The messages must then keep a bare LF.
+The guest of the two cases, `crstair_com`, is in `tests/pty_console.cc` and not
+in `tests/con_guests.h`, because only the POSIX harness runs it.
+
+Nine of the cases in `tests/pty_console.cc` pin seven-bit console input, in two
+groups. Five cover the mask itself - one per console read site, plus a pipe twin
+of the BDOS 1 case, because a pty case alone cannot tell the emulator's mask
+from a line discipline that strips the bit. Until they were written the only
+tests asserting any of this were the four code-page cases in
+`tests/win_console.cc`, which have never been executed on any machine. One of
+the five asserts a loss rather than a value: BDOS 6 spells "no character" 0, so
+the byte that masks to zero is consumed and never delivered. That case is the
+tripwire - giving the guest eight bits means rewriting it deliberately.
 
 The other four cover `check_ctrl_c_exit`, which is fed the raw byte on purpose
 so that a 0x83 counts as a high byte and not as a ^C. It has four call sites and

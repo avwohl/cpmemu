@@ -10,6 +10,23 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
+## [Unreleased]
+
+**The emulator's own lines end in CR LF on a raw terminal (issue #5).** On
+Linux and macOS, raw mode clears `OPOST`, so that a guest's bare LF moves down
+in the same column as CP/M expects. The emulator's own lines on stderr -
+`Loaded N bytes`, `Unimplemented BDOS function N`, the exit line, the BDOS
+traces, the GDB stub's lines - ended in a bare LF too, and on the same
+terminal each one left the next line, or the shell prompt after the exit,
+starting in the column where the message ended. Every one of them now goes
+through `platform::diag()`, which sends `\r\n` while raw mode is on and stderr
+is the terminal stdin is, and `\n` to a file or a pipe. Windows is unchanged:
+its console adds the CR itself. The GDB stub writes through a new
+`gdb::message_sink`, null by default, because romwbw_emu, ioscpm, z80cpmw and
+cpmdroid compile `gdbstub.cc` with platform layers of their own.
+`tests/pty_console.cc` has two new cases that put stderr on the pty, and the
+first fails on 4.13.0 with the bytes of the issue.
+
 ## [4.13.0] - 2026-11-23
 
 **BDOS calls answer in HL, with A = L and B = H, as CP/M 2.2 does (issue

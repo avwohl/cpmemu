@@ -14,6 +14,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <algorithm>
+#include <cstdarg>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
@@ -156,6 +157,18 @@ void enable_raw_mode() {
     // the rest of the saved mode.
     raw_mode &= ~ENABLE_VIRTUAL_TERMINAL_INPUT;
     SetConsoleMode(hStdin, raw_mode);
+}
+
+// No "\r" added here, unlike os/linux/platform.cc.  enable_raw_mode() above
+// changes only the input mode, so the console keeps ENABLE_PROCESSED_OUTPUT
+// and goes back to column 0 on LF by itself; stderr is also left in the CRT's
+// text mode, which writes "\n" as "\r\n" already.  A CR here would only
+// put "\r\r\n" into a redirected stderr.
+void diag(const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
 }
 
 bool is_terminal() {
@@ -705,7 +718,7 @@ static bool winsock_start() {
     if (winsock_started) return true;
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-        fprintf(stderr, "gdb stub: WSAStartup failed\n");
+        diag("gdb stub: WSAStartup failed\n");
         return false;
     }
     winsock_started = true;
@@ -716,7 +729,7 @@ socket_t net_listen(uint32_t addr, int port, int* bound_port) {
     if (!winsock_start()) return kNoSocket;
     SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == INVALID_SOCKET) {
-        fprintf(stderr, "gdb stub: socket: error %d\n", (int)WSAGetLastError());
+        diag("gdb stub: socket: error %d\n", (int)WSAGetLastError());
         return kNoSocket;
     }
     // No SO_REUSEADDR: on Windows it lets a second process take the same
@@ -727,7 +740,7 @@ socket_t net_listen(uint32_t addr, int port, int* bound_port) {
     a.sin_addr.s_addr = htonl(addr);
     a.sin_port = htons((unsigned short)port);
     if (bind(s, (struct sockaddr*)&a, (int)sizeof a) != 0 || listen(s, 1) != 0) {
-        fprintf(stderr, "gdb stub: cannot listen on %u.%u.%u.%u:%d: error %d\n",
+        diag("gdb stub: cannot listen on %u.%u.%u.%u:%d: error %d\n",
                 (unsigned)(addr >> 24), (unsigned)(addr >> 16) & 255u,
                 (unsigned)(addr >> 8) & 255u, (unsigned)addr & 255u,
                 port, (int)WSAGetLastError());
@@ -736,7 +749,7 @@ socket_t net_listen(uint32_t addr, int port, int* bound_port) {
     }
     int len = (int)sizeof a;
     if (getsockname(s, (struct sockaddr*)&a, &len) != 0) {
-        fprintf(stderr, "gdb stub: getsockname: error %d\n", (int)WSAGetLastError());
+        diag("gdb stub: getsockname: error %d\n", (int)WSAGetLastError());
         closesocket(s);
         return kNoSocket;
     }
@@ -751,7 +764,7 @@ socket_t net_listen_local(int port, int* bound_port) {
 socket_t net_accept(socket_t listener) {
     SOCKET c = accept((SOCKET)listener, NULL, NULL);
     if (c == INVALID_SOCKET) {
-        fprintf(stderr, "gdb stub: accept: error %d\n", (int)WSAGetLastError());
+        diag("gdb stub: accept: error %d\n", (int)WSAGetLastError());
         return kNoSocket;
     }
     BOOL one = TRUE;

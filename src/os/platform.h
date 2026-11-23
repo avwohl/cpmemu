@@ -25,6 +25,21 @@ void enable_raw_mode();
 // Restore terminal to original mode
 void disable_raw_mode();
 
+// Write one of cpmemu's own messages to stderr, printf-style: "Loaded N
+// bytes", the exit line, the BDOS traces.  On POSIX, while raw mode is on
+// and stderr is the terminal stdin is, each "\n" goes out as "\r\n".  Raw
+// mode clears OPOST so that a guest's bare LF moves down without going back
+// to column 0, as CP/M expects, and that left every one of these lines
+// ending mid-screen: the next line began in the column where the message
+// ended (issue #5).  A stderr that is a file or a pipe keeps "\n", and so
+// does Windows, whose console returns to column 0 on LF by itself.
+// gdbstub.cc does not call this, because the other programs that compile
+// the stub have platform layers of their own: see gdb::message_sink.
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((format(printf, 1, 2)))
+#endif
+void diag(const char* fmt, ...);
+
 // Check if stdin is connected to a terminal/console
 bool is_terminal();
 

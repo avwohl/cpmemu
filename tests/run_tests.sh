@@ -42,7 +42,7 @@
 #           macOS CI job passes "mingw" and nothing else.  The last two cover
 #           skips the pty and console sub-harnesses print themselves, which
 #           are skips of this suite too - pty_console.cc skipping for want of a
-#           pty is 42 checks gone, and --require could not see it.
+#           pty is 44 checks gone, and --require could not see it.
 
 set -u
 
@@ -341,7 +341,7 @@ if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
     # 164 checks live behind this gate, and the 83 GDB stub checks below sit behind
-    # the same assembler (349 pass with um80, 84 without)
+    # the same assembler (351 pass with um80, 86 without)
     skipped=$((skipped + 164))
     soft_skip assembler "drive mapping tests: 164 checks, no assembler (pip install um80)"
 else
@@ -1595,7 +1595,7 @@ case $(uname -s) in
                 skipped=$((skipped + $(grep -c '^SKIP  ' "$ptylog")))
                 # A skip the sub-harness printed is a skip of this suite, and
                 # --require was blind to these: pty_console.cc skips its whole
-                # run when no pty can be opened, and that is 42 checks - the
+                # run when no pty can be opened, and that is 44 checks - the
                 # entire reason the macOS job exists - vanishing under a green
                 # tick.  Measured: forcing that branch gave "60 passed, 0
                 # failed, 5 skipped" and exit 0 with --require set.

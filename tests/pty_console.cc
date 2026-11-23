@@ -12,9 +12,11 @@
  * So this drives a real terminal.  It allocates a pty, gives the slave to
  * cpmemu as stdin, writes the bytes a keyboard would send into the master, and
  * captures the guest's stdout and stderr through pipes so the comparison is
- * against the guest's output alone.  It is the POSIX counterpart of
- * tests/win_console.cc and runs the same guest programs, so a case named the
- * same on both platforms can be compared byte for byte.
+ * against the guest's output alone.  The exceptions are the OPOST case, whose
+ * stdout is the terminal, and run_stderr_cases, whose stderr is too.  It is
+ * the POSIX counterpart of tests/win_console.cc and runs the same guest
+ * programs, so a case named the same on both platforms can be compared byte
+ * for byte.
  *
  * The case this exists for: BSD/XNU gates VLNEXT (^V) and VDISCARD (^O) on
  * IEXTEN outside the ICANON block, so without the IEXTEN clear in
@@ -312,6 +314,7 @@ struct Spawn {
     StdinKind stdin_kind;
     const char* stdin_text;
     bool stdout_to_pty;
+    bool stderr_to_pty;         // only run_stderr_cases sets it
     int timeout_ms;
     int kill_with;
     bool collect_left;
@@ -388,7 +391,9 @@ static bool run_guest(const Spawn& s, const std::string& dir, Result& r) {
         // Only the OPOST case sends the guest's output to the terminal; every
         // other case wants it on a pipe, away from anything the tty might do
         dup2(s.stdout_to_pty && pty.slave >= 0 ? pty.slave : out_pipe[1], 1);
-        dup2(err_pipe[1], 2);
+        // The same for the emulator's own lines, which only run_stderr_cases
+        // sends to the terminal
+        dup2(s.stderr_to_pty && pty.slave >= 0 ? pty.slave : err_pipe[1], 2);
         // in_fd is the slave itself for a terminal case, so close it once
         if (in_fd > 2) close(in_fd);
         if (out_pipe[1] > 2) close(out_pipe[1]);
@@ -1229,6 +1234,131 @@ static void report(const char* name, bool ok, const std::string& detail,
 }
 
 // ---------------------------------------------------------------------------
+// cpmemu's own lines on a raw terminal
+//
+// Raw mode clears OPOST so that the guest's bytes reach the terminal as the
+// guest wrote them: CP/M sends CR LF for a new line and a bare LF to move down
+// in the same column.  The emulator's own lines on stderr ended in a bare LF
+// as well, and on the same terminal each one left the cursor where its text
+// ended, so the next line started in that column (issue #5):
+//
+//     Loaded 25728 bytes from C309-17.COM
+//                                        Hi-Tech Z80 C Compiler ...
+//
+// The table above cannot see that: it sends stderr to a pipe.  These send it
+// to the terminal, with the guest's stdout, so the two arrive in one stream
+// in the order the terminal shows them.  The guest prints A, a bare LF, B and
+// CR LF, then calls BDOS 102, which the emulator does not implement, so that
+// a line printed in the middle of the run is checked as well as the "Loaded"
+// line before it and the exit line after it.  Measured on the build before
+// the fix: "Loaded ...\n", "Unimplemented BDOS function 102\n" and
+// "System reset\n", all three bare.  The second case is the other half: a
+// stderr that is a pipe, or a file, gets no CR, or every log of a run from a
+// terminal would have one.
+// ---------------------------------------------------------------------------
+
+// crstair - A, LF, B, CR LF, BDOS 102, then BDOS 0.  Assembled with um80:
+//
+//         ld      e,'A'
+//         ld      c,2
+//         call    0005h
+//         ld      e,0Ah
+//         ld      c,2
+//         call    0005h
+//         ld      e,'B'
+//         ld      c,2
+//         call    0005h
+//         ld      e,0Dh
+//         ld      c,2
+//         call    0005h
+//         ld      e,0Ah
+//         ld      c,2
+//         call    0005h
+//         ld      c,102
+//         call    0005h
+//         ld      c,0
+//         jp      0005h
+static const unsigned char crstair_com[] = {
+    0x1E, 0x41, 0x0E, 0x02, 0xCD, 0x05, 0x00, 0x1E, 0x0A, 0x0E, 0x02, 0xCD,
+    0x05, 0x00, 0x1E, 0x42, 0x0E, 0x02, 0xCD, 0x05, 0x00, 0x1E, 0x0D, 0x0E,
+    0x02, 0xCD, 0x05, 0x00, 0x1E, 0x0A, 0x0E, 0x02, 0xCD, 0x05, 0x00, 0x0E,
+    0x66, 0xCD, 0x05, 0x00, 0x0E, 0x00, 0xC3, 0x05, 0x00
+};
+
+static void run_stderr_cases(const std::string& emu, const std::string& dir,
+                             int& passed, int& failed) {
+    const char* on_tty = "the emulator's own lines end in CR LF on a raw terminal";
+    const char* on_pipe = "the emulator's own lines keep LF when stderr is a pipe";
+    std::string com = dir + "/crstair.com";
+    if (!write_file(com, crstair_com, sizeof crstair_com)) {
+        report(on_tty, false, "        cannot write the guest program\n", passed, failed);
+        report(on_pipe, false, "        cannot write the guest program\n", passed, failed);
+        return;
+    }
+    char loaded[600];
+    snprintf(loaded, sizeof loaded, "Loaded %u bytes from %s",
+             (unsigned)sizeof crstair_com, com.c_str());
+
+    Spawn s;
+    s.emu = emu.c_str();
+    s.com = com.c_str();
+    s.emu_args = NULL;
+    s.keys_before = NULL;
+    s.keys = "";
+    s.stdin_kind = StdinPty;
+    s.stdin_text = NULL;
+    s.stdout_to_pty = true;
+    s.timeout_ms = 10000;
+    s.kill_with = 0;
+    s.collect_left = false;
+
+    // Both on the terminal.  "CPU mode" is left out of the comparison: it is
+    // printed before raw mode, while OPOST still adds the CR.
+    s.stderr_to_pty = true;
+    Result r;
+    std::string detail;
+    bool ok = run_guest(s, dir, r);
+    if (!ok) detail += "        the emulator did not start\n";
+    if (ok && r.timed_out) {
+        detail += "        the emulator had to be killed: it never finished\n";
+        ok = false;
+    }
+    std::string want = std::string(loaded) + "\r\nA\nB\r\n"
+                       "Unimplemented BDOS function 102\r\nSystem reset\r\n";
+    size_t at = r.tty.find("Loaded ");
+    std::string got = at == std::string::npos ? r.tty : r.tty.substr(at);
+    if (ok && got != want) {
+        detail += "        expected: " + show(want) + "\n";
+        detail += "        got:      " + show(got) + "\n";
+        ok = false;
+    }
+    report(on_tty, ok, detail, passed, failed);
+
+    // stderr on a pipe, stdout still on the terminal: the lines keep their LF,
+    // and the guest's own bytes are what they were in the case above.
+    s.stderr_to_pty = false;
+    Result p;
+    detail.clear();
+    ok = run_guest(s, dir, p);
+    if (!ok) detail += "        the emulator did not start\n";
+    if (ok && p.timed_out) {
+        detail += "        the emulator had to be killed: it never finished\n";
+        ok = false;
+    }
+    std::string want_err = std::string("CPU mode: Z80\n") + loaded +
+                           "\nUnimplemented BDOS function 102\nSystem reset\n";
+    if (ok && (p.err != want_err || p.tty != "A\nB\r\n")) {
+        detail += "        expected stderr: " + show(want_err) + "\n";
+        detail += "        got stderr:      " + show(p.err) + "\n";
+        detail += "        expected terminal: " + show("A\nB\r\n") + "\n";
+        detail += "        got terminal:      " + show(p.tty) + "\n";
+        ok = false;
+    }
+    report(on_pipe, ok, detail, passed, failed);
+    unlink(com.c_str());
+}
+
+// ---------------------------------------------------------------------------
 // kill -TSTP, then fg
 //
 // Against an emulator with no handlers this fails in two separate places, and
@@ -1535,6 +1665,7 @@ int main(int argc, char** argv) {
         s.stdin_kind = c.stdin_kind;
         s.stdin_text = c.stdin_text;
         s.stdout_to_pty = c.stdout_to_pty;
+        s.stderr_to_pty = false;
         s.timeout_ms = c.timeout_ms;
         s.kill_with = c.kill_with;
         s.collect_left = (c.want_left != NULL);
@@ -1586,6 +1717,8 @@ int main(int argc, char** argv) {
             failed++;
         }
     }
+
+    run_stderr_cases(emu, dir, passed, failed);
 
     // Last, because both build a session of their own and one of them stops a
     // process: a case that goes wrong here should not be able to disturb the

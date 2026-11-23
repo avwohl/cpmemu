@@ -71,6 +71,19 @@ This covers BDOS 2, BDOS 6 output, BDOS 9 and BIOS CONOUT. It does not cover the
 function 10 line editor's echo, which is the user's own keystrokes coming back
 in the `^x` form above.
 
+### Messages from the emulator
+
+The emulator writes its own messages to stderr, for example `Loaded N bytes`,
+`Unimplemented BDOS function N` and the exit line. On Linux and macOS, raw mode
+does not let the terminal add a CR before each LF. A CP/M program needs this
+behavior, because a bare LF from the program must move the cursor down in the
+same column. Thus the emulator adds the CR to its own messages when stderr is
+the same terminal as stdin. Without the CR, the next line starts in the column
+where the message ended (issue #5).
+
+If stderr is a file or a pipe, the messages keep a bare LF. On Windows, the
+console adds the CR, so the emulator does not add one.
+
 ## Windows special keys
 
 On Windows a special key is translated to the WordStar diamond control code:

@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <csignal>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -40,6 +41,12 @@ static bool raw_active = false;      // and we have replaced it
 // rather than the terminal we started with.
 static struct termios raw_termios;
 static bool raw_wanted = false;      // raw mode is what this run should be in
+
+// Whether stderr is the terminal stdin is, so that raw mode's cleared OPOST
+// reaches it too and diag() has to send "\r\n" itself.  Set once, by
+// enable_raw_mode(): a stderr redirected to a file or a pipe, or on another
+// terminal, keeps the "\n" it was given.
+static bool stderr_on_raw_terminal = false;
 
 // TCSANOW rather than TCSAFLUSH here and below, for two measured reasons.
 //
@@ -330,7 +337,52 @@ void enable_raw_mode() {
     // find a run that already knows it is supposed to be raw.
     raw_termios = raw;
     raw_wanted = true;
+    struct stat in_st, err_st;
+    stderr_on_raw_terminal = isatty(STDERR_FILENO) &&
+        fstat(STDIN_FILENO, &in_st) == 0 && fstat(STDERR_FILENO, &err_st) == 0 &&
+        in_st.st_rdev == err_st.st_rdev;
     apply_raw_mode();
+}
+
+// Raw mode clears OPOST so that the guest's bytes reach the terminal as the
+// guest wrote them: a CP/M program sends CR LF for a new line and a bare LF
+// to move down one row in the same column.  cpmemu's own lines on stderr
+// ended in a bare "\n" too, so on the same terminal each one left the cursor
+// where the text ended, and the next line - the guest's, or the shell prompt
+// after the exit line - started in that column (issue #5).  This puts the CR
+// back for those lines and for nothing else.  raw_active rather than
+// raw_wanted: while the shell has the terminal back after a suspend, OPOST
+// is on again and adds the CR itself.
+void diag(const char* fmt, ...) {
+    va_list ap, ap2;
+    va_start(ap, fmt);
+    va_copy(ap2, ap);
+    char small[512];
+    int n = vsnprintf(small, sizeof small, fmt, ap);
+    va_end(ap);
+    if (n < 0) {
+        va_end(ap2);
+        return;
+    }
+    std::string text;
+    if (static_cast<size_t>(n) < sizeof small) {
+        text.assign(small, static_cast<size_t>(n));
+    } else {
+        text.resize(static_cast<size_t>(n) + 1);
+        vsnprintf(&text[0], text.size(), fmt, ap2);
+        text.resize(static_cast<size_t>(n));
+    }
+    va_end(ap2);
+    if (raw_active && stderr_on_raw_terminal) {
+        std::string crlf;
+        crlf.reserve(text.size() + 8);
+        for (size_t i = 0; i < text.size(); i++) {
+            if (text[i] == '\n' && (i == 0 || text[i - 1] != '\r')) crlf += '\r';
+            crlf += text[i];
+        }
+        text.swap(crlf);
+    }
+    fwrite(text.data(), 1, text.size(), stderr);
 }
 
 bool is_terminal() {
@@ -415,7 +467,7 @@ bool console_last_char_synthesized() {
 socket_t net_listen(uint32_t addr, int port, int* bound_port) {
     int s = socket(AF_INET, SOCK_STREAM, 0);
     if (s < 0) {
-        fprintf(stderr, "gdb stub: socket: %s\n", strerror(errno));
+        diag("gdb stub: socket: %s\n", strerror(errno));
         return kNoSocket;
     }
     int one = 1;
@@ -426,7 +478,7 @@ socket_t net_listen(uint32_t addr, int port, int* bound_port) {
     a.sin_addr.s_addr = htonl(addr);
     a.sin_port = htons((unsigned short)port);
     if (bind(s, (struct sockaddr*)&a, sizeof a) != 0 || listen(s, 1) != 0) {
-        fprintf(stderr, "gdb stub: cannot listen on %u.%u.%u.%u:%d: %s\n",
+        diag("gdb stub: cannot listen on %u.%u.%u.%u:%d: %s\n",
                 (unsigned)(addr >> 24), (unsigned)(addr >> 16) & 255u,
                 (unsigned)(addr >> 8) & 255u, (unsigned)addr & 255u, port, strerror(errno));
         close(s);
@@ -434,7 +486,7 @@ socket_t net_listen(uint32_t addr, int port, int* bound_port) {
     }
     socklen_t len = sizeof a;
     if (getsockname(s, (struct sockaddr*)&a, &len) != 0) {
-        fprintf(stderr, "gdb stub: getsockname: %s\n", strerror(errno));
+        diag("gdb stub: getsockname: %s\n", strerror(errno));
         close(s);
         return kNoSocket;
     }
@@ -461,7 +513,7 @@ socket_t net_accept(socket_t listener) {
             if (termination_requested()) return kNoSocket;
             continue;
         }
-        fprintf(stderr, "gdb stub: accept: %s\n", strerror(errno));
+        diag("gdb stub: accept: %s\n", strerror(errno));
         return kNoSocket;
     }
 }

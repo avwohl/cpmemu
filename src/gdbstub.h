@@ -231,6 +231,14 @@ class Stub {
 // through it.
 extern Stub* active_stub;
 
+// Where the stub writes its own lines: "GDB stub listening on ...", "GDB
+// connected", the warning for a listen address off loopback.  Null, the
+// default, writes them to stderr as they are.  cpmemu sets it so that the
+// lines end in CR LF while its terminal is raw, through platform::diag
+// (issue #5).  The other programs that compile this stub need not set it,
+// and the stub calls no platform:: function for it.
+extern void (*message_sink)(const char* text);
+
 }  // namespace gdb
 
 #endif  // CPMEMU_GDBSTUB_H
