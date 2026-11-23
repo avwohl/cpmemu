@@ -12,6 +12,36 @@ summarises and points; `git log` is the detail. Open work is in
 
 ## [Unreleased]
 
+**BDOS calls answer in HL, with A = L and B = H, as CP/M 2.2 does (issue
+#5).** The 2.2 BDOS clears its result word on entry and leaves through
+`lhld aret! mov a,l! mov b,h`, so an 8-bit answer comes back in L as well as
+A with H = B = 0, and a call with no answer returns 0 in all four. The
+emulator set A alone for an 8-bit answer and HL alone for 24, 27, 29 and 31,
+and left the other registers as the program had them. HI-TECH C 3.09 reads
+HL: its `write()` took the program's own HL after BDOS 34 for a failed write,
+so `$$EXEC.$$$` was written wrong and `$EXEC` stopped with `Fmt err`. B is
+now 0 after an 8-bit answer, as on 2.2, so a program that keeps a count in B
+across a call has to save it. `tests/test_djnz.asm` did not, looped for ever,
+and is fixed and rebuilt with um80. `tests/bdos_regs.asm` checks twelve
+calls. Function numbers 41 and up still answer FFh where 2.2 answers 0. A
+new "Return registers" section in `docs/CPM_SUPPORT.md` lists that and the
+three other answers that differ from 2.2: 13 and 14 without its FFh for a `$`
+file, 6 with E = FEh giving the CP/M 3 status where 2.2 gives 0, and 35
+giving 0 where 2.2 always leaves FFh.
+
+**A jump to 0000h follows a redirected warm boot (issue #5).** Every jump to
+0000h ended the run with `Program exit via JMP 0`. HI-TECH C's `$EXEC` stores
+the address of its own loop at 0001h so that each compiler pass comes back to
+it through `JP 0`, and the compile stopped when the first pass finished. The
+trap now ends the run only while the JP at 0000h still leads to the WBOOT
+trap; once a program has pointed 0001h or the WBOOT entry of the BIOS jump
+table elsewhere, the JP runs, as on a real machine. `tests/warmboot.asm`
+checks both. The trap stays, rather than every `JP 0` running into WBOOT,
+because ucow, uplm80, uc80's test runners, 80mcp and mbasic's toolchain
+comparison read its stderr line as a program that finished normally. With the
+two changes, HI-TECH C 3.09-17 from davidly/cpm_compilers compiles `E.C` and
+`SIEVE.C`, and both programs run.
+
 **Docs: the debugger plan lists the releases.** A new "Releases" section in
 `docs/debugger_plan.md` lists the ten releases that carry the debugger work,
 with what each one carries and how it was checked, and gives cpmemu 4.12.0

@@ -141,7 +141,9 @@ and what should come back is `MANUAL_CHECKS.md` in the repo root.
 ### Simple Tests
 - **simple_con.asm** - Prints "ABC" to test console output
 - **test_call.asm** - Tests CALL/RET instructions
-- **test_djnz.asm** - Tests DJNZ (prints "321" counting down)
+- **test_djnz.asm** - Tests DJNZ. The program prints "321", from 3 down to 1.
+  The loop counter is in B, so the program saves BC around each BDOS call: a
+  BDOS call returns B = H, as CP/M 2.2 does.
 
 ### Console Translation Tests
 - **adm3a.asm** - one of every ADM-3A escape sequence and control code the
@@ -156,6 +158,16 @@ and what should come back is `MANUAL_CHECKS.md` in the repo root.
   exit line on stderr, because `0000h` holds a `JP WBOOT` and a jump that
   stopped being trapped would otherwise save through WBOOT and look fine.
   Assembled at test time; no `.com` is committed.
+- **warmboot.asm** - takes the warm boot twice and prints a digit each time
+  that the program receives control again. First the program changes the
+  address at `0001h`, as the `$EXEC` program of HI-TECH C does. The program
+  also sends its output through a BDOS vector of its own at `0006h`, as
+  `$EXEC` does. Then the program changes the WBOOT entry of the BIOS jump
+  table. At the end, the program puts back all three addresses and jumps to
+  `0000h`. The emulator then ends the run with `Program exit via JMP 0`. The
+  output is `12`. The emulator before issue #5 printed no digit, and the diff
+  in the issue printed `1`. The runner assembles the program at test time, and
+  the repository has no `.com` for it.
 - **bios_disk.asm** - calls BIOS HOME, READ or WRITE through the jump table by
   command tail (`H`, `R`, `W`) and prints the status byte in A as hex.
   `CPM_BIOS_DISK=ok` gives `00` and `=fail` gives `01`; before 4.7.1 both gave
@@ -172,6 +184,17 @@ and what should come back is `MANUAL_CHECKS.md` in the repo root.
   move for the mode and for nothing else, `W` so the 64K wrap cannot be
   deleted unnoticed, and `A` because the accumulator is the half of the old
   bug no HL check can see. Assembled at test time; no `.com` is committed.
+
+### BDOS Register Tests
+- **bdos_regs.asm** - loads A = `5A`, B = `A5` and HL = `1234` before each of
+  12 BDOS calls. After each call, the program prints the function number and
+  A, B, H and L. Each line shows the 2.2 return. HL holds the result, and A
+  and B hold copies of L and H in that order. The emulator before issue #5
+  left the sentinels in the registers that the call did not set. The calls
+  include BDOS 34, which HI-TECH C reads through HL, and BDOS 26, which has no
+  result. The program makes and deletes `REGTEST.$$$`, so the runner starts
+  the program in an empty directory. The runner assembles the program at test
+  time, and the repository has no `.com` for it.
 
 ### File Call Tests
 - **fcb_io.asm** - runs a script of BDOS file calls against one FCB and prints
@@ -478,10 +501,10 @@ of them ever needs rebuilding, assemble it with `um80` and compare, rather than
 reaching for z88dk again.
 
 The drive mapping sources, the two console end-of-input programs, `cli_tail.asm`,
-`cli_fcb.asm`, `adm3a.asm`, `savemem.asm`, `bios_disk.asm`, `sectran.asm`, `fcb_io.asm`, `mem_top.asm` and `text_ops.asm` are assembled at
+`cli_fcb.asm`, `adm3a.asm`, `savemem.asm`, `bios_disk.asm`, `sectran.asm`, `fcb_io.asm`, `mem_top.asm`, `text_ops.asm`, `bdos_regs.asm` and `warmboot.asm` are assembled at
 test time instead, so no binary for them is committed. `tests/run_tests.sh` assembles them with
 **`um80` and `ul80`**, this project's own assembler and linker, and skips the
-whole group - 162 checks, and the 83 GDB stub checks beside it - when they
+whole group - 164 checks, and the 83 GDB stub checks beside it - when they
 are not on `PATH`:
 ```bash
 pip install um80           # any platform; provides um80 and ul80

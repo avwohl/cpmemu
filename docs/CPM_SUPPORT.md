@@ -117,6 +117,36 @@ updated, so a program that reads it to compute free space gets the same answer
 whatever is on the drive. Any other function number prints
 `Unimplemented BDOS function N` on stderr and returns 0xFF.
 
+## Return registers
+
+Each BDOS call returns its result as the CP/M 2.2 BDOS does:
+
+- An 8-bit result is in A and in L. H and B are 0.
+- A 16-bit result is in HL, with A = L and B = H. Functions 24, 27, 29 and 31
+  return a 16-bit result.
+- A call with no result returns 0 in A, B, H and L.
+
+The 2.2 BDOS clears its result word at the start of each call. Each call
+leaves through one exit. The exit loads the word into HL, then copies L to A
+and H to B. The CP/M 2.2 manual says: "For reasons of compatibility, register
+A = L and register B = H upon return in all cases." Some programs read the
+result from HL, for example HI-TECH C 3.09 (issue #5).
+
+CP/M 2.2 does not keep B, C, D, E or the flags across a BDOS call. The
+emulator changes B, as 2.2 does. If a program needs one of these registers
+after a call, the program must save it.
+
+The emulator returns these results differently from 2.2:
+
+- A function number of 41 or more returns FFh in A and L. The 2.2 BDOS
+  returns 0.
+- Functions 13 and 14 return 0. The 2.2 BDOS returns FFh when the disk that it
+  logs in has a file with a name that starts with `$`.
+- Function 6 with E = FEh returns FFh when a key is ready, as CP/M 3 does. The
+  2.2 BDOS returns 0, because its exit replaces the status from the BIOS.
+- Function 35 returns 0 when it finds the file. The 2.2 BDOS returns FFh,
+  because its directory search always ends with FFh.
+
 ## Read-only drives
 
 BDOS 28 makes the current drive read-only. BDOS 29 gives the bitmap of
@@ -140,7 +170,12 @@ it. The 2.2 BDOS never returns `FFh` for this error.
 - SELDSK: returns the Disk Parameter Header at 0xFE33 for any drive A: to P:,
   and 0 above that. Every letter is selectable because an unconfigured drive
   means the working directory, not an absent disk.
-- WBOOT: exits the emulator, as does a jump to 0x0000. BOOT is not implemented.
+- WBOOT: exits the emulator. BOOT is not implemented.
+- A jump to 0x0000: if the JP at 0x0000 goes to WBOOT, the emulator exits
+  with `Program exit via JMP 0`. If a program changed the address at 0x0001 or
+  the WBOOT entry of the jump table, the JP runs, as on a real machine.
+  HI-TECH C changes 0x0001 to receive control again after each pass of the
+  compiler.
 - SECTRAN: implemented, not a stub. BC is the logical sector and DE the
   translate table, and the physical sector comes back in HL: the byte at DE +
   BC with H = 0, which is the skeletal CBIOS lookup, or HL = BC when DE is 0,

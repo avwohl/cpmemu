@@ -806,6 +806,7 @@ private:
 private:
   // BDOS functions
   void bdos_call(qkz80_uint8 func);
+  void bdos_return_registers(qkz80_uint8 func);
   void bdos_write_console(qkz80_uint8 ch);
   void bdos_write_string();
   void bdos_read_console();
@@ -2137,16 +2138,46 @@ void CPMEmulator::filename_to_fcb(const std::string& filename, qkz80_uint16 fcb_
 }
 
 bool CPMEmulator::handle_pc(qkz80_uint16 pc) {
-  // Check for JMP 0 (exit)
+  // A jump to 0000h ends the run only while the JP there still leads to this
+  // BIOS's WBOOT trap: 0000h jumps to the WBOOT entry of the jump table, and
+  // that entry still jumps to the trap.  Otherwise the JP at 0000h runs, as on
+  // a real machine.  A program may point either one at itself to get control
+  // back when a program it runs ends: HI-TECH C's $EXEC stores the address of
+  // its own loop at 0001h, so that every pass - CPP, P1, CGEN, the assembler,
+  // the linker - comes back to it through JP 0, and the unconditional trap
+  // that stood here ended the compile when the first pass finished (issue #5).
+  // The trap is kept rather than letting every JP 0 run into WBOOT because
+  // its stderr line is an interface: ucow, uplm80, uc80's test runners,
+  // 80mcp and mbasic's toolchain comparison all read "Program exit via JMP
+  // 0" as a program that finished normally, and ucow went from 20 passes to
+  // 1 without it.
   if (pc == 0) {
-    close_all_files();
-    program_exit("Program exit via JMP 0");
+    qkz80_uint8* mem = cpu->get_mem();
+    qkz80_uint16 entry = BIOS_BASE + BIOS_WBOOT;
+    qkz80_uint16 trap = 0xFF00 + BIOS_WBOOT / 3;  // as setup_memory builds it
+    if (mem[0] == 0xC3 && (mem[1] | (mem[2] << 8)) == entry &&
+        mem[entry] == 0xC3 && (mem[entry + 1] | (mem[entry + 2] << 8)) == trap) {
+      close_all_files();
+      program_exit("Program exit via JMP 0");
+    }
   }
 
   // Check for BDOS call (trap at BDOS_BASE where jump from 0x0005 lands)
   if (pc == BDOS_BASE) {
     qkz80_uint8 func = cpu->get_reg8(qkz80::reg_C);
+    // The 2.2 BDOS clears its result word on entry (lxi h,0! shld aret) and
+    // leaves through one exit that loads it (lhld aret! mov a,l! mov b,h), so
+    // every call returns the result in HL with A = L and B = H: an 8-bit
+    // result has H = B = 0, and a call with no result returns 0 in all four.
+    // The handlers set A, or HL for 24, 27, 29 and 31, and none of them reads
+    // A, B, H or L, so the four are cleared first and copied across after.  A
+    // console read the debugger interrupts starts again with them already
+    // clear, which changes nothing for the same reason.
+    cpu->set_reg8(0, qkz80::reg_A);
+    cpu->set_reg8(0, qkz80::reg_B);
+    cpu->set_reg16(0, qkz80::regp_HL);
     bdos_call(func);
+    bdos_return_registers(func);
 
     // Simulate RET from BDOS
     qkz80_uint16 ret_addr = cpu->pop_word();
@@ -2184,6 +2215,30 @@ static int fcb_bytes_used(qkz80_uint8 func) {
   case 20: case 21: return 33;           // CR
   case 33: case 34: case 35: case 36: case 40: return 36;  // R0-R2
   default: return 0;
+  }
+}
+
+// The second half of the 2.2 exit: A = L and B = H.  Functions 24, 27, 29 and
+// 31 answer in HL, which 2.2 stores with sthl$ret.  Every other function
+// answers in A, and 2.2 returns the same byte in L with H = 0, because its
+// sta$ret writes only the low byte of a word that was cleared on entry.  The
+// manual puts it as "register A = L and register B = H upon return in all
+// cases".
+// HI-TECH C 3.09 reads the answer from HL: its bdos() returns HL, and its
+// write() takes any non-zero HL after BDOS 34 for a failed write.  With H and
+// L left as the program had them, $$EXEC.$$$ was written wrong and $EXEC
+// stopped with "Fmt err" (issue #5).
+void CPMEmulator::bdos_return_registers(qkz80_uint8 func) {
+  switch (func) {
+  case 24: case 27: case 29: case 31:
+    cpu->set_reg8(cpu->get_reg8(qkz80::reg_L), qkz80::reg_A);
+    cpu->set_reg8(cpu->get_reg8(qkz80::reg_H), qkz80::reg_B);
+    break;
+  default:
+    cpu->set_reg8(cpu->get_reg8(qkz80::reg_A), qkz80::reg_L);
+    cpu->set_reg8(0, qkz80::reg_H);
+    cpu->set_reg8(0, qkz80::reg_B);
+    break;
   }
 }
 
@@ -2676,11 +2731,10 @@ void CPMEmulator::bdos_console_status() {
 }
 
 void CPMEmulator::bdos_get_version() {
-  // CP/M 2.2 version
+  // CP/M 2.2.  An 8-bit answer, as 2.2's func12 stores it with sta$ret:
+  // bdos_return_registers makes HL = 0022h and B = 0 from it, which is the
+  // H = 00 for CP/M and L = 22h the manual documents.
   cpu->set_reg8(0x22, qkz80::reg_A);
-  cpu->set_reg8(0x22, qkz80::reg_L);
-  cpu->set_reg8(0x00, qkz80::reg_B);
-  cpu->set_reg8(0x00, qkz80::reg_H);
 }
 
 void CPMEmulator::bdos_get_set_dma() {

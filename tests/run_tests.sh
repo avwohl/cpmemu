@@ -340,15 +340,15 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 162 checks live behind this gate, and the 83 GDB stub checks below sit behind
-    # the same assembler (329 pass with um80, 84 without)
-    skipped=$((skipped + 162))
-    soft_skip assembler "drive mapping tests: 162 checks, no assembler (pip install um80)"
+    # 164 checks live behind this gate, and the 83 GDB stub checks below sit behind
+    # the same assembler (349 pass with um80, 84 without)
+    skipped=$((skipped + 164))
+    soft_skip assembler "drive mapping tests: 164 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1
     for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren drv_del drv_ro cli_tail cli_fcb con_eof con_spin \
-               adm3a savemem bios_disk sectran fcb_io mem_top text_ops hlt; do
+               adm3a savemem bios_disk sectran fcb_io mem_top text_ops hlt bdos_regs warmboot; do
         if ! assemble "$root/tests/$src.asm" "$tmp/$src.com" >"$tmp/asm.log" 2>&1; then
             echo "FAIL  assembling tests/$src.asm"
             sed 's/^/        /' <"$tmp/asm.log"
@@ -687,6 +687,32 @@ else
         check_savemem "save-memory: BIOS WBOOT writes the image"          W 'BIOS WBOOT'
         check_savemem "save-memory: a jump to 0000h writes the image"     J 'JMP 0'
 
+        # --- A jump to 0000h goes where 0000h says ----------------------------
+        # HI-TECH C's $EXEC stores the address of its own loop at 0001h, so that
+        # each compiler pass it runs comes back to it through JP 0, and on a
+        # real machine the JP at 0000h goes there.  The emulator trapped every
+        # jump to 0000h and ended the run, so the compile stopped when the first
+        # pass finished (issue #5).  The trap now ends the run only while the JP
+        # at 0000h still leads to the WBOOT trap.  The guest takes warm boot
+        # over through 0001h and then through the WBOOT entry of the BIOS jump
+        # table, printing 1 and 2, puts both back, and ends with a plain jump to
+        # 0000h - so the exit line is the trap's own, the one ucow, uplm80,
+        # uc80 and 80mcp look for.  Measured on the old build: nothing printed.
+        # On the issue's own diff, which let the jump through only when 0001h
+        # had changed: "1", then the trap at the second jump.
+        ( cd "$tmp" && "$emu" "$tmp/warmboot.com" ) >"$tmp/wb.out" 2>"$tmp/wb.err" </dev/null
+        rc=$?
+        if [ $rc -eq 0 ] && [ "$(cat "$tmp/wb.out")" = "12" ] && grep -q 'Program exit via JMP 0' "$tmp/wb.err"; then
+            printf 'PASS  warm boot: a jump to 0000h follows 0001h and the BIOS jump table\n'
+            passed=$((passed + 1))
+        else
+            printf 'FAIL  warm boot: a jump to 0000h follows 0001h and the BIOS jump table\n'
+            printf '        expected "12", exit 0 via JMP 0; got "%s", exit %d\n' \
+                "$(cat "$tmp/wb.out")" "$rc"
+            sed 's/^/        /' <"$tmp/wb.err"
+            failed=$((failed + 1))
+        fi
+
         # A run with no --save-memory must not announce a save.  Asserting on
         # the absence of the file alone would test nothing, since only the flag
         # can name that path; the "Saved" line is what a regression that made
@@ -782,6 +808,36 @@ else
         # accumulator, and a real SECTRAN leaves it alone.
         check_sectran "sectran: the table index wraps at FFFF"     ok    W 0009
         check_sectran "sectran: A is left alone"                   fail  A 5A
+
+        # --- BDOS answers in HL, with A = L and B = H -------------------------
+        # CP/M 2.2 clears its result word on entry and leaves through one exit,
+        # lhld aret! mov a,l! mov b,h, so every call answers in HL with A = L
+        # and B = H: H = B = 0 for an 8-bit answer, 0 in all four for a call
+        # with no answer.  The emulator set A alone for an 8-bit answer and HL
+        # alone for 24, 27, 29 and 31, and HI-TECH C 3.09, which reads HL,
+        # took the guest's own HL after BDOS 34 for a failed write (issue #5).
+        # tests/bdos_regs.asm loads A = 5A, B = A5 and HL = 1234 before each
+        # call and prints all four after it.  Measured on the old build: every
+        # line but BDOS 12's kept a sentinel, and "22 00A51234" is the HI-TECH
+        # failure itself.  On the issue's own diff, which copied A into L
+        # without clearing it first: "1A 5A00005A" for BDOS 26, which has no
+        # answer.  The guest makes and deletes REGTEST.$$$, so it runs in a
+        # directory of its own.
+        mkdir -p "$tmp/regs"
+        ( cd "$tmp/regs" && "$emu" "$tmp/bdos_regs.com" ) >"$tmp/regs.out" 2>"$tmp/regs.err" </dev/null
+        rc=$?
+        printf '%b' '0C 22000022\r\n19 00000000\r\n20 00000000\r\n18 01000001\r\n1F 43FEFE43\r\n1A 00000000\r\n0F FF0000FF\r\n66 FF0000FF\r\n16 00000000\r\n22 00000000\r\n10 00000000\r\n13 00000000\r\n' \
+            >"$tmp/regs.want"
+        if [ $rc -eq 0 ] && cmp -s "$tmp/regs.want" "$tmp/regs.out" && [ -z "$(ls -A "$tmp/regs")" ]; then
+            printf 'PASS  bdos: every call answers in HL with A = L and B = H\n'
+            passed=$((passed + 1))
+        else
+            printf 'FAIL  bdos: every call answers in HL with A = L and B = H (exit %d)\n' "$rc"
+            printf '    expected:\n'; show "$tmp/regs.want"
+            printf '    got:\n';      show "$tmp/regs.out"
+            [ -z "$(ls -A "$tmp/regs")" ] || printf '        left behind: %s\n' "$(ls -A "$tmp/regs")"
+            failed=$((failed + 1))
+        fi
 
         # --- BDOS file calls, through tests/fcb_io.asm -----------------------
         # tests/fcb_io.asm runs a script of BDOS file calls against one FCB -
