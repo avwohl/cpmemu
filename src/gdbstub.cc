@@ -20,7 +20,10 @@ Stub* active_stub = nullptr;
 void (*message_sink)(const char* text) = nullptr;
 
 // The stub's own lines, printf-style, to message_sink or else to stderr.
-#if defined(__GNUC__) || defined(__clang__)
+// The format family is chosen as for platform::diag in os/platform.h.
+#if defined(__MINGW_PRINTF_FORMAT)
+__attribute__((format(__MINGW_PRINTF_FORMAT, 1, 2)))
+#elif defined(__GNUC__) || defined(__clang__)
 __attribute__((format(printf, 1, 2)))
 #endif
 static void say(const char* fmt, ...) {

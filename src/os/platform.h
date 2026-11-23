@@ -8,6 +8,7 @@
 #ifndef CPMEMU_PLATFORM_H
 #define CPMEMU_PLATFORM_H
 
+#include <cstdio>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -35,7 +36,12 @@ void disable_raw_mode();
 // does Windows, whose console returns to column 0 on LF by itself.
 // gdbstub.cc does not call this, because the other programs that compile
 // the stub have platform layers of their own: see gdb::message_sink.
-#if defined(__GNUC__) || defined(__clang__)
+// mingw gets its own format family: plain "printf" there means the Microsoft
+// one, which has no %zu, while the vfprintf that g++ compiles to is mingw's
+// C99 printf, which does.  The CI cross-compile caught that.
+#if defined(__MINGW_PRINTF_FORMAT)
+__attribute__((format(__MINGW_PRINTF_FORMAT, 1, 2)))
+#elif defined(__GNUC__) || defined(__clang__)
 __attribute__((format(printf, 1, 2)))
 #endif
 void diag(const char* fmt, ...);
