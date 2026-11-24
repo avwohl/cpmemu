@@ -27,6 +27,9 @@ their own.  This section lists those parts and gives each license.
 Files:     src/qkz80.cc (the DAA instruction)
            src/qkz80_reg_set.cc (add8_bitwise, sub8_bitwise, add16_bitwise,
            sub16_bitwise)
+           docs/archive/TNYLPO_ANALYSIS.md, docs/archive/FLAG_DEBUG_PROGRESS.md
+           and docs/archive/FLAG_DEBUG_STATUS.md, old notes that quote
+           parts of that code
 Origin:    tnylpo by Georg Brein, src/cpu.c (inst_daa, add8, sub8, add16,
            sub16), https://gitlab.com/gbrein/tnylpo
 License:   BSD 3-Clause, as follows.

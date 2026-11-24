@@ -20,7 +20,8 @@ the DAA instruction in `src/qkz80.cc`, and four helpers in
 license requires the copyright notice and the license text in each copy of the
 source and in the documentation of each binary copy. The new file `NOTICE` has
 the license text, and the comments in the two files name the origin and point
-to `NOTICE`.
+to `NOTICE`. `NOTICE` also names three old notes in `docs/archive` that quote
+parts of that code.
 
 The `.deb` and the `.rpm` now include `NOTICE` beside `LICENSE`. The macOS
 archive and the Windows MSIX now include both files. Before, neither of these
