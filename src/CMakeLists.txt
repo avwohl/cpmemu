@@ -49,6 +49,10 @@ endif()
 # Installation
 install(TARGETS cpmemu RUNTIME DESTINATION bin)
 install(TARGETS qkz80 ARCHIVE DESTINATION lib)
+# LICENSE, and NOTICE with the BSD license of the tnylpo code in the CPU core,
+# which a binary distribution has to reproduce.  The macOS release archive is
+# built from these rules.  The archives of 4.15.0 and earlier had neither file.
+install(FILES ../LICENSE ../NOTICE DESTINATION share/doc/cpmemu)
 install(FILES
     qkz80.h
     qkz80_cpu_flags.h

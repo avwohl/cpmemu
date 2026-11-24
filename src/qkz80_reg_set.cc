@@ -638,7 +638,12 @@ void qkz80_reg_set::set_zspa_from_inr(qkz80_uint8 a,qkz80_uint8 half_carry, bool
   set_flags(result);
 }
 
-// Helper: Bit-by-bit 8-bit addition with carry (based on tnylpo)
+// add8_bitwise, sub8_bitwise, add16_bitwise and sub16_bitwise are adapted
+// from add8(), sub8(), add16() and sub16() in tnylpo's cpu.c, Copyright (c)
+// 2019 Georg Brein, under the BSD 3-Clause license; NOTICE at the top of
+// the tree has the license text.
+//
+// Helper: Bit-by-bit 8-bit addition with carry (from tnylpo)
 // Returns result and sets all flags via bit-simulation
 static qkz80_uint8 add8_bitwise(qkz80_uint8 s1, qkz80_uint8 s2, int carry_in,
                                 qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
@@ -678,7 +683,7 @@ static qkz80_uint8 add8_bitwise(qkz80_uint8 s1, qkz80_uint8 s2, int carry_in,
   return result;
 }
 
-// Helper: Bit-by-bit 8-bit subtraction with borrow (based on tnylpo)
+// Helper: Bit-by-bit 8-bit subtraction with borrow (from tnylpo)
 static qkz80_uint8 sub8_bitwise(qkz80_uint8 minuend, qkz80_uint8 subtrahend, int borrow_in,
                                 qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
                                 qkz80_uint8& flag_x, qkz80_uint8& flag_y,
@@ -716,7 +721,7 @@ static qkz80_uint8 sub8_bitwise(qkz80_uint8 minuend, qkz80_uint8 subtrahend, int
   return result;
 }
 
-// Helper: Bit-by-bit 16-bit addition with carry (based on tnylpo)
+// Helper: Bit-by-bit 16-bit addition with carry (from tnylpo)
 // Returns result and sets all flags via bit-simulation
 static qkz80_uint16 add16_bitwise(qkz80_uint16 s1, qkz80_uint16 s2, int carry_in,
                                   qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
@@ -755,7 +760,7 @@ static qkz80_uint16 add16_bitwise(qkz80_uint16 s1, qkz80_uint16 s2, int carry_in
   return result;
 }
 
-// Helper: Bit-by-bit 16-bit subtraction with borrow (based on tnylpo)
+// Helper: Bit-by-bit 16-bit subtraction with borrow (from tnylpo)
 static qkz80_uint16 sub16_bitwise(qkz80_uint16 minuend, qkz80_uint16 subtrahend, int borrow_in,
                                   qkz80_uint8& flag_h, qkz80_uint8& flag_c, qkz80_uint8& flag_v,
                                   qkz80_uint8& flag_x, qkz80_uint8& flag_y,

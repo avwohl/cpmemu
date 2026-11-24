@@ -1423,7 +1423,10 @@ void qkz80::execute(void) {
     return;
   }
 
-  case 0x27: // DAA - Based on tnylpo implementation
+  case 0x27: // DAA
+    // Adapted from inst_daa() in tnylpo's cpu.c, Copyright (c) 2019 Georg
+    // Brein, under the BSD 3-Clause license; NOTICE at the top of the tree
+    // has the license text.  The 8080-mode N handling is cpmemu's own.
   {
     qkz80_uint8 rega = get_reg8(reg_A);
     qkz80_uint8 flags = regs.get_flags();

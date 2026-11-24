@@ -102,7 +102,9 @@ and the config file format.
 - [docs/debugger_plan.md](docs/debugger_plan.md) - the plan for source debugging and backtrace
 - `todo.txt` - open work
 
-GNU General Public License v3.0 - see [LICENSE](LICENSE).
+Copyright (C) 2025-2026 Aaron Wohl. GNU General Public License version 3 or
+later - see [LICENSE](LICENSE). [NOTICE](NOTICE) lists the code from other
+projects and gives the license of each.
 
 ## Related Projects
 

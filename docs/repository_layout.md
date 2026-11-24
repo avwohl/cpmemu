@@ -11,6 +11,8 @@ examples/           config file examples (the reference is docs/config_file.md)
 packaging/windows/  MSIX packaging
 docs/               the documents linked from README.md
 .github/workflows/  ci.yml (the test suite) and release.yml (deb, rpm, macOS)
+LICENSE             the GNU GPL version 3
+NOTICE              code from other projects, and the license of each
 ```
 
 `cpm_disk`, the CP/M disk-image tool, ships wherever it can run: `make install`

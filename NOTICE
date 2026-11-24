@@ -1,0 +1,78 @@
+cpmemu
+======
+
+Copyright (C) 2025-2026 Aaron Wohl
+
+cpmemu is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+cpmemu is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+LICENSE has the text of the GNU General Public License version 3.
+
+
+Code from other projects
+========================
+
+Some parts of the tree come from the work of other people, under licenses of
+their own.  This section lists those parts and gives each license.
+
+
+1. tnylpo: Z80 flag arithmetic in the CPU core
+----------------------------------------------
+
+Files:     src/qkz80.cc (the DAA instruction)
+           src/qkz80_reg_set.cc (add8_bitwise, sub8_bitwise, add16_bitwise,
+           sub16_bitwise)
+Origin:    tnylpo by Georg Brein, src/cpu.c (inst_daa, add8, sub8, add16,
+           sub16), https://gitlab.com/gbrein/tnylpo
+License:   BSD 3-Clause, as follows.
+
+  Copyright (c) 2019 Georg Brein. All rights reserved.
+
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are met:
+
+  1. Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+
+  2. Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+
+  3. Neither the name of the copyright holder nor the names of its
+     contributors may be used to endorse or promote products derived from
+     this software without specific prior written permission.
+
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+  ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+  LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+  CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+  SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+  INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+  POSSIBILITY OF SUCH DAMAGE.
+
+
+2. The 8080 instruction exerciser (test programs only)
+------------------------------------------------------
+
+Files:     tests/8080/8080exm.mac, 8080exer.mac, 8080pre.mac, the .prn
+           listings and the .com files built from them
+Origin:    Frank D. Cringle's Z80 instruction exerciser (zexlax.z80) and
+           preliminary tests (prelim.z80).  Ian Bartholomew changed the
+           exerciser to exercise an 8080 in February 2009 (8080exm, 8080exer).
+           The copies here come from https://github.com/superzazu/8080
+           (tests/8080/README.md).
+License:   GNU General Public License, version 2 or (at your option) any
+           later version.  Copyright (C) 1994 Frank D. Cringle.  The notice
+           is in the header of each .mac file.  These files are test programs
+           that run under the emulator; nothing from them is in the cpmemu
+           program.
+

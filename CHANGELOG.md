@@ -10,6 +10,32 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
+## [Unreleased]
+
+**`NOTICE` credits the tnylpo code in the CPU core.** Two parts of the CPU core
+come from `cpu.c` of tnylpo, by Georg Brein, under the BSD 3-Clause license:
+the DAA instruction in `src/qkz80.cc`, and four helpers in
+`src/qkz80_reg_set.cc` (`add8_bitwise`, `sub8_bitwise`, `add16_bitwise`,
+`sub16_bitwise`). The code carried only the comment "based on tnylpo". The BSD
+license requires the copyright notice and the license text in each copy of the
+source and in the documentation of each binary copy. The new file `NOTICE` has
+the license text, and the comments in the two files name the origin and point
+to `NOTICE`.
+
+The `.deb` and the `.rpm` now include `NOTICE` beside `LICENSE`. The macOS
+archive and the Windows MSIX now include both files. Before, neither of these
+two packages had a license file.
+
+**cpmemu is under the GPL version 3 or later, and `LICENSE` says only the
+license.** `LICENSE` had the GPL-3 text with its appendix filled in under the
+title of another project, and the appendix said "version 3 or any later
+version". A second notice under it said "version 3" only.
+
+`LICENSE` is now the GPL-3 text exactly as the FSF publishes it. `NOTICE` and
+the README give the copyright, Copyright (C) 2025-2026 Aaron Wohl, and the
+license, GPL version 3 or later. The `.deb` and
+the `.rpm` give the license as `GPL-3.0-or-later`. Before, they gave `GPL-3.0`.
+
 ## [4.15.0] - 2026-11-24
 
 **`--help` prints the option list.** Before, cpmemu took `--help` for the name

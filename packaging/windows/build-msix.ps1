@@ -79,6 +79,10 @@ else {
 # would be.
 Write-Host "`nStaging files..." -ForegroundColor Yellow
 Copy-Item $ExePath $StagingDir
+# LICENSE, and NOTICE with the BSD license of the tnylpo code in the CPU core,
+# which a binary distribution has to reproduce.
+Copy-Item (Join-Path $ProjectRoot "LICENSE") $StagingDir
+Copy-Item (Join-Path $ProjectRoot "NOTICE") $StagingDir
 
 # Update and copy manifest
 $ManifestPath = Join-Path $PackagingDir "AppxManifest.xml"
