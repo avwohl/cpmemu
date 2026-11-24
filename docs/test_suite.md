@@ -237,6 +237,14 @@ All flag tests have been verified to match tnylpo output exactly.
 
 ### Comprehensive Test Suites
 
+zexdoc and zexall are Frank D. Cringle's Z80 instruction set exerciser, under
+the GPL version 2 or later. The source is beside the binaries, in
+`tests/zexdoc.mac` and `tests/zexall.mac`, from
+[agn453/ZEXALL](https://github.com/agn453/ZEXALL). The `.com` files are
+byte-identical to the ones in that repository, which Hector Peraza's ZSM4
+assembler builds from the `.mac` files. `NOTICE` gives the origin and the
+license.
+
 #### zexdoc.com
 Tests **documented Z80 instructions only**.
 - Size: 8704 bytes

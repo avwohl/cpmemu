@@ -36,6 +36,19 @@ the README give the copyright, Copyright (C) 2025-2026 Aaron Wohl, and the
 license, GPL version 3 or later. The `.deb` and
 the `.rpm` give the license as `GPL-3.0-or-later`. Before, they gave `GPL-3.0`.
 
+**The Z80 exercisers have their source, and eight test files without source are
+gone.** `tests/zexdoc.com` and `tests/zexall.com` are Frank D. Cringle's
+exerciser, under the GPL version 2 or later, and the tree did not hold their
+source. `tests/zexdoc.mac` and `tests/zexall.mac` now hold the source, from
+agn453/ZEXALL, and the two `.com` files are byte-identical to the builds in
+that repository.
+
+The tree no longer has eight small files (6 to 81 bytes) with no source:
+`tests/test1.com`, `test_aluop_compare.com`, `test_ccf.com`, `test_cpl.com`,
+`test_daa1.com`, `test_daa_cpl_scf_ccf.com`, `test_ld16.com` and
+`test_scf.com`. No check, document or CI job used them. Debian requires source
+for each file in a source package.
+
 ## [4.15.0] - 2026-11-24
 
 **`--help` prints the option list.** Before, cpmemu took `--help` for the name

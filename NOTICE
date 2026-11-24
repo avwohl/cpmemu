@@ -76,3 +76,20 @@ License:   GNU General Public License, version 2 or (at your option) any
            that run under the emulator; nothing from them is in the cpmemu
            program.
 
+
+3. The Z80 instruction exercisers zexdoc and zexall (test programs only)
+------------------------------------------------------------------------
+
+Files:     tests/zexdoc.com, tests/zexall.com, and their source,
+           tests/zexdoc.mac and tests/zexall.mac
+Origin:    Frank D. Cringle's Z80 instruction set exerciser (zexlax.z80),
+           from YAZE-AG 2.51.3 (Andreas Gerlich, https://agl.yaze-ag.de/), as
+           published at https://github.com/agn453/ZEXALL, commit 8f71d41 of
+           2025-06-15.  The .mac files are the form of the source that Hector
+           Peraza's ZSM4 assembler builds; the .com files here are
+           byte-identical to the ones in that repository.
+License:   GNU General Public License, version 2 or (at your option) any
+           later version.  Copyright (C) 1994 Frank D. Cringle.  The notice
+           is in the header of each .mac file.  These files are test programs
+           that run under the emulator (tests/run_tests.sh --zex); nothing
+           from them is in the cpmemu program.

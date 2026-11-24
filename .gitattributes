@@ -30,6 +30,12 @@
 # none of them.
 tests/8080/** -text
 
+# The same for the source of zexdoc.com and zexall.com: Frank Cringle's
+# exerciser in the form that agn453/ZEXALL publishes, CRLF and all, kept
+# byte-exact beside the .com files that were assembled from it.
+tests/zexdoc.mac -text
+tests/zexall.mac -text
+
 # Binaries, declared rather than left to git's NUL-byte guess.
 *.com        binary
 *.bin        binary
