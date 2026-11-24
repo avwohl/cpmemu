@@ -10,7 +10,7 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
-## [Unreleased]
+## [4.15.0] - 2026-11-24
 
 **`--help` prints the option list.** Before, cpmemu took `--help` for the name
 of a program and stopped with `Cannot open --help`. Only a run with no
