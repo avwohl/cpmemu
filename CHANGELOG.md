@@ -49,6 +49,19 @@ The tree no longer has eight small files (6 to 81 bytes) with no source:
 `test_scf.com`. No check, document or CI job used them. Debian requires source
 for each file in a source package.
 
+**The makefile adds to `CXXFLAGS`, `CPPFLAGS` and `LDFLAGS`.** `src/makefile`
+set `CXXFLAGS` with `=`, so a `CXXFLAGS` from the environment had no effect.
+`CPPFLAGS` was not used, and `LDFLAGS` was on the `cpmemu` link line only.
+`make CXXFLAGS=-O0` also removed `-std=c++11` and `-I.`, and the build failed.
+Now the makefile adds its own flags to the flags of the caller, on every
+compile and link line. `-O2` is the default when the caller gives no
+`CXXFLAGS`.
+
+Measured in a Debian unstable container with the flags from `dpkg-buildflags`:
+the build gives no warnings. `hardening-check` finds a position-independent
+executable, the stack protector, fortified functions, read-only relocations and
+branch protection. The suite gives 93 passed, 0 failed (with no um80).
+
 ## [4.15.0] - 2026-11-24
 
 **`--help` prints the option list.** Before, cpmemu took `--help` for the name

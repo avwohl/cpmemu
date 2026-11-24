@@ -16,8 +16,23 @@ all: cpmemu
 # every GCC build on the first object file, release.yml's ubuntu-latest and
 # ubuntu-24.04-arm jobs included.
 SHORTEN_64_TO_32 := $(shell $(CXX) -Wshorten-64-to-32 -x c++ -fsyntax-only /dev/null 2>/dev/null && echo -Wshorten-64-to-32)
-CXXFLAGS = -std=c++11 -Wall -Wextra $(SHORTEN_64_TO_32) -O2 -I.
-CXXFLAGS_PIC = $(CXXFLAGS) -fPIC
+
+# CXXFLAGS, CPPFLAGS and LDFLAGS belong to whoever runs make, from the
+# environment or the command line, and are added to; they are not replaced.
+# A package build passes its own: Debian's dpkg-buildflags gives -g, -O2 and
+# the hardening flags (-fstack-protector-strong, -D_FORTIFY_SOURCE=2 in
+# CPPFLAGS, -Wl,-z,relro in LDFLAGS).  This file used to set
+# CXXFLAGS with a plain '=', which threw an environment CXXFLAGS away, never
+# used CPPFLAGS, and gave LDFLAGS to the cpmemu link only.  `make
+# CXXFLAGS=-O0` replaced -std=c++11 and -I. as well, and the build failed.
+#
+# QK_CXXFLAGS is what the build needs whatever the caller says: the language,
+# the include path and the warnings.  -O2 is only the default; a CXXFLAGS
+# without -O builds without optimisation, as the caller asked.
+CXXFLAGS ?= -O2
+QK_CXXFLAGS = -std=c++11 -I. -Wall -Wextra $(SHORTEN_64_TO_32)
+ALL_CXXFLAGS = $(QK_CXXFLAGS) $(CPPFLAGS) $(CXXFLAGS)
+CXXFLAGS_PIC = $(ALL_CXXFLAGS) -fPIC
 
 # Which host this is.  The shared library, the static link and the pkg-config
 # file all differ between the two, and each difference below says why.
@@ -44,7 +59,7 @@ static build to be had here.  Build without STATIC; to control how old a macOS \
 the binary will still run on, set MACOSX_DEPLOYMENT_TARGET, for example \
 `make MACOSX_DEPLOYMENT_TARGET=12.0`)
 endif
-LDFLAGS = -static
+STATIC_LDFLAGS = -static
 endif
 
 # Library sources and objects
@@ -97,7 +112,7 @@ TARGET = cpmemu
 
 # Build platform object
 $(PLATFORM_OBJECT): $(PLATFORM_SOURCE)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(ALL_CXXFLAGS) -c $< -o $@
 
 # Build static library
 $(LIB_STATIC): $(LIB_OBJECTS)
@@ -111,7 +126,7 @@ ifeq ($(UNAME_S),Darwin)
 # only on the install command line is known; -headerpad_max_install_names is
 # what leaves install_name_tool room to write a longer path in afterwards.
 $(LIB_SHARED): $(LIB_OBJECTS_PIC)
-	$(CXX) -dynamiclib -install_name $(LIBDIR)/$(LIB_SHARED) \
+	$(CXX) $(LDFLAGS) -dynamiclib -install_name $(LIBDIR)/$(LIB_SHARED) \
 		-compatibility_version $(LIB_VERSION_MAJOR).0.0 \
 		-current_version $(LIB_VERSION) \
 		-Wl,-headerpad_max_install_names -o $@ $(LIB_OBJECTS_PIC)
@@ -120,17 +135,17 @@ $(LIB_SHARED_LINK): $(LIB_SHARED)
 	ln -sf $(LIB_SHARED) $@
 else
 $(LIB_SHARED): $(LIB_OBJECTS_PIC)
-	$(CXX) -shared -o $@ $(LIB_OBJECTS_PIC)
+	$(CXX) $(LDFLAGS) -shared -o $@ $(LIB_OBJECTS_PIC)
 endif
 
 # Build cpmemu linking against static library
 cpmemu.o gdbstub.o: gdbstub.h os/platform.h
 $(TARGET): $(APP_OBJECTS) $(PLATFORM_OBJECT) $(LIB_STATIC)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(APP_OBJECTS) $(PLATFORM_OBJECT) $(LIB_STATIC) -o $(TARGET)
+	$(CXX) $(ALL_CXXFLAGS) $(LDFLAGS) $(STATIC_LDFLAGS) $(APP_OBJECTS) $(PLATFORM_OBJECT) $(LIB_STATIC) -o $(TARGET)
 
 # Regular object files
 %.o: %.cc
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(ALL_CXXFLAGS) -c $< -o $@
 
 # Position-independent object files for shared library
 %.pic.o: %.cc
@@ -150,7 +165,7 @@ libs: $(LIB_STATIC) $(LIB_SHARED) $(LIB_SHARED_LINK)
 UNIT_TESTS = unit_8080
 
 unit_8080: ../tests/unit_8080.cc $(LIB_STATIC)
-	$(CXX) $(CXXFLAGS) $< $(LIB_STATIC) -o $@
+	$(CXX) $(ALL_CXXFLAGS) $(LDFLAGS) $< $(LIB_STATIC) -o $@
 
 unit: $(UNIT_TESTS)
 	@for t in $(UNIT_TESTS); do ./$$t || exit 1; done
