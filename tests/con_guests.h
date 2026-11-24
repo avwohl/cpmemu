@@ -190,6 +190,52 @@ static const unsigned char coneof_com[] = {
     0xC1, 0xF1, 0xC9
 };
 
+// conwork11 - work, and look for ^C between pieces of work the way HI-TECH
+// C's passes do: 5000 times, about 4200 T-states of work, then BDOS 11 and,
+// when it says a key is ready, BDOS 1.  A ^C prints BREAK and ends; any other
+// byte is dropped; DONE at the end.  tests/con_work11.asm is the source; these
+// are the 66 bytes um80 and ul80 make of it.  At the end of redirected input
+// eof_idle has to answer this guest "no key", or its ^C checks read past the
+// end and the 1024-read stop ends it part way, as it did before eof_idle.
+//
+//         ld      hl,5000
+// outer:  push    hl
+//         ld      b,200
+// work:   ld      a,b
+//         xor     c
+//         djnz    work
+//         ld      c,11
+//         call    0005h
+//         or      a
+//         jr      z,next
+//         ld      c,1
+//         call    0005h
+//         cp      03h
+//         jr      z,brk
+// next:   pop     hl
+//         dec     hl
+//         ld      a,h
+//         or      l
+//         jr      nz,outer
+//         ld      de,done         ; 0137h
+//         ld      c,9
+//         call    0005h
+//         jp      0
+// brk:    ld      de,break        ; 013Ch
+//         ld      c,9
+//         call    0005h
+//         jp      0
+// done:   db      'DONE$'
+// break:  db      'BREAK$'
+static const unsigned char conwork11_com[] = {
+    0x21, 0x88, 0x13, 0xE5, 0x06, 0xC8, 0x78, 0xA9, 0x10, 0xFC, 0x0E, 0x0B,
+    0xCD, 0x05, 0x00, 0xB7, 0x28, 0x09, 0x0E, 0x01, 0xCD, 0x05, 0x00, 0xFE,
+    0x03, 0x28, 0x11, 0xE1, 0x2B, 0x7C, 0xB5, 0x20, 0xE2, 0x11, 0x37, 0x01,
+    0x0E, 0x09, 0xCD, 0x05, 0x00, 0xC3, 0x00, 0x00, 0x11, 0x3C, 0x01, 0x0E,
+    0x09, 0xCD, 0x05, 0x00, 0xC3, 0x00, 0x00, 0x44, 0x4F, 0x4E, 0x45, 0x24,
+    0x42, 0x52, 0x45, 0x41, 0x4B, 0x24
+};
+
 // crlf - send CR LF and stop.  Windows doubles a CR on the way out unless
 // platform::init() has put stdout in binary mode.
 //

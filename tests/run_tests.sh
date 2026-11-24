@@ -340,14 +340,16 @@ fi
 if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
-    # 164 checks live behind this gate, and the 83 GDB stub checks below sit behind
-    # the same assembler (351 pass with um80, 86 without)
-    skipped=$((skipped + 164))
-    soft_skip assembler "drive mapping tests: 164 checks, no assembler (pip install um80)"
+    # 177 checks live behind this gate, and the 83 GDB stub checks below sit behind
+    # the same assembler (367 pass with um80, 89 without)
+    skipped=$((skipped + 177))
+    soft_skip assembler "drive mapping tests: 177 checks, no assembler (pip install um80)"
 else
     echo
     asm_ok=1
     for src in drv_read drv_dir drv_make drv_sel drv_login drv_ren drv_del drv_ro cli_tail cli_fcb con_eof con_spin \
+               con_work11 con_work6 con_workbios con_wait11 con_wait6 con_waitmem \
+               con_waitgate con_waitcall \
                adm3a savemem bios_disk sectran fcb_io mem_top text_ops hlt bdos_regs warmboot; do
         if ! assemble "$root/tests/$src.asm" "$tmp/$src.com" >"$tmp/asm.log" 2>&1; then
             echo "FAIL  assembling tests/$src.asm"
@@ -631,6 +633,80 @@ else
             printf '        did not exit within 30s\n'
             failed=$((failed + 1))
         fi
+
+        # --- eof_idle: ended input is a terminal nobody types on ------------
+        # A program that works and looks for ^C between pieces of work has to
+        # run to its end when its input has ended: the status calls answer it
+        # "no key".  A program that waits for a key has to be told, as before,
+        # that none will come.  Before eof_idle the three workers were stopped
+        # part way by the 1024-read stop, which is what stopped a HI-TECH C link
+        # and an MBASIC loop with stdin from /dev/null (issue #5).
+        # con_check <name> <stdout must contain> <diagnostic: yes|no>
+        #           <stdin file> <emulator arguments...>
+        con_check() {
+            local name=$1 want=$2 diag=$3 input=$4 rc
+            shift 4
+            ( cd "$sb" && run_bounded 30 "$emu" "$@" <"$input" ) \
+                >"$tmp/con.out" 2>"$tmp/con.err"
+            rc=$?
+            if [ $rc -eq 124 ]; then
+                printf 'FAIL  %s\n        did not exit within 30s\n' "$name"
+                failed=$((failed + 1))
+            elif [ -n "$want" ] && ! tr -d '\r' <"$tmp/con.out" | grep -q -- "$want"; then
+                printf 'FAIL  %s\n    expected stdout to contain: %s\n    got:\n' "$name" "$want"
+                show "$tmp/con.out"; show "$tmp/con.err"
+                failed=$((failed + 1))
+            elif [ "$diag" = yes ] && ! grep -q 'reads past end of input' "$tmp/con.err"; then
+                printf 'FAIL  %s\n        no "reads past end of input" diagnostic\n' "$name"
+                failed=$((failed + 1))
+            elif [ "$diag" = no ] && grep -q 'reads past end of input' "$tmp/con.err"; then
+                printf 'FAIL  %s\n        stopped by the 1024-read stop:\n' "$name"
+                show "$tmp/con.err"
+                failed=$((failed + 1))
+            else
+                printf 'PASS  %s\n' "$name"
+                passed=$((passed + 1))
+            fi
+        }
+        printf '\003' >"$tmp/ctrlc.in"
+        printf 'AB' >"$tmp/ab.in"
+        con_check "console: a BDOS 11 ^C check finds no key at end of input" \
+            DONE no /dev/null "$tmp/con_work11.com"
+        con_check "console: a BDOS 6 FFh ^C check finds no key at end of input" \
+            DONE no /dev/null "$tmp/con_work6.com"
+        con_check "console: a BIOS CONST ^C check finds no key at end of input" \
+            DONE no /dev/null "$tmp/con_workbios.com"
+        # The byte read ahead to find the end of input is the next byte read
+        con_check "console: a ^C before the end of input reaches the ^C check" \
+            BREAK no "$tmp/ctrlc.in" "$tmp/con_work11.com"
+        con_check "console: bytes, then the end of input: the ^C check runs on" \
+            DONE no "$tmp/ab.in" "$tmp/con_work11.com"
+        # A delay between the polls does not hide a waiter: its registers and
+        # memory are the same at every poll
+        con_check "console: a waiter with a delay between polls gets CR, then ^Z" \
+            '0D END' no /dev/null "$tmp/con_wait11.com"
+        con_check "console: a BDOS 6 FFh waiter with a delay is stopped" \
+            '' yes /dev/null "$tmp/con_wait6.com"
+        # A waiter whose memory changes as it waits never repeats its state;
+        # the probe at every 16384th status call gives it CR, then ^Z
+        con_check "console: a waiter that changes its memory gets CR, then ^Z" \
+            '0D END' no /dev/null "$tmp/con_waitmem.com"
+        # Two status calls in the loop, BDOS 11 and then a BDOS 6 FFh read; and
+        # a loop with a call that is not work (BDOS 25).  Both ran for ever
+        # under an earlier form of the rule.
+        con_check "console: a BDOS 11 then BDOS 6 FFh waiter is stopped" \
+            '' yes /dev/null "$tmp/con_waitgate.com"
+        con_check "console: a waiter that calls BDOS 25 between polls gets CR, then ^Z" \
+            '0D END' no /dev/null "$tmp/con_waitcall.com"
+        # eof_idle off is the behaviour before it, for a caller that wants a
+        # program with ^C checks stopped at the end of its input
+        con_check "console: --no-eof-idle stops a ^C check at end of input" \
+            '' yes /dev/null --no-eof-idle "$tmp/con_work11.com"
+        printf 'program = %s/con_work11.com\neof_idle = false\n' "$tmp" >"$tmp/noidle.cfg"
+        con_check "console: eof_idle = false stops a ^C check at end of input" \
+            '' yes /dev/null "$tmp/noidle.cfg"
+        con_check "console: --eof-idle outranks eof_idle = false" \
+            DONE no /dev/null --eof-idle "$tmp/noidle.cfg"
 
         # --- the ADM-3A to ANSI output translator ---------------------------
         # Every other expected string in this suite is plain ASCII, so nothing

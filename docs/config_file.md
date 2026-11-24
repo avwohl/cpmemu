@@ -19,6 +19,7 @@ key that looks like a mistyped directive is now reported (see below).
 | `eol_convert` | `true`/`false`. Convert `\r\n` <-> `\n` for text files. `false` keeps CP/M's bytes on the host. |
 | `debug` | `true`/`false`. Prints mappings, BDOS calls and file operations. |
 | `ctrl_c_exit` | `true`/`false`. Whether five fast ^C quit the emulator. |
+| `eof_idle` | `true`/`false`. When redirected input has ended, whether a status call answers "no key" to a program that does not wait for a key. `true` by default. See [End of redirected input](CPM_SUPPORT.md#end-of-redirected-input). |
 | `printer` | File to receive printer output. |
 | `aux_input` | File to read for AUX input. |
 | `aux_output` | File to receive AUX output. |

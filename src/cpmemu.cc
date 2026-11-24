@@ -82,6 +82,91 @@ static bool ctrl_c_exit_from_cli = false; // a CLI flag outranks the config file
 static const long long CTRL_C_EXIT_WINDOW_MS = 2000;
 static long long first_ctrl_c_ms = 0;
 
+// End of redirected input, and the console status calls.  A terminal nobody
+// types on answers "no key" to every status call for ever.  Redirected input
+// that has run out has no answer of its own, and the answer cpmemu gives in its
+// place decides two kinds of program in opposite ways:
+//
+// - A program that WAITS for a key - it polls the status until a key comes, or
+//   it reads - must learn that no key will come, or it waits for ever.
+// - A program that WORKS and looks for ^C between pieces of work must be told
+//   "no key", or it takes the end of input from its ^C check, and the
+//   1024-read stop below ends it part way.  HI-TECH C's passes do this with
+//   BDOS 11 and then BDOS 1, the programs HI-TECH C builds with BDOS 6 FFh in
+//   read() and write(), and MBASIC with BIOS CONST while a BASIC program runs.
+//   Before eof_idle, a HI-TECH C link and a BASIC loop with stdin from
+//   /dev/null were both stopped part way, with exit status 0.
+//
+// With eof_idle on (the default; 'eof_idle' in a config file, --eof-idle and
+// --no-eof-idle), once redirected input has ended the status calls (BDOS 11,
+// BDOS 6 with E = FEh or FFh, BIOS CONST) answer "no key", with two
+// exceptions that tell a waiting guest that input has ended:
+//
+// - A guest in a loop that only a key can end.  Its registers (all but R) come
+//   back to the same values at least EOF_WAIT_POLLS times, each within
+//   EOF_PERIOD_POLLS status calls of the last, its 64K of memory is the same
+//   as when they first came back, and it read or wrote no file in between.
+//   The CPU is deterministic and every one of those calls answered "no key",
+//   so such a guest would go round the same loop for ever.  From then on every
+//   status call answers "a key is ready", until the guest reads or writes a
+//   file.  A delay loop between the polls does not hide such a guest, and nor
+//   does a loop with two status calls in it, such as BDOS 11 to see whether a
+//   key is ready and BDOS 6 FFh to read it.
+// - The probe: every EOF_PROBE_POLLS-th status call answers "a key is ready",
+//   and so do the status calls after it until the guest reads the console.
+//   That reaches a waiter whose memory changes as it waits - a BASIC INKEY$
+//   loop, a counter, a cursor that blinks - and a waiter that reads a file
+//   between its polls.  A ^C check drops the byte it reads.  A guest needs
+//   1024 probes, EOF_PROBE_POLLS * 1024 status calls, to reach the 1024-read
+//   stop, which no program that only checks for ^C gets near before the
+//   instruction limit.
+//
+// A guest told "a key is ready" reads what every guest read before eof_idle:
+// CR, then ^Z, and the 1024-read stop.  The blocking reads (BDOS 1, BDOS 10,
+// BIOS CONIN) answer as they always have.  With eof_idle off, every status call
+// says "a key is ready" once input has ended, as before.  A terminal has no end
+// of input here: none of this applies to one.
+//
+// The end of input is found by reading one byte ahead, only when stdin is not
+// a terminal and a status call finds that a read will not block.  A byte read
+// that way waits in pending_ch, and the next read of any kind takes it first.
+static bool eof_idle_enabled = true;
+static bool eof_idle_from_cli = false;    // a CLI flag outranks the config file
+static const int EOF_WAIT_POLLS = 64;
+static const int EOF_PERIOD_POLLS = 8;
+static const int EOF_PROBE_POLLS = 16384;
+static bool input_ended = false;          // a read found the end of input
+static int pending_ch = -2;               // a byte read ahead; -2 = none
+static bool pending_synthesized = false;
+static bool took_pending = false;         // the last read took pending_ch
+static bool work_since_poll = true;       // a file or disk call since the last status call
+static bool eof_waiting = false;          // the guest is in a loop only a key can end
+static bool ready_until_read = false;     // a probe: "ready" until the next console read
+
+// Whether stdin is a terminal, asked once
+static bool stdin_is_terminal() {
+  static int answer = -1;
+  if (answer < 0) answer = platform::is_terminal() ? 1 : 0;
+  return answer == 1;
+}
+
+static int console_read_raw() {
+  if (pending_ch != -2) {
+    int c = pending_ch;
+    pending_ch = -2;
+    took_pending = true;
+    return c;
+  }
+  took_pending = false;
+  return platform::console_getchar();
+}
+
+// platform::console_last_char_synthesized(), for the byte console_read_raw()
+// returned last
+static bool console_last_synthesized() {
+  return took_pending ? pending_synthesized : platform::console_last_char_synthesized();
+}
+
 // Milliseconds from a monotonic clock.  steady_clock never runs backwards,
 // so an NTP step or a daylight-saving change cannot widen the ^C window.
 static long long steady_ms() {
@@ -201,7 +286,7 @@ static bool check_ctrl_c_exit(int ch) {
   // A ^C synthesized from a special key (a Windows PgDn translated to the
   // WordStar page-down code) is not a user asking to leave, so it must never
   // count toward the exit.
-  if (ch != 0x03 || platform::console_last_char_synthesized()) {
+  if (ch != 0x03 || console_last_synthesized()) {
     consecutive_ctrl_c = 0;  // Reset counter on any other input
     return false;
   }
@@ -270,6 +355,8 @@ static void end_if_terminated() {
 // exited cleanly in 0.05s through BDOS 1.
 static void note_console_eof() {
   end_if_terminated();  // the -1 was a signal, not the end of input
+  if (!stdin_is_terminal()) input_ended = true;
+  ready_until_read = false;
   if (++consecutive_console_eof >= CONSOLE_EOF_LIMIT) {
     // Nothing is going to change: stdin is finished and the guest is still
     // asking.  Leaving is better than spinning, and it is what a warm boot
@@ -283,14 +370,99 @@ static void note_console_eof() {
   }
 }
 
+// A status call once input has ended (see eof_idle above): true for "a key is
+// ready", which is what a waiting guest is told.
+static const int POLL_REGS = 16;
+static qkz80_uint16 anchor_regs[POLL_REGS];   // the registers the loop comes back to
+static bool anchor_valid = false;
+static int anchor_misses = 0;                 // status calls since they last came back
+static std::vector<qkz80_uint8> wait_memory;  // memory when they first came back
+static bool wait_memory_valid = false;
+static int anchor_returns = 0;                // times they came back since wait_memory
+static int polls_since_probe = 0;
+
+static bool status_poll_waiting(qkz80* c) {
+  if (work_since_poll) {  // a file or disk call: whatever the guest was, it moved on
+    work_since_poll = false;
+    eof_waiting = false;
+    anchor_valid = false;
+  }
+  if (++polls_since_probe >= EOF_PROBE_POLLS) {
+    polls_since_probe = 0;
+    ready_until_read = true;
+  }
+  if (eof_waiting || ready_until_read) return true;
+
+  const qkz80_reg_set& r = c->regs;
+  // Every register but R, which counts instructions and so differs every time
+  const qkz80_uint16 regs[POLL_REGS] = {
+    r.AF.get_pair16(), r.BC.get_pair16(), r.DE.get_pair16(), r.HL.get_pair16(),
+    r.SP.get_pair16(), r.PC.get_pair16(), r.IX.get_pair16(), r.IY.get_pair16(),
+    r.AF_.get_pair16(), r.BC_.get_pair16(), r.DE_.get_pair16(), r.HL_.get_pair16(),
+    r.I, r.IFF1, r.IFF2, r.IM };
+  if (!anchor_valid || anchor_misses >= EOF_PERIOD_POLLS) {
+    memcpy(anchor_regs, regs, sizeof regs);
+    anchor_valid = true;
+    anchor_misses = 0;
+    wait_memory_valid = false;
+    return false;
+  }
+  if (memcmp(regs, anchor_regs, sizeof regs) != 0) {
+    anchor_misses++;
+    return false;
+  }
+  anchor_misses = 0;
+  // The registers came back; the memory decides.  The 64K is copied when they
+  // first come back and compared once in EOF_WAIT_POLLS returns, so a long run
+  // of ^C checks, such as an MBASIC FOR loop, costs almost nothing.
+  const qkz80_uint8* mem = c->get_mem();
+  if (!wait_memory_valid) {
+    wait_memory.assign(mem, mem + 0x10000);
+    wait_memory_valid = true;
+    anchor_returns = 0;
+    return false;
+  }
+  if (++anchor_returns < EOF_WAIT_POLLS) return false;
+  if (memcmp(wait_memory.data(), mem, 0x10000) == 0) {
+    eof_waiting = true;
+    return true;
+  }
+  wait_memory.assign(mem, mem + 0x10000);
+  anchor_returns = 0;
+  return false;
+}
+
+// What BDOS 11, BDOS 6 FEh and FFh and BIOS CONST answer: true for "a key is
+// ready".  platform::stdin_has_data() alone means only that a read will not
+// block, which at the end of input is true.
+static bool console_ready(qkz80* cpu) {
+  if (pending_ch != -2) return true;
+  if (!eof_idle_enabled) return platform::stdin_has_data();
+  if (input_ended) return status_poll_waiting(cpu);
+  if (!platform::stdin_has_data()) return false;
+  if (stdin_is_terminal()) return true;
+  int ch = platform::console_getchar();
+  if (ch == -1 || ch == EOF) {
+    end_if_terminated();  // the -1 was a signal, not the end of input
+    input_ended = true;
+    return status_poll_waiting(cpu);
+  }
+  pending_ch = ch;
+  pending_synthesized = platform::console_last_char_synthesized();
+  return true;
+}
+
 static int console_getchar_blocking() {
   // With a debugger attached, wait on the console and on the debugger's
   // socket together, so that ^C from the debugger reaches a guest that is
   // waiting for a key.  Throws gdb::Interrupt, which CpmTarget::step() catches.
-  if (gdb::active_stub && gdb::active_stub->attached()) gdb::active_stub->wait_console();
-  int ch = platform::console_getchar();
-  while (ch == 0 && platform::console_last_char_synthesized()) {
-    ch = platform::console_getchar();
+  // A byte already read ahead is not waited for.
+  if (pending_ch == -2 && gdb::active_stub && gdb::active_stub->attached()) {
+    gdb::active_stub->wait_console();
+  }
+  int ch = console_read_raw();
+  while (ch == 0 && console_last_synthesized()) {
+    ch = console_read_raw();
   }
   if (ch == -1 || ch == EOF) {
     note_console_eof();
@@ -1845,6 +2017,11 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
       debug = (value == "true" || value == "1" || value == "yes");
     } else if (key == "eol_convert") {
       default_eol_convert = (value == "true" || value == "1" || value == "yes");
+    } else if (key == "eof_idle") {
+      // A --eof-idle / --no-eof-idle flag outranks the config file
+      if (!eof_idle_from_cli) {
+        eof_idle_enabled = (value == "true" || value == "1" || value == "yes");
+      }
     } else if (key == "ctrl_c_exit") {
       // A --ctrl-c-exit / --no-ctrl-c-exit flag outranks the config file
       if (!ctrl_c_exit_from_cli) {
@@ -1890,7 +2067,7 @@ bool CPMEmulator::load_config_file(const std::string& cfg_path) {
       // without changing what the line does.
       static const char* const kDirectives[] = {
         "program", "cd", "chdir", "default_mode", "debug", "eol_convert",
-        "ctrl_c_exit", "printer", "aux_input", "aux_output"
+        "ctrl_c_exit", "eof_idle", "printer", "aux_input", "aux_output"
       };
       std::string key_lower;
       for (char c : key) key_lower += tolower(c);
@@ -2247,6 +2424,21 @@ void CPMEmulator::bdos_call(qkz80_uint8 func) {
     platform::diag("BDOS call %d\n", func);
   }
 
+  // A call that reads or writes a file or a disk, or the AUX input, is work
+  // (see eof_idle): it can change what the next one gives back, which the
+  // guest's registers and memory do not show.  The other calls - the console,
+  // the version, the drive, the DMA address, the user number - give the same
+  // answer each time round a loop.
+  switch (func) {
+  case 3: case 13: case 15: case 16: case 17: case 18: case 19: case 20:
+  case 21: case 22: case 23: case 30: case 33: case 34: case 35: case 36:
+  case 37: case 40:
+    work_since_poll = true;
+    break;
+  default:
+    break;
+  }
+
   // Every file call reads and writes its FCB as mem[DE + n], and the guest
   // memory is exactly 64K, so an FCB near the top ran off the end of it:
   // BDOS 22 at FFECh wrote 19 bytes of host heap.  CP/M would wrap the
@@ -2562,7 +2754,7 @@ void CPMEmulator::bdos_read_console_buffer() {
     int ch = console_getchar_blocking();
     // Ask before anything else reads it: the flag describes the character we
     // just took, and any further console call would overwrite it
-    bool synthesized = platform::console_last_char_synthesized();
+    bool synthesized = console_last_synthesized();
     if (ch == -1 || ch == EOF) break;  // EOF ends the line; a typed ^Z does not
 
     check_ctrl_c_exit(ch);
@@ -2727,7 +2919,7 @@ void CPMEmulator::bdos_set_iobyte() {
 
 void CPMEmulator::bdos_console_status() {
   // Return 0xFF if character ready, 0x00 if not
-  cpu->set_reg8(platform::stdin_has_data() ? 0xFF : 0x00, qkz80::reg_A);
+  cpu->set_reg8(console_ready(cpu) ? 0xFF : 0x00, qkz80::reg_A);
 }
 
 void CPMEmulator::bdos_get_version() {
@@ -3792,8 +3984,8 @@ void CPMEmulator::bdos_direct_console_io() {
 
   if (e_reg == 0xFF) {
     // Input mode - return character if available, 0 if not
-    if (platform::stdin_has_data()) {
-      int ch = platform::console_getchar();
+    if (console_ready(cpu)) {
+      int ch = console_read_raw();
       if (ch == -1 || ch == EOF) {
         // End of input, not "nothing yet".  BDOS 6 spells both 0, so the guest
         // cannot tell them apart and a polling loop never terminates; count it
@@ -3811,7 +4003,7 @@ void CPMEmulator::bdos_direct_console_io() {
     }
   } else if (e_reg == 0xFE) {
     // Status check - return 0xFF if char ready, 0 if not
-    cpu->set_reg8(platform::stdin_has_data() ? 0xFF : 0, qkz80::reg_A);
+    cpu->set_reg8(console_ready(cpu) ? 0xFF : 0, qkz80::reg_A);
   } else {
     // Output mode - send character through terminal translator
     console_output(e_reg);
@@ -4195,6 +4387,11 @@ void CPMEmulator::bios_call(int offset) {
     platform::diag("BIOS call offset %d\n", offset);
   }
 
+  // Reading or writing a sector, or the reader, is work: see eof_idle
+  if (offset == BIOS_READ || offset == BIOS_WRITE || offset == BIOS_READER) {
+    work_since_poll = true;
+  }
+
   switch (offset) {
   case BIOS_CONST:
     bios_const();
@@ -4334,7 +4531,7 @@ void CPMEmulator::bios_call(int offset) {
 
 void CPMEmulator::bios_const() {
   // Console status - return 0xFF if character ready, 0x00 if not
-  cpu->set_reg8(platform::stdin_has_data() ? 0xFF : 0x00, qkz80::reg_A);
+  cpu->set_reg8(console_ready(cpu) ? 0xFF : 0x00, qkz80::reg_A);
 }
 
 void CPMEmulator::bios_conin() {
@@ -4799,6 +4996,9 @@ int main(int argc, char** argv) {
     platform::diag("  --int-rst=N         RST number for interrupt (0-7, default 7 = RST 38H)\n");
     platform::diag("  --ctrl-c-exit       Exit after 5 consecutive typed ^C (default)\n");
     platform::diag("  --no-ctrl-c-exit    Give every ^C to the program (WordStar page-down)\n");
+    platform::diag("  --eof-idle          When redirected input ends, status calls say no key\n");
+    platform::diag("                      unless the program waits for a key (default)\n");
+    platform::diag("  --no-eof-idle       When redirected input ends, status calls say a key is ready\n");
     platform::diag("  --gdb[=PORT]        Wait for GDB on 127.0.0.1:PORT (default 1234, 0 = any) before 0100H\n");
     platform::diag("  --gdb-port-file=F   Write the port that --gdb listens on to file F\n");
     platform::diag("  --gdb-listen=ADDR   Listen on IPv4 address ADDR (0.0.0.0 = every interface), not\n");
@@ -4862,6 +5062,12 @@ int main(int argc, char** argv) {
     } else if (strcmp(a, "--ctrl-c-exit") == 0) {
       ctrl_c_exit_enabled = true;
       ctrl_c_exit_from_cli = true;  // Outranks a 'ctrl_c_exit' config line
+    } else if (strcmp(a, "--eof-idle") == 0) {
+      eof_idle_enabled = true;
+      eof_idle_from_cli = true;     // Outranks an 'eof_idle' config line
+    } else if (strcmp(a, "--no-eof-idle") == 0) {
+      eof_idle_enabled = false;
+      eof_idle_from_cli = true;     // Outranks an 'eof_idle' config line
     } else if (strcmp(a, "--gdb") == 0) {
       gdb_on = true;
     } else if (strncmp(a, "--gdb=", 6) == 0) {

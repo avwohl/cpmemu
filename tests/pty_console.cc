@@ -891,6 +891,22 @@ static const Case cases[] = {
     { "a polled reader that runs out of input is stopped", PROG(con6hex_com),
       NULL, "", "", NULL, "reads past end of input", 20000, StdinFile, "", false, 0, NULL },
 
+    // A guest that works and looks for ^C between pieces of work is not
+    // waiting for a key, so once its input has ended the status call answers
+    // it "no key", as a terminal nobody types on would, and it runs to its end.
+    // Before eof_idle each of its checks read past the end of input, and the
+    // 1024-read stop ended it part way: a HI-TECH C link and an MBASIC loop
+    // with stdin from /dev/null (issue #5).  The Windows twins in
+    // tests/win_console.cc have the same names.
+    { "a ^C check at the end of input finds no key: a file", PROG(conwork11_com),
+      NULL, "", "", "DONE", "", 20000, StdinFile, "", false, 0, NULL },
+
+    { "a ^C check at the end of input finds no key: /dev/null", PROG(conwork11_com),
+      NULL, "", "", "DONE", "", 20000, StdinDevNull, NULL, false, 0, NULL },
+
+    { "a ^C check at the end of input finds no key: a closed pipe", PROG(conwork11_com),
+      NULL, "", "", "DONE", "", 20000, StdinPipe, "", false, 0, NULL },
+
     // ---- being killed ----------------------------------------------------
     // atexit() covers exit() and a return from main and nothing else, so a
     // signal leaves the terminal exactly as the emulator set it: no echo, no

@@ -12,6 +12,51 @@ summarises and points; `git log` is the detail. Open work is in
 
 ## [Unreleased]
 
+**A ^C check finds no key once redirected input has ended (issue #5).** When
+stdin was a file, `/dev/null` or a pipe that had ended, every console status
+call answered "a key is ready". A program that looks for ^C between pieces of
+work then read past the end of input at each check. The 1024-read stop ended
+the program part way, with exit status 0.
+
+A HI-TECH C compile stopped in the link and left a broken `.COM`. A program
+that HI-TECH C builds stopped after 1023 records. An MBASIC `FOR` loop stopped
+before it printed, and a `PRINT` loop stopped at 511 of 3000 numbers.
+
+Now the status calls (BDOS 11, BDOS 6 with E = FEh or FFh, BIOS CONST) answer
+"no key" once input has ended, as a terminal that nobody types on does.
+
+Two rules still tell a program that waits for a key that input has ended. In the
+first, the registers come back to the same values about 64 times, at most 8
+status calls apart. The memory stays the same, and the program reads and writes
+no file. Such a program is in a loop that only a key can end, and every status
+call answers it "a key is ready". In the second, every 16384th status call
+answers "a key is ready" until the program reads the console. That rule reaches
+an `INKEY$` loop that counts.
+
+The blocking reads answer as before. `eof_idle = false` or `--no-eof-idle`
+gives the earlier behavior. The look-ahead that finds the end of input is in
+`cpmemu.cc`, and the platform layers did not change.
+
+Measured on macOS with stdin from `/dev/null`, an empty file and an ended pipe:
+
+- The HI-TECH C 3.09-21 compile of a sieve gives a `sieve.com` byte-identical
+  to the build on a terminal.
+- A HI-TECH C program writes and reads all 2000 records.
+- Thirteen MBASIC programs that loop or print now print all their output.
+  Four MBASIC `INKEY$` waits give the same output as before, in the same time.
+- A review wrote guests to break the rules. Of 26 guests that wait for a key
+  or read their input, 24 end with the same output as before. Two that print
+  at each status call print more before the end. Three BDOS 6 pollers whose
+  memory changes take 2 to 9 seconds to get to the 1024-read stop.
+- Three guests that check for ^C with little work between the checks now run
+  to their end.
+- The tests of 80mcp, ucow and uplm80 give the same results as with 4.13.1. The
+  uc80 tests pass: 4438 passed, 2 skipped.
+
+`tests/run_tests.sh` has 13 new checks and eight new guests.
+`tests/pty_console.cc` has three new cases, and `tests/win_console.cc` has
+their Windows twins. The suite goes from 351 to 367 checks.
+
 **`examples/compiler.cfg` runs the HI-TECH C driver (issue #5).** The comment
 in the config said that the `C.COM` driver does not run here. 4.13.0 made
 that statement false. The config also could not work with the driver. The
@@ -26,10 +71,8 @@ prints `1027 primes`, and `-O`, `-LF` and two source files work. The HI-TECH C
 example in `docs/file_handling_notes.md` had the same fault and has the same
 two new lines.
 
-The compile needs stdin on the terminal, and the config says so. With stdin
-from a file, `/dev/null` or a pipe that has ended, the ^C check of each pass
-reads past the end of input. cpmemu then stops the run after 1024 reads, and
-the link leaves a `.COM` that does not run.
+The compile runs with stdin on the terminal, from a file, from `/dev/null` or
+from a pipe, because of the change above.
 
 **Docs: the config-file reference moves to `docs/config_file.md`.** The
 reference was most of `examples/README.md`, 242 lines against the 150-line

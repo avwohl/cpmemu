@@ -22,6 +22,8 @@ such as `TEST,TEST.COM/N/E` intact.
 | `--int-rst=N` | RST number for the timer interrupt (0-7, default 7 = RST 38H) [^2] |
 | `--no-ctrl-c-exit` | Disable the five-consecutive-^C exit |
 | `--ctrl-c-exit` | Enable it (the default) |
+| `--eof-idle` | When redirected input has ended, a status call answers "no key" unless the program waits for a key (the default). See [End of redirected input](CPM_SUPPORT.md#end-of-redirected-input) |
+| `--no-eof-idle` | When redirected input has ended, every status call answers "a key is ready" |
 | `--gdb[=PORT]` | Wait for a GDB on 127.0.0.1 port PORT (default 1234, 0 = the system chooses) and stop before 0100H. See [gdb_stub.md](gdb_stub.md) |
 | `--gdb-port-file=FILE` | Write the port that `--gdb` listens on to FILE |
 | `--backtrace` | Keep a shadow call stack and print it to standard error if the run ends badly. See [gdb_stub.md](gdb_stub.md) |

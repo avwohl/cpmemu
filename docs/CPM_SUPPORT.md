@@ -219,8 +219,48 @@ When stdin is a file or a pipe and it runs out, the first BDOS 1 read still
 returns CR, so a line the program was part way through submits. Every BDOS 1
 read after that returns `^Z`, CP/M's end-of-input character, which is what BIOS
 CONIN returns from the first read on - a program that checks for it stops on its
-own. Function 10 ends the line it was collecting. BDOS 6 has no way to say `^Z`:
-0 is its answer for both "nothing waiting" and end of input, so a program that
-only polls never sees the end. A program that reads on regardless is stopped
-after 1024 consecutive reads past the end, with a message on stderr, rather than
-being left to loop forever.
+own. Function 10 ends the line it was collecting. A program that reads on
+regardless is stopped after 1024 consecutive reads past the end, with a message
+on stderr, rather than being left to loop forever.
+
+The status calls are BDOS 11, BDOS 6 with E = FEh or FFh, and BIOS CONST. Once
+input has ended, the status calls answer "no key", as a terminal that nobody
+types on does. Thus a program that looks for ^C between pieces of work runs to
+its end. The HI-TECH C compiler passes do this, the programs that HI-TECH C
+builds do this, and MBASIC does this while a BASIC program runs.
+
+A program that waits for a key must still learn that no key will come. Two
+rules tell it:
+
+- A program in a loop that only a key can end gets "a key is ready" from every
+  status call. In such a loop, the registers come back to the same values about
+  64 times, at most 8 status calls apart. The memory stays the same, and between
+  those calls the program reads and writes no file. The rule finds a loop with a
+  delay in it. The rule also finds a loop that checks for a key with BDOS 11 and
+  reads the key with BDOS 6.
+- Every 16384th status call answers "a key is ready", and so do the status
+  calls after it until the program reads the console. This rule reaches a
+  program whose memory changes while it waits, for example a BASIC `INKEY$`
+  loop that counts. A ^C check ignores the byte that it reads. A program that
+  only looks for ^C gets to the 1024-read stop only after about 16 million
+  status calls.
+
+The program then reads CR and `^Z`, as described above. BDOS 6 with E = FFh has
+no way to show `^Z`: 0 is its answer for both "no key" and end of input. Thus a
+program that waits on BDOS 6 ends only at the 1024-read stop.
+
+The rules have these limits, measured on macOS:
+
+- A waiter whose memory changes while it waits gets its first key after up to
+  16384 status calls. A BASIC `INKEY$` loop that counts took 0.15 seconds. A
+  waiter that prints at each status call prints up to 16384 times more than
+  before.
+- A BDOS 6 poller whose memory changes while it waits needs 1024 of those keys
+  to get to the 1024-read stop. A short loop took 2 to 3 seconds, and a loop
+  that prints at each call took 9 seconds.
+
+`eof_idle = false` in a config file, or `--no-eof-idle` on the command line,
+gives the earlier behavior: once input has ended, every status call answers "a
+key is ready". Then a ^C check reads past the end of input, and the 1024-read
+stop ends the program part way. A terminal has no end of input, so none of these
+rules applies to an interactive run.

@@ -511,11 +511,11 @@ Whether `um80` reproduces those particular bytes has not been measured. If one
 of them ever needs rebuilding, assemble it with `um80` and compare, rather than
 reaching for z88dk again.
 
-The drive mapping sources, the two console end-of-input programs, `cli_tail.asm`,
+The drive mapping sources, the ten console end-of-input programs (`con_*.asm`), `cli_tail.asm`,
 `cli_fcb.asm`, `adm3a.asm`, `savemem.asm`, `bios_disk.asm`, `sectran.asm`, `fcb_io.asm`, `mem_top.asm`, `text_ops.asm`, `bdos_regs.asm` and `warmboot.asm` are assembled at
 test time instead, so no binary for them is committed. `tests/run_tests.sh` assembles them with
 **`um80` and `ul80`**, this project's own assembler and linker, and skips the
-whole group - 164 checks, and the 83 GDB stub checks beside it - when they
+whole group - 177 checks, and the 83 GDB stub checks beside it - when they
 are not on `PATH`:
 ```bash
 pip install um80           # any platform; provides um80 and ul80

@@ -554,6 +554,21 @@ static const Case cases[] = {
     { "NUL is end of input too, not the keyboard", PROG(coneof_com),
       "", "", "0D 1A ", "", false, 15000, NULL, true },
 
+    // A guest that works and looks for ^C between pieces of work is not
+    // waiting for a key, so once its input has ended the status call answers
+    // it "no key" and it runs to its end.  The end of input is found by
+    // reading one byte ahead (console_ready() in cpmemu.cc), which asks
+    // stdin_has_data() and console_getchar() here, through the file, the NUL
+    // and the broken-pipe branches.  tests/pty_console.cc has the POSIX twins.
+    { "a ^C check at the end of input finds no key: a file", PROG(conwork11_com),
+      "", "", "DONE", "", false, 20000, "" },
+
+    { "a ^C check at the end of input finds no key: NUL", PROG(conwork11_com),
+      "", "", "DONE", "", false, 20000, NULL, true },
+
+    { "a ^C check at the end of input finds no key: a closed pipe", PROG(conwork11_com),
+      "", "", "DONE", "", false, 20000, "", false, 0, 0, true },
+
     // The code page cases.
     //
     // These are what the old _getch() path could not survive.  It read one byte
