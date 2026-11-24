@@ -10,7 +10,7 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
-## [Unreleased]
+## [4.14.0] - 2026-11-24
 
 **A ^C check finds no key once redirected input has ended (issue #5).** When
 stdin was a file, `/dev/null` or a pipe that had ended, every console status
