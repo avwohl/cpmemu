@@ -79,6 +79,16 @@ reference was most of `examples/README.md`, 242 lines against the 150-line
 limit for a README. The text moved word for word, and the links to the
 reference point at the new file.
 
+**Tests: the suite gives a program its input file on a host with no
+`timeout` or `gtimeout`.** On such a host, `tests/run_tests.sh` starts the
+program with `&`. Without job control, bash then gives the program `/dev/null`
+as stdin, not the file of the check.
+
+The CI macOS runner has neither tool. There, the check "a ^C before the end of
+input reaches the ^C check" got `DONE` in place of `BREAK`: 366 passed, 1
+failed. The program now gets the file. Measured on macOS with the fallback
+forced: 366 passed and 1 failed before, 367 passed after.
+
 ## [4.13.1] - 2026-11-23
 
 **The emulator's own lines end in CR LF on a raw terminal (issue #5).** On

@@ -111,7 +111,12 @@ else
     run_bounded() {
         local limit=$1 pid waited=0
         shift
-        "$@" &
+        # <&0: without job control, bash gives a command started with & the
+        # stdin /dev/null, unless the command has a redirection of its own.
+        # Without the <&0, a caller's "run_bounded ... <file" ran the program
+        # on /dev/null, and a check that needs the file's bytes failed only
+        # on a host with no timeout or gtimeout, such as the CI macOS runner.
+        "$@" <&0 &
         pid=$!
         while kill -0 "$pid" 2>/dev/null; do
             if [ "$waited" -ge "$limit" ]; then
