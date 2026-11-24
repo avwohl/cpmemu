@@ -1,0 +1,37 @@
+cpmemu for Debian: notes on the source
+=======================================
+
+Prebuilt test programs
+----------------------
+
+tests/ holds CP/M test programs (.com, and .bin images of the same code)
+next to their source.  The Debian build does not assemble them again,
+because the tools that built them are not in Debian:
+
+ * The .com and .bin files beside tests/*.asm were assembled upstream with
+   z88dk's z80asm ("z88dk.z88dk-z80asm -b", docs/test_suite.md).  Some
+   headers name another assembler: test_ixh.asm names z80asm,
+   test_alu_minimal.asm names asm8080, and test_djnz.asm names um80 and
+   ul80.  tests/flag_test.com and tests/flag_test.hex are assembled by hand
+   by tests/make_test.sh.
+
+ * tests/8080/*.com are copied from https://github.com/superzazu/8080
+   (cpu_tests).  The .prn files beside them are their Microsoft MACRO-80
+   3.44 listings, and the .mac files are the source.
+
+ * tests/zexdoc.com and tests/zexall.com are copied byte-identical from
+   https://github.com/agn453/ZEXALL.  tests/zexdoc.mac and tests/zexall.mac
+   are the source; their headers say to assemble them with Hector Peraza's
+   ZSM4.
+
+Other .asm files in tests/ have no committed binary: tests/run_tests.sh
+assembles them at test time with um80 and ul80, the upstream project's own
+assembler and linker (https://github.com/avwohl/um80_and_friends, not in
+Debian).  When um80 is not installed, those groups of checks skip and the
+suite still exits 0.  So does the group of tests/cpm-test, a git submodule
+that is empty in the release tarball.
+
+The build runs tests/run_tests.sh, which runs the prebuilt programs under
+the emulator it just built, and util/test_cpm_disk.py.
+
+ -- Aaron Wohl <xdeb@awohl.com>  Tue, 24 Nov 2026 16:10:00 -0500

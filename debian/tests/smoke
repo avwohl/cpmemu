@@ -1,0 +1,26 @@
+#!/bin/sh
+# Runs the installed cpmemu and cpm_disk, not the ones in the source tree.
+set -eu
+
+cpmemu --version | grep -q '^cpmemu [0-9]'
+cpmemu --help | grep -q -- '--eof-idle'
+
+# simple_con.com prints ABC through BDOS function 9; its source is
+# tests/simple_con.asm.
+out=$(cpmemu tests/simple_con.com </dev/null 2>/dev/null)
+case "$out" in
+    *ABC*) ;;
+    *) echo "simple_con.com printed: $out" >&2; exit 1 ;;
+esac
+
+# Make an hd1k image, put a file in it, list it, and take the file out again.
+cd "$AUTOPKGTEST_TMP"
+printf 'HELLO CP/M\r\n\032' > hello.txt
+cpm_disk create disk.img
+cpm_disk add disk.img hello.txt
+cpm_disk list disk.img | grep -q 'HELLO.*TXT'
+mkdir out
+cpm_disk extract -o out disk.img hello.txt
+cmp -n 12 hello.txt out/hello.txt
+
+echo "smoke: ok"

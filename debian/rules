@@ -1,0 +1,31 @@
+#!/usr/bin/make -f
+
+include /usr/share/dpkg/architecture.mk
+
+# Every hardening flag, -Wl,-z,now (immediate binding) included.  src/makefile
+# adds the flags of dpkg-buildflags to its own.
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# The makefile installs under /usr/local unless PREFIX says otherwise
+# (PREFIX ?= in src/makefile).  It installs cpmemu, cpm_disk and the two man
+# pages, and not libqkz80: the library has no SONAME and nothing in Debian
+# links to it.  The single-binary addon (dh-sequence-single-binary in
+# Build-Depends) installs them straight into debian/cpmemu, and dh_python3
+# rewrites the '#!/usr/bin/env python3' of cpm_disk to /usr/bin/python3.
+export PREFIX = /usr
+
+%:
+	dh $@ --sourcedirectory=src
+
+# The suite runs from the top of the tree.  um80, the assembler of the
+# drive-mapping and GDB guests, is not in Debian, so those groups skip and the
+# suite still exits 0; a check that runs and fails exits non-zero.  The suite
+# runs the cpmemu it built, so a cross build cannot run it.  Some checks end a
+# guest with a signal on purpose, hence no core files.
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+ifeq ($(DEB_BUILD_GNU_TYPE),$(DEB_HOST_GNU_TYPE))
+	ulimit -c 0; tests/run_tests.sh
+	python3 util/test_cpm_disk.py
+endif
+endif
