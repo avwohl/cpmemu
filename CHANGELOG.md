@@ -10,6 +10,27 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
+## [Unreleased]
+
+**`examples/compiler.cfg` runs the HI-TECH C driver (issue #5).** The comment
+in the config said that the `C.COM` driver does not run here. 4.13.0 made
+that statement false. The config also could not work with the driver. The
+driver looks for its passes, libraries and headers on the current drive, A:,
+and A: was the empty build directory, so the driver stopped with
+`Can't execute $EXEC`.
+
+Now C: holds the whole compiler, and an `ENVIRON` mapping gives the driver
+`HITECH=0:C:`. A `*.H` mapping finds a header of the program's own in the
+source directory. With the 3.09-17 and 3.09-21 drivers, a sieve compiles and
+prints `1027 primes`, and `-O`, `-LF` and two source files work. The HI-TECH C
+example in `docs/file_handling_notes.md` had the same fault and has the same
+two new lines.
+
+The compile needs stdin on the terminal, and the config says so. With stdin
+from a file, `/dev/null` or a pipe that has ended, the ^C check of each pass
+reads past the end of input. cpmemu then stops the run after 1024 reads, and
+the link leaves a `.COM` that does not run.
+
 ## [4.13.1] - 2026-11-23
 
 **The emulator's own lines end in CR LF on a raw terminal (issue #5).** On

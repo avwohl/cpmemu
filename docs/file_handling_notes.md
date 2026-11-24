@@ -216,13 +216,24 @@ cd = /tmp
 
 ```ini
 # compile.cfg
-program = ${HOME}/cpm/compilers/hitech_c.com
+program = ${HOME}/cpm/com/c.com
 cd = /tmp/build
+
+# HI-TECH C's passes, libraries and headers, and the file that tells the
+# driver where they are (one line: HITECH=0:C:)
+drive_C = ${HOME}/cpm/c/hitech
+ENVIRON = ${HOME}/cpm/c/hitech/environ text
 
 # Source files in specific directory
 *.C = ${HOME}/projects/myapp/src/*.c text
 *.H = ${HOME}/projects/myapp/src/*.h text
 ```
+
+The HI-TECH C driver looks for its own files on the current drive. Here, the
+current drive is A:, which has no `drive_A` line, so A: is the working
+directory, `/tmp/build`. Without the `drive_C` and `ENVIRON` lines, the driver
+stops with `Can't execute $EXEC`. `examples/compiler.cfg` gives the reason for
+each line.
 
 ## Command Line Usage
 

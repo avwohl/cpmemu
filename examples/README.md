@@ -151,7 +151,7 @@ argument now resolves inside B's directory.
 
 ## Where the CP/M binaries go
 
-This repo ships no CP/M programs - no MBASIC, no M80, no Hi-Tech C. The
+This repo ships no CP/M programs - no MBASIC, no M80, no HI-TECH C. The
 examples assume `${HOME}/cpm/com/`, so put your own copies there or edit the
 `program` line. `examples/simple_test.cfg` is the one example that runs
 against files this repo does have.
@@ -164,7 +164,7 @@ against files this repo does have.
 | `simple_test.cfg` | MBASIC against this repo's `tests/*.bas`, `default_mode = text` with a binary rule for what MBASIC saves tokenized. |
 | `mbasic_tests.cfg` | MBASIC with a directory of programs reached by a drive letter (`drive_B`). |
 | `assembler.cfg` | M80/L80 assembly workflow. |
-| `compiler.cfg` | Hi-Tech C workflow. Hi-Tech C 3.09-19's `C.COM` calls CP/M 3's BDOS 102 and its `$EXEC` stops with `Fmt err`, so the driver does not run here; its passes run one at a time. |
+| `compiler.cfg` | HI-TECH C workflow with the `C.COM` driver. A one-line `ENVIRON` file tells the driver that its passes, libraries and headers are on C:. |
 | `test.cfg`, `test2.cfg` | Minimal configs for checking env expansion and `cd`. |
 
 ## Text vs binary
