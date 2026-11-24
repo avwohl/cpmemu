@@ -31,6 +31,11 @@ from a file, `/dev/null` or a pipe that has ended, the ^C check of each pass
 reads past the end of input. cpmemu then stops the run after 1024 reads, and
 the link leaves a `.COM` that does not run.
 
+**Docs: the config-file reference moves to `docs/config_file.md`.** The
+reference was most of `examples/README.md`, 242 lines against the 150-line
+limit for a README. The text moved word for word, and the links to the
+reference point at the new file.
+
 ## [4.13.1] - 2026-11-23
 
 **The emulator's own lines end in CR LF on a raw terminal (issue #5).** On

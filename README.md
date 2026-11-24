@@ -90,13 +90,13 @@ and the config file format.
 - [docs/repository_layout.md](docs/repository_layout.md) - the source tree, and where `cpm_disk` ships
 - [CHANGELOG.md](CHANGELOG.md) - changes, from v4.7.0 on
 - [docs/BUILDING.md](docs/BUILDING.md) - every platform, CMake, MinGW, cross-compiling, packaging
-- [examples/README.md](examples/README.md) - the config-file reference
+- [docs/config_file.md](docs/config_file.md) - the config-file reference; [examples/](examples/README.md) has working configs
 - [docs/test_suite.md](docs/test_suite.md) - the test suite
 - [MANUAL_CHECKS.md](MANUAL_CHECKS.md) - what needs a person at a keyboard
 - [docs/qkz80_interrupts.md](docs/qkz80_interrupts.md) - interrupts in the CPU core
 - [docs/console_seven_bit.md](docs/console_seven_bit.md) - why console input is seven bits
 - [docs/cpm_disk_formats.md](docs/cpm_disk_formats.md) - CP/M on-disk structures
-- [docs/file_handling_notes.md](docs/file_handling_notes.md) - mode detection and file search order (its mapping section is older than [examples/README.md](examples/README.md), which is the reference)
+- [docs/file_handling_notes.md](docs/file_handling_notes.md) - mode detection and file search order (its mapping section is older than [docs/config_file.md](docs/config_file.md), which is the reference)
 - [docs/macos-signing.md](docs/macos-signing.md) - signing and notarizing the macOS release
 - [docs/gdb_stub.md](docs/gdb_stub.md) - `--gdb`, the GDB remote stub, and `--backtrace`
 - [docs/debugger_plan.md](docs/debugger_plan.md) - the plan for source debugging and backtrace

@@ -105,4 +105,4 @@ OUT.DAT  = results.dat binary
 
 `$VAR` and `${VAR}` are expanded in values. Every directive the parser accepts,
 the mapping forms that do and do not work, and the drive rules are in
-[examples/README.md](../examples/README.md); `examples/` carries working files.
+[config_file.md](config_file.md); `examples/` carries working files.

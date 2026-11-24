@@ -7,7 +7,7 @@ src/                the emulator, the qkz80 core, and the platform layer
 tests/              run_tests.sh, its guests and the C++ harnesses; 8080/
                     holds the exercisers
 util/               cpm_disk.py, its tests, and unreleased.sh
-examples/           config file examples, and the config-file reference
+examples/           config file examples (the reference is docs/config_file.md)
 packaging/windows/  MSIX packaging
 docs/               the documents linked from README.md
 .github/workflows/  ci.yml (the test suite) and release.yml (deb, rpm, macOS)

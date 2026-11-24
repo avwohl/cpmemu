@@ -148,7 +148,7 @@ A `*` on the host side stands in for what the CP/M pattern matched:
 returns it untouched), so `*.BAS = /home/user/basic` maps every `.BAS` to the
 directory itself rather than to a file in it. There is no directory-mapping
 form; to expose a directory, give it a drive letter or `cd` into it.
-[examples/README.md](../examples/README.md) is the reference for mapping
+[config_file.md](config_file.md) is the reference for mapping
 forms, including the ones that look right and do nothing.
 
 #### Exact File Mappings
@@ -183,7 +183,7 @@ drive_B = $HOME/basic_programs
 A configured drive is confined to it: `B:MISSING.TXT` fails rather than
 falling back to the working directory. An unconfigured drive is the working
 directory, which is what every drive letter was before this existed. See
-`examples/README.md` for the full rules.
+[config_file.md](config_file.md) for the full rules.
 
 ## Example Configuration Files
 
