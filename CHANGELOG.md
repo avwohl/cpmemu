@@ -47,7 +47,9 @@ The tree no longer has eight small files (6 to 81 bytes) with no source:
 `tests/test1.com`, `test_aluop_compare.com`, `test_ccf.com`, `test_cpl.com`,
 `test_daa1.com`, `test_daa_cpl_scf_ccf.com`, `test_ld16.com` and
 `test_scf.com`. No check, document or CI job used them. Debian requires source
-for each file in a source package.
+for each file in a source package. `tests/8080/8080exer.png` is gone as well: a
+screenshot of exerciser results, copied with the 8080 exercisers from
+superzazu/8080, that names no author and that nothing used.
 
 **The makefile adds to `CXXFLAGS`, `CPPFLAGS` and `LDFLAGS`.** `src/makefile`
 set `CXXFLAGS` with `=`, so a `CXXFLAGS` from the environment had no effect.
