@@ -62,6 +62,22 @@ the build gives no warnings. `hardening-check` finds a position-independent
 executable, the stack protector, fortified functions, read-only relocations and
 branch protection. The suite gives 93 passed, 0 failed (with no um80).
 
+**`--version`, and one place for the version.** `cpmemu --version` prints
+`cpmemu`, the version, the copyright and the license on stdout and exits with
+status 0. The version is now
+written only in `src/version.h`. `src/makefile` and `src/CMakeLists.txt` read
+the version from that file. Before, the two build files each held a copy, and
+the program held none.
+
+**Man pages.** `man/cpmemu.1` and `man/cpm_disk.1` are new, and both give the
+copyright and the license. `make install`, the CMake install (and so the macOS
+archive), the `.deb` and the `.rpm` install them. A new check fails if
+`man/cpmemu.1` has no entry for an option that cpmemu accepts. `docs/usage.md`
+also gets the `--gdb-listen` row that it did not have.
+
+`tests/run_tests.sh` has two new checks, and the suite goes from 371 to 373
+checks.
+
 ## [4.15.0] - 2026-11-24
 
 **`--help` prints the option list.** Before, cpmemu took `--help` for the name

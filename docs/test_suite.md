@@ -379,9 +379,9 @@ the ones that tell the two readings apart, and the test uses the second reading.
 
 ## Option list checks
 
-Four checks in `tests/run_tests.sh` run `cpmemu --help`, and `cpmemu` with no
-arguments. These checks need no assembler. The checks make sure of these
-results:
+Six checks in `tests/run_tests.sh` run `cpmemu --help`, `cpmemu --version`,
+and `cpmemu` with no arguments. These checks need no assembler. The checks
+make sure of these results:
 
 - `--help` writes the option list on stdout and exits with status 0. After the
   program name, `--help` gives the same result, and the program does not run.
@@ -390,6 +390,11 @@ results:
 - The list names each option that `try_option()` in `src/cpmemu.cc` accepts.
   The check reads the option names from the source. If you add an option to
   `try_option()` and not to the list, the check fails.
+- `man/cpmemu.1` has an entry for each of those options. An entry is the line
+  after a `.TP` request. An option that is only named in the text of another
+  entry does not count.
+- `--version` writes `cpmemu` and the version in `src/version.h` on stdout and
+  exits with status 0.
 
 ## Running Individual Tests
 

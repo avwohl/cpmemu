@@ -12,6 +12,7 @@
 #include "qkz80.h"
 #include "os/platform.h"
 #include "gdbstub.h"
+#include "version.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -5012,6 +5013,7 @@ static void print_usage(const char* argv0, bool to_stdout) {
     "                      127.0.0.1.  No password: anyone who reaches ADDR controls the guest\n"
     "  --backtrace         Keep a shadow call stack and print it if the run ends badly\n"
     "  --help              Print this list on stdout and exit\n"
+    "  --version           Print the version on stdout and exit\n"
     "\n"
     "Environment variables:\n"
     "  CPM_PROGRESS=N      Enable progress reporting every N million instructions\n"
@@ -5112,6 +5114,15 @@ int main(int argc, char** argv) {
       // over the arguments come before a config file is read or a program is
       // loaded, and before platform::init() changes the console.
       print_usage(argv[0], true);
+      exit(0);
+    } else if (strcmp(a, "--version") == 0) {
+      // The same place in the run as --help: nothing has been set up yet.
+      printf("cpmemu %s\n"
+             "Copyright (C) 2025-2026 Aaron Wohl\n"
+             "License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.\n"
+             "This is free software: you are free to change and redistribute it.\n"
+             "There is NO WARRANTY, to the extent permitted by law.\n",
+             CPMEMU_VERSION);
       exit(0);
     } else {
       return false;  // Not ours - the program's, or the program name itself

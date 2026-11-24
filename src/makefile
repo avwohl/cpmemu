@@ -88,10 +88,13 @@ PLATFORM_OBJECT = platform.o
 # ABI break moves - and the full version rides along as the current version.
 LIB_NAME = qkz80
 LIB_STATIC = lib$(LIB_NAME).a
-# One place for the version on this side of the build.  src/CMakeLists.txt
-# carries its own copy in project(... VERSION ...) and the two have to be moved
-# together; qkz80.pc no longer does, it is filled in from here.
-LIB_VERSION = 4.15.0
+# The version is read from version.h, the one place it is written; CMake reads
+# the same line, and qkz80.pc is filled in from here.  The sed pattern has no
+# '#' in it on purpose: make would take a '#' for the start of a comment.
+LIB_VERSION := $(shell sed -n 's/.*CPMEMU_VERSION "\([^"]*\)".*/\1/p' version.h)
+ifeq ($(LIB_VERSION),)
+$(error could not read CPMEMU_VERSION from src/version.h)
+endif
 LIB_VERSION_MAJOR = 4
 ifeq ($(UNAME_S),Darwin)
 LIB_SHARED = lib$(LIB_NAME).$(LIB_VERSION_MAJOR).dylib
@@ -140,6 +143,7 @@ endif
 
 # Build cpmemu linking against static library
 cpmemu.o gdbstub.o: gdbstub.h os/platform.h
+cpmemu.o: version.h
 $(TARGET): $(APP_OBJECTS) $(PLATFORM_OBJECT) $(LIB_STATIC)
 	$(CXX) $(ALL_CXXFLAGS) $(LDFLAGS) $(STATIC_LDFLAGS) $(APP_OBJECTS) $(PLATFORM_OBJECT) $(LIB_STATIC) -o $(TARGET)
 
@@ -191,6 +195,7 @@ BINDIR ?= $(PREFIX)/bin
 LIBDIR ?= $(PREFIX)/lib
 INCLUDEDIR ?= $(PREFIX)/include/qkz80
 PKGCONFIGDIR ?= $(LIBDIR)/pkgconfig
+MANDIR ?= $(PREFIX)/share/man
 
 # The C++ runtime a C driver has to be told about.  Everything in the archive
 # is C++, so a final link done with cc rather than c++ has no C++ runtime under
@@ -226,6 +231,8 @@ install: $(TARGET)
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
 	install -m 755 ../util/cpm_disk.py $(DESTDIR)$(BINDIR)/cpm_disk
+	install -d $(DESTDIR)$(MANDIR)/man1
+	install -m 644 ../man/cpmemu.1 ../man/cpm_disk.1 $(DESTDIR)$(MANDIR)/man1/
 
 install-lib: $(LIB_STATIC) $(LIB_SHARED) $(LIB_SHARED_LINK) qkz80.pc
 	install -d $(DESTDIR)$(LIBDIR)
@@ -248,6 +255,7 @@ endif
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
 	rm -f $(DESTDIR)$(BINDIR)/cpm_disk
+	rm -f $(DESTDIR)$(MANDIR)/man1/cpmemu.1 $(DESTDIR)$(MANDIR)/man1/cpm_disk.1
 
 uninstall-lib:
 	rm -f $(DESTDIR)$(LIBDIR)/$(LIB_STATIC)

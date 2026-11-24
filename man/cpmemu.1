@@ -1,0 +1,255 @@
+.TH CPMEMU 1 "2026-11-24" "cpmemu" "User Commands"
+.SH NAME
+cpmemu \- run CP/M 2.2 programs on a modern host
+.SH SYNOPSIS
+.B cpmemu
+.RI [ options ]
+.I program.com
+.RI [ args ...]
+.br
+.B cpmemu
+.RI [ options ]
+.I config.cfg
+.RI [ args ...]
+.SH DESCRIPTION
+.B cpmemu
+runs CP/M 2.2 programs.
+It emulates a Z80 or an 8080 CPU, and it answers the BDOS and BIOS calls of
+the program on the host.
+Each CP/M drive is a host directory, and each CP/M file is a host file.
+cpmemu needs no CP/M system image and no ROM.
+.PP
+The first argument that is not an option is the program to run, or a config
+file.
+An argument that contains
+.B .cfg
+is a config file.
+A config file gives the program, the host directory of each drive, the file
+mappings and the devices.
+.PP
+The arguments after the program go to the program, in upper case, in its
+command tail at 0080h and in the two FCBs at 005Ch and 006Ch.
+An option written after the program is also an option, and the program does
+not get it.
+An argument that is not one of the options below goes to the program, so a
+tail such as
+.B TEST,TEST.COM/N/E
+reaches the program whole.
+.PP
+Console input and output are the terminal of cpmemu.
+When stdin is a file or a pipe and the input ends, a BDOS read gets CR once
+and then ^Z.
+After 1024 reads past the end of input, cpmemu stops the program.
+.SH OPTIONS
+.TP
+.B \-\-z80
+Emulate a Z80.
+This is the default.
+.TP
+.B \-\-8080
+Emulate an 8080.
+.TP
+.BR \-\-progress [ =\fIN\fR ]
+Report progress on stderr every
+.I N
+million instructions.
+Without
+.IR N ,
+every 100 million.
+Off by default.
+.TP
+.BI \-\-save\-memory= FILE
+At the end of the run, write the 64K of memory to
+.IR FILE ,
+for MOVCPM and SYSGEN.
+.TP
+.BI \-\-save\-range= S\-E
+With
+.BR \-\-save\-memory ,
+write only the addresses from
+.I S
+to
+.I E
+(hexadecimal, for example DC00\-FFFF).
+.TP
+.BI \-\-int\-cycles= N
+Make a timer interrupt every
+.I N
+CPU cycles.
+The CPU is in interrupt mode 1.
+.TP
+.BI \-\-int\-rst= N
+The RST number of the timer interrupt, 0 to 7.
+The default is 7 (RST 38H).
+.TP
+.B \-\-ctrl\-c\-exit
+Five ^C typed one after the other end cpmemu.
+This is the default.
+.TP
+.B \-\-no\-ctrl\-c\-exit
+Give every ^C to the program.
+Use this for programs that use ^C as a key, such as WordStar.
+.TP
+.B \-\-eof\-idle
+When redirected input has ended, a console status call (BDOS 11, BDOS 6 with
+E = FEh or FFh, BIOS CONST) answers "no key", unless the program waits for a
+key.
+A program that looks for ^C between pieces of work then runs to its end.
+This is the default.
+.TP
+.B \-\-no\-eof\-idle
+When redirected input has ended, every console status call answers "a key is
+ready".
+.TP
+.BR \-\-gdb [ =\fIPORT\fR ]
+Wait for GDB to connect on 127.0.0.1, port
+.I PORT
+(default 1234; 0 lets the system choose), and stop before the first
+instruction at 0100h.
+.TP
+.BI \-\-gdb\-port\-file= FILE
+Write the port that
+.B \-\-gdb
+listens on to
+.IR FILE .
+.TP
+.BI \-\-gdb\-listen= ADDR
+With
+.BR \-\-gdb ,
+listen on the IPv4 address
+.I ADDR
+in place of 127.0.0.1.
+0.0.0.0 is every interface.
+There is no password: a person who can reach
+.I ADDR
+controls the program.
+.TP
+.B \-\-backtrace
+Keep a shadow call stack, and print the stack on stderr if the run ends
+badly.
+.TP
+.B \-\-help
+Print the option list on stdout and exit.
+The program does not run.
+.TP
+.B \-\-version
+Print the version on stdout and exit.
+.SH ENVIRONMENT
+.TP
+.B CPM_PROGRESS
+Report progress every
+.I N
+million instructions.
+A
+.B \-\-progress
+option outranks this variable.
+.TP
+.B CPM_DEBUG
+Set to 1, true or yes to turn on debug output.
+.TP
+.B CPM_PRINTER
+The file for LIST output and for the ^P console echo.
+.TP
+.B CPM_AUX_IN
+The file for Reader input.
+At the end of the file, or with no file, a read gets ^Z.
+.TP
+.B CPM_AUX_OUT
+The file for Punch output.
+.TP
+.B CPM_BIOS_DISK
+What the BIOS disk calls do:
+.B ok
+(the default) returns A = 0,
+.B fail
+returns A = 1, and
+.B error
+ends cpmemu.
+.TP
+.B CPM_DEBUG_BDOS
+Trace these BDOS functions: decimal numbers, separated by commas.
+.TP
+.B CPM_DEBUG_BIOS
+Trace these BIOS entries: decimal jump\-table offsets, separated by commas.
+.PP
+cpmemu reads the environment after the config file.
+Thus CPM_PRINTER, CPM_AUX_IN and CPM_AUX_OUT replace the matching config
+lines.
+.SH EXIT STATUS
+.TP
+.B 0
+The program ended: a jump to 0000h, BDOS function 0 or a warm boot.
+Also when cpmemu stops the program: after 1024 reads past the end of input,
+after five ^C, or at the instruction limit.
+.TP
+.B 1
+cpmemu could not start the program: the program or config file does not
+open, there is no program, or the value of an option is not correct (for
+example a
+.B \-\-gdb
+port above 65535).
+Also when cpmemu stops the program on an error: a write to a read\-only
+drive, a HLT that no interrupt can end, a BIOS disk call with
+CPM_BIOS_DISK=error, or a kill from GDB.
+.SH EXAMPLES
+Run a program as a Z80:
+.PP
+.RS
+.B cpmemu program.com
+.RE
+.PP
+Run a program as an 8080:
+.PP
+.RS
+.B cpmemu \-\-8080 program.com
+.RE
+.PP
+Give the program a file name; the program gets FILE.DAT in its command tail
+and in its first FCB:
+.PP
+.RS
+.B cpmemu program.com file.dat
+.RE
+.PP
+Run the program, drives and mappings that a config file gives:
+.PP
+.RS
+.B cpmemu config.cfg
+.RE
+.SH FILES
+A config file is a list of
+.I key
+=
+.I value
+lines.
+The keys include
+.BR program ,
+.BR cd ,
+.B drive_A
+to
+.BR drive_P ,
+.BR default_mode ,
+.BR eol_convert ,
+.BR ctrl_c_exit ,
+.BR eof_idle ,
+.BR printer ,
+.B aux_input
+and
+.BR aux_output .
+Any other key is a file mapping, for example
+.BR "TEST.BAS = /home/user/test.bas text" .
+The full reference is config_file.md in the cpmemu documentation.
+.SH SEE ALSO
+.BR cpm_disk (1)
+.PP
+https://github.com/avwohl/cpmemu
+.SH AUTHOR
+Aaron Wohl.
+The flag arithmetic of the DAA instruction and of the bit\-by\-bit add and
+subtract helpers comes from tnylpo by Georg Brein, under the BSD 3\-Clause
+license; the NOTICE file has the text.
+.SH COPYRIGHT
+Copyright (C) 2025\-2026 Aaron Wohl.
+License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.

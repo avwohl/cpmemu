@@ -314,6 +314,32 @@ ok=1
     "$(wc -l <"$tmp/help.names" | tr -d ' ')" "$missing"
 help_result "help: the list names every option that the parser takes" $ok
 
+# man/cpmemu.1 has to have an entry for every option as well.  An entry is
+# the line after a '.TP' (a '.B', '.BR' or '.BI' line), with each '-' written
+# '\-' as roff wants.  Only entry lines count: an option named in the text of
+# another option's entry (--gdb in the --gdb-listen entry) is not an entry.
+awk 'prev == ".TP" { print } { prev = $0 }' "$root/man/cpmemu.1" >"$tmp/man.entries"
+missing=
+while read -r o; do
+    pat=$(printf '%s' "$o" | sed 's/-/\\\\-/g')
+    grep -qE "^\.B[RI]? $pat([ =]|\[|\$)" "$tmp/man.entries" || missing="$missing $o"
+done <"$tmp/help.names"
+ok=1
+[ -z "$missing" ] && ok=0
+[ $ok -eq 0 ] || printf '        not in man/cpmemu.1:%s\n' "$missing"
+help_result "help: man/cpmemu.1 has an entry for every option that the parser takes" $ok
+
+# --version prints the version that src/version.h holds, the one place the
+# version is written.
+want=$(sed -n 's/.*CPMEMU_VERSION "\([^"]*\)".*/\1/p' "$root/src/version.h")
+"$emu" --version >"$tmp/version.out" 2>"$tmp/version.err"
+rc=$?
+ok=1
+[ $rc -eq 0 ] && [ -n "$want" ] && [ "$(head -1 "$tmp/version.out")" = "cpmemu $want" ] &&
+    [ ! -s "$tmp/version.err" ] && ok=0
+[ $ok -eq 0 ] || printf '        exit %d; want "cpmemu %s"; stdout follows\n' "$rc" "$want"
+help_result "help: --version prints the version in src/version.h and exits 0" $ok "$tmp/version.out"
+
 # ---------------------------------------------------------------------------
 # Drive mapping (BDOS 14/15/17/18/22/24 against drive_X directories).
 #
@@ -404,7 +430,7 @@ if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
     # 177 checks live behind this gate, and the 83 GDB stub checks below sit behind
-    # the same assembler (371 pass with um80, 93 without)
+    # the same assembler (373 pass with um80, 95 without)
     skipped=$((skipped + 177))
     soft_skip assembler "drive mapping tests: 177 checks, no assembler (pip install um80)"
 else

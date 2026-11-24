@@ -81,6 +81,8 @@ jobs:
           # NOTICE carries the BSD license of the tnylpo code in the CPU
           # core, which a binary distribution has to reproduce.
           cp NOTICE staging/usr/share/doc/cpmemu/
+          mkdir -p staging/usr/share/man/man1
+          install -m 644 man/cpmemu.1 man/cpm_disk.1 staging/usr/share/man/man1/
           # README.md links docs/*.md, so the package keeps that layout.
           # docs/archive is maintainer history and stays out.
           mkdir -p staging/usr/share/doc/cpmemu/docs

@@ -7,6 +7,7 @@ src/                the emulator, the qkz80 core, and the platform layer
 tests/              run_tests.sh, its guests and the C++ harnesses; 8080/
                     holds the exercisers
 util/               cpm_disk.py, its tests, and unreleased.sh
+man/                the cpmemu.1 and cpm_disk.1 man pages
 examples/           config file examples (the reference is docs/config_file.md)
 packaging/windows/  MSIX packaging
 docs/               the documents linked from README.md

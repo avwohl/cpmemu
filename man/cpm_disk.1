@@ -1,0 +1,143 @@
+.TH CPM_DISK 1 "2026-11-24" "cpmemu" "User Commands"
+.SH NAME
+cpm_disk \- make, read and change CP/M disk images
+.SH SYNOPSIS
+.B cpm_disk
+.I command
+.RI [ options ]
+.I disk
+.RI [ files ...]
+.SH DESCRIPTION
+.B cpm_disk
+makes CP/M disk images, and copies files into them and out of them.
+It reads and writes three formats:
+.TP
+.B hd1k
+The RomWBW hd1k format: one 8MB slice.
+This is the default.
+.TP
+.B sssd
+An 8\-inch single\-sided single\-density floppy (ibm\-3740), 250KB.
+.TP
+.B combo
+A RomWBW combo disk: a 1MB prefix with an MBR, then six 8MB hd1k slices
+(51MB).
+.B \-\-slice
+selects a slice, and a slice works as a plain hd1k image.
+.SH COMMANDS
+.TP
+.BI "create " disk
+Make an empty disk image.
+.TP
+.BI "add " "disk files" ...
+Copy host files into the image.
+.TP
+.BI "list " disk
+List the files in the image, with the F1 to F8, R/O, SYS and ARC attributes
+that are set.
+.TP
+.BI "delete " "disk files" ...
+Delete files from the image.
+.TP
+.BI "extract " "disk files" ...
+Copy files from the image to the host.
+.TP
+.BI "read\-boot " "disk output"
+Copy the boot area of the image to the host file
+.IR output .
+.TP
+.BI "write\-boot " "disk input" " \fR[\fIsector\fR [\fIlength\fR]]"
+Write the host file
+.I input
+to the boot area, from sector
+.I sector
+(default 0).
+With
+.IR length ,
+write that number of sectors, and fill with zeros after the end of the file.
+.TP
+.BI "verify " disk
+Check the directory: each entry has a user number from 0 to 31 (or E5h for
+a free entry) and a valid name, the extents of each file are complete, no
+block belongs to two files, and each block is inside the disk and outside the
+directory.
+.SH OPTIONS
+Each command accepts these options, and each command but
+.B create
+accepts
+.BR \-\-slice :
+.TP
+.B \-\-sssd
+The image is an SSSD floppy.
+.TP
+.B \-\-combo
+The image is a combo disk.
+.TP
+.B \-\-no\-skew
+SSSD only: no sector interleave.
+Some emulators use images with no interleave.
+.TP
+.BI \-\-slice " N"
+The slice of a combo image, 0 to 5 (default 0).
+.TP
+.BR \-h ", " \-\-help
+Print the help of the command and exit.
+.PP
+Some commands accept more options:
+.TP
+.BR \-\-force ", " \-f
+.BR create :
+write over a file that exists.
+.TP
+.BR \-\-sys ", " \-s
+.BR add :
+set the SYS attribute, so that the files show in every user area.
+.TP
+.BR \-\-user ", " \-u " \fIUSER\fR"
+.B add
+and
+.BR extract :
+the user area, 0 to 15 (default 0).
+.TP
+.BR \-\-output ", " \-o " \fIDIR\fR"
+.BR extract :
+the host directory for the files (default: the current directory).
+.SH EXIT STATUS
+.TP
+.B 0
+The command worked.
+.TP
+.B 1
+The command failed.
+.TP
+.B 2
+The command line is not correct: an unknown option, a missing argument, or a
+.B \-\-slice
+that the image does not have.
+.SH EXAMPLES
+Make an 8MB hd1k image and put two programs in it:
+.PP
+.RS
+.B cpm_disk create disk.img
+.br
+.B cpm_disk add disk.img mbasic.com stat.com
+.RE
+.PP
+List slice 3 of a combo image:
+.PP
+.RS
+.B cpm_disk list \-\-slice 3 combo.img
+.RE
+.SH SEE ALSO
+.BR cpmemu (1),
+.BR cpmls (1)
+(from cpmtools)
+.PP
+https://github.com/avwohl/cpmemu
+.SH AUTHOR
+Aaron Wohl.
+.SH COPYRIGHT
+Copyright (C) 2025\-2026 Aaron Wohl.
+License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.

@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.10)
-project(cpmemu VERSION 4.15.0 LANGUAGES CXX)
+# The version is written once, in version.h; src/makefile reads the same line.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/version.h" CPMEMU_VERSION_LINE
+     REGEX "CPMEMU_VERSION \"")
+string(REGEX REPLACE ".*CPMEMU_VERSION \"([^\"]*)\".*" "\\1"
+       CPMEMU_VERSION "${CPMEMU_VERSION_LINE}")
+if(NOT CPMEMU_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+  message(FATAL_ERROR "could not read CPMEMU_VERSION from src/version.h")
+endif()
+project(cpmemu VERSION ${CPMEMU_VERSION} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -78,6 +86,9 @@ if(NOT WIN32)
     install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/../util/cpm_disk.py
             DESTINATION bin
             RENAME cpm_disk)
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../man/cpmemu.1
+                  ${CMAKE_CURRENT_SOURCE_DIR}/../man/cpm_disk.1
+            DESTINATION share/man/man1)
 endif()
 
 # CPack configuration for packaging
