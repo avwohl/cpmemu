@@ -257,6 +257,64 @@ check "N flag"                    tests/test_n_flag.com '20\r\n02\r\n00\r\n'
 check "flag comparison (tflags)"  tests/tflags.com      '94\r\n51\r\n10\r\n3E\r\n'
 
 # ---------------------------------------------------------------------------
+# --help.
+#
+# --help prints the option list on stdout and exits 0, written before the
+# program or after it, and runs nothing.  A run with no arguments prints the
+# same list on stderr and exits 1.  Until 4.14.0, --help was taken for the
+# program's name and the run stopped with "Cannot open --help".  The list has
+# to name every option that try_option() in src/cpmemu.cc takes: the names are
+# read out of the source, so an option added there and not to the list fails
+# here.
+# ---------------------------------------------------------------------------
+
+help_result() {   # help_result <name> <ok: 0|1> [file to show]
+    if [ "$2" -eq 0 ]; then
+        printf 'PASS  %s\n' "$1"
+        passed=$((passed + 1))
+    else
+        printf 'FAIL  %s\n' "$1"
+        [ -n "${3:-}" ] && show "$3"
+        failed=$((failed + 1))
+    fi
+}
+
+echo
+"$emu" --help >"$tmp/help.out" 2>"$tmp/help.err"
+rc=$?
+ok=1
+[ $rc -eq 0 ] && grep -q '^Usage: ' "$tmp/help.out" && [ ! -s "$tmp/help.err" ] && ok=0
+[ $ok -eq 0 ] || printf '        exit %d; stderr follows\n' "$rc"
+help_result "help: --help prints the option list on stdout and exits 0" $ok "$tmp/help.err"
+
+"$emu" "$root/tests/simple_con.com" --help >"$tmp/help2.out" 2>"$tmp/help2.err"
+rc=$?
+ok=1
+[ $rc -eq 0 ] && cmp -s "$tmp/help.out" "$tmp/help2.out" && [ ! -s "$tmp/help2.err" ] && ok=0
+[ $ok -eq 0 ] || printf '        exit %d; stdout follows\n' "$rc"
+help_result "help: --help after the program prints the list and runs nothing" $ok "$tmp/help2.out"
+
+"$emu" >"$tmp/noarg.out" 2>"$tmp/noarg.err"
+rc=$?
+ok=1
+[ $rc -eq 1 ] && [ ! -s "$tmp/noarg.out" ] && cmp -s "$tmp/help.out" "$tmp/noarg.err" && ok=0
+[ $ok -eq 0 ] || printf '        exit %d; stderr follows\n' "$rc"
+help_result "help: no arguments prints the same list on stderr and exits 1" $ok "$tmp/noarg.err"
+
+sed -n '/auto try_option = \[/,/Not ours/p' "$root/src/cpmemu.cc" |
+    grep -o 'cmp(a, "--[a-z0-9-]*' | sed 's/^cmp(a, "//' | sort -u >"$tmp/help.names"
+missing=
+while read -r o; do
+    grep -qE -- "^  $o([ =]|\\[|\$)" "$tmp/help.out" || missing="$missing $o"
+done <"$tmp/help.names"
+ok=1
+# Fewer than ten names means the source no longer has the shape this reads
+[ "$(wc -l <"$tmp/help.names")" -ge 10 ] && [ -z "$missing" ] && ok=0
+[ $ok -eq 0 ] || printf '        %s names read from src/cpmemu.cc; not in the list:%s\n' \
+    "$(wc -l <"$tmp/help.names" | tr -d ' ')" "$missing"
+help_result "help: the list names every option that the parser takes" $ok
+
+# ---------------------------------------------------------------------------
 # Drive mapping (BDOS 14/15/17/18/22/24 against drive_X directories).
 #
 # These need an assembler, because committing a .com for each would put five
@@ -346,7 +404,7 @@ if [ -z "$assembler" ]; then
     echo
     echo "SKIP  drive mapping tests (no assembler: pip install um80)"
     # 177 checks live behind this gate, and the 83 GDB stub checks below sit behind
-    # the same assembler (367 pass with um80, 89 without)
+    # the same assembler (371 pass with um80, 93 without)
     skipped=$((skipped + 177))
     soft_skip assembler "drive mapping tests: 177 checks, no assembler (pip install um80)"
 else

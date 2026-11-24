@@ -10,6 +10,20 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
+## [Unreleased]
+
+**`--help` prints the option list.** Before, cpmemu took `--help` for the name
+of a program and stopped with `Cannot open --help`. Only a run with no
+arguments printed the list, on stderr, with exit status 1. Now `--help` prints
+the list on stdout and exits with status 0. `--help` can come before or after
+the program name, and the program does not run. Thus a CP/M program run as
+`cpmemu prog.com --help` no longer gets `--help` in its command tail.
+
+A run with no arguments prints the same list on stderr, with exit status 1, as
+before. A run with options and no program now gives the hint
+`Run 'cpmemu --help' for the options.` `tests/run_tests.sh` has four new checks,
+and the suite goes from 367 to 371 checks.
+
 ## [4.14.0] - 2026-11-24
 
 **A ^C check finds no key once redirected input has ended (issue #5).** When

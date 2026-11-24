@@ -4978,43 +4978,61 @@ public:
   }
 };
 
+// The option list.  --help prints it on stdout and exits 0, because it was
+// asked for; a run with no arguments at all prints it on stderr and exits 1,
+// as it always has.  One copy of the text serves both, so the two cannot
+// drift apart, and tests/run_tests.sh checks that every option try_option()
+// takes is in it.  --help used to be no option at all: it was taken for the
+// program's name and the run stopped with "Cannot open --help".
+static void print_usage(const char* argv0, bool to_stdout) {
+  const std::string p = argv0;
+  const std::string text =
+    "Usage: " + p + " [options] <program.com|config.cfg> [args...]\n"
+    "\n"
+    "Options may also be written after the program; they are\n"
+    "applied and kept out of the CP/M command tail.\n"
+    "\n"
+    "Options:\n"
+    "  --8080              Run in 8080 mode\n"
+    "  --z80               Run in Z80 mode (default)\n"
+    "  --progress[=N]      Enable progress reporting every N million instructions\n"
+    "                      (default N=100 if not specified, off by default)\n"
+    "  --save-memory=FILE  Save memory to FILE on exit (for MOVCPM/SYSGEN)\n"
+    "  --save-range=S-E    Save only range S to E (hex, e.g., DC00-FFFF)\n"
+    "  --int-cycles=N      Enable timer interrupt every N cycles (e.g., 50000)\n"
+    "  --int-rst=N         RST number for interrupt (0-7, default 7 = RST 38H)\n"
+    "  --ctrl-c-exit       Exit after 5 consecutive typed ^C (default)\n"
+    "  --no-ctrl-c-exit    Give every ^C to the program (WordStar page-down)\n"
+    "  --eof-idle          When redirected input ends, status calls say no key\n"
+    "                      unless the program waits for a key (default)\n"
+    "  --no-eof-idle       When redirected input ends, status calls say a key is ready\n"
+    "  --gdb[=PORT]        Wait for GDB on 127.0.0.1:PORT (default 1234, 0 = any) before 0100H\n"
+    "  --gdb-port-file=F   Write the port that --gdb listens on to file F\n"
+    "  --gdb-listen=ADDR   Listen on IPv4 address ADDR (0.0.0.0 = every interface), not\n"
+    "                      127.0.0.1.  No password: anyone who reaches ADDR controls the guest\n"
+    "  --backtrace         Keep a shadow call stack and print it if the run ends badly\n"
+    "  --help              Print this list on stdout and exit\n"
+    "\n"
+    "Environment variables:\n"
+    "  CPM_PROGRESS=N      Enable progress reporting every N million instructions\n"
+    "\n"
+    "Examples:\n"
+    "  " + p + " program.com              # Run CP/M program (default: Z80 mode)\n"
+    "  " + p + " --z80 program.com        # Run in Z80 mode\n"
+    "  " + p + " --progress program.com   # With progress reporting (every 100M)\n"
+    "  " + p + " --progress=50 prog.com   # Report every 50M instructions\n"
+    "  " + p + " program.com file.dat     # With file arguments\n"
+    "  " + p + " config.cfg               # With config file\n";
+  if (to_stdout) {
+    fputs(text.c_str(), stdout);
+  } else {
+    platform::diag("%s", text.c_str());
+  }
+}
+
 int main(int argc, char** argv) {
   if (argc < 2) {
-    platform::diag("Usage: %s [options] <program.com|config.cfg> [args...]\n", argv[0]);
-    platform::diag("\n");
-    platform::diag("Options may also be written after the program; they are\n");
-    platform::diag("applied and kept out of the CP/M command tail.\n");
-    platform::diag("\n");
-    platform::diag("Options:\n");
-    platform::diag("  --8080              Run in 8080 mode\n");
-    platform::diag("  --z80               Run in Z80 mode (default)\n");
-    platform::diag("  --progress[=N]      Enable progress reporting every N million instructions\n");
-    platform::diag("                      (default N=100 if not specified, off by default)\n");
-    platform::diag("  --save-memory=FILE  Save memory to FILE on exit (for MOVCPM/SYSGEN)\n");
-    platform::diag("  --save-range=S-E    Save only range S to E (hex, e.g., DC00-FFFF)\n");
-    platform::diag("  --int-cycles=N      Enable timer interrupt every N cycles (e.g., 50000)\n");
-    platform::diag("  --int-rst=N         RST number for interrupt (0-7, default 7 = RST 38H)\n");
-    platform::diag("  --ctrl-c-exit       Exit after 5 consecutive typed ^C (default)\n");
-    platform::diag("  --no-ctrl-c-exit    Give every ^C to the program (WordStar page-down)\n");
-    platform::diag("  --eof-idle          When redirected input ends, status calls say no key\n");
-    platform::diag("                      unless the program waits for a key (default)\n");
-    platform::diag("  --no-eof-idle       When redirected input ends, status calls say a key is ready\n");
-    platform::diag("  --gdb[=PORT]        Wait for GDB on 127.0.0.1:PORT (default 1234, 0 = any) before 0100H\n");
-    platform::diag("  --gdb-port-file=F   Write the port that --gdb listens on to file F\n");
-    platform::diag("  --gdb-listen=ADDR   Listen on IPv4 address ADDR (0.0.0.0 = every interface), not\n");
-    platform::diag("                      127.0.0.1.  No password: anyone who reaches ADDR controls the guest\n");
-    platform::diag("  --backtrace         Keep a shadow call stack and print it if the run ends badly\n");
-    platform::diag("\n");
-    platform::diag("Environment variables:\n");
-    platform::diag("  CPM_PROGRESS=N      Enable progress reporting every N million instructions\n");
-    platform::diag("\n");
-    platform::diag("Examples:\n");
-    platform::diag("  %s program.com              # Run CP/M program (default: Z80 mode)\n", argv[0]);
-    platform::diag("  %s --z80 program.com        # Run in Z80 mode\n", argv[0]);
-    platform::diag("  %s --progress program.com   # With progress reporting (every 100M)\n", argv[0]);
-    platform::diag("  %s --progress=50 prog.com   # Report every 50M instructions\n", argv[0]);
-    platform::diag("  %s program.com file.dat     # With file arguments\n", argv[0]);
-    platform::diag("  %s config.cfg               # With config file\n", argv[0]);
+    print_usage(argv[0], false);
     return 1;
   }
 
@@ -5089,6 +5107,12 @@ int main(int argc, char** argv) {
       gdb_listen = a + 13;
     } else if (strcmp(a, "--backtrace") == 0) {
       backtrace_on = true;
+    } else if (strcmp(a, "--help") == 0) {
+      // Before the program or after it, --help ends the run here: both passes
+      // over the arguments come before a config file is read or a program is
+      // loaded, and before platform::init() changes the console.
+      print_usage(argv[0], true);
+      exit(0);
     } else {
       return false;  // Not ours - the program's, or the program name itself
     }
@@ -5102,6 +5126,7 @@ int main(int argc, char** argv) {
   if (argc < arg_offset + 1) {
     platform::diag("Error: No program specified\n");
     platform::diag("Usage: %s [options] <program.com|config.cfg> [args...]\n", argv[0]);
+    platform::diag("Run '%s --help' for the options.\n", argv[0]);
     return 1;
   }
 

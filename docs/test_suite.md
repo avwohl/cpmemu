@@ -369,6 +369,20 @@ nibble of zero. The condition the hardware applies is on the accumulator before
 either correction, `A` greater than `99h`. Twelve of that group's 1024 cases are
 the ones that tell the two readings apart, and the test uses the second reading.
 
+## Option list checks
+
+Four checks in `tests/run_tests.sh` run `cpmemu --help`, and `cpmemu` with no
+arguments. These checks need no assembler. The checks make sure of these
+results:
+
+- `--help` writes the option list on stdout and exits with status 0. After the
+  program name, `--help` gives the same result, and the program does not run.
+- With no arguments, cpmemu writes the same list on stderr and exits with
+  status 1.
+- The list names each option that `try_option()` in `src/cpmemu.cc` accepts.
+  The check reads the option names from the source. If you add an option to
+  `try_option()` and not to the list, the check fails.
+
 ## Running Individual Tests
 
 ### Console Output Tests

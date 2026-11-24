@@ -27,6 +27,7 @@ such as `TEST,TEST.COM/N/E` intact.
 | `--gdb[=PORT]` | Wait for a GDB on 127.0.0.1 port PORT (default 1234, 0 = the system chooses) and stop before 0100H. See [gdb_stub.md](gdb_stub.md) |
 | `--gdb-port-file=FILE` | Write the port that `--gdb` listens on to FILE |
 | `--backtrace` | Keep a shadow call stack and print it to standard error if the run ends badly. See [gdb_stub.md](gdb_stub.md) |
+| `--help` | Print the option list on stdout and exit with status 0. The program does not run. With no arguments, cpmemu prints the same list on stderr and exits with status 1 |
 
 HLT waits for an interrupt. With `--int-cycles`, the clock goes to the next
 timer tick, and the interrupt routine runs. With no `--int-cycles`, or after a
@@ -52,6 +53,7 @@ cpmemu program.com file.dat         # goes in the command tail and FCB 1, upperc
 cpmemu --progress=50 program.com    # report every 50M instructions
 cpmemu config.cfg                   # settings from a config file
 cpmemu config.cfg --no-ctrl-c-exit  # an option after the file still counts
+cpmemu --help                       # the option list
 ```
 
 `mbasic.com` is not shipped here; supply your own copy.
