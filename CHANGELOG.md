@@ -10,7 +10,7 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
-## [Unreleased]
+## [4.16.0] - 2026-11-24
 
 **`NOTICE` credits the tnylpo code in the CPU core.** Two parts of the CPU core
 come from `cpu.c` of tnylpo, by Georg Brein, under the BSD 3-Clause license:
@@ -63,7 +63,8 @@ compile and link line. `-O2` is the default when the caller gives no
 Measured in a Debian unstable container with the flags from `dpkg-buildflags`:
 the build gives no warnings. `hardening-check` finds a position-independent
 executable, the stack protector, fortified functions, read-only relocations and
-branch protection. The suite gives 93 passed, 0 failed (with no um80).
+branch protection. The suite passes there with 0 failed; the checks that need
+um80, which is not in Debian, skip.
 
 **`--version`, and one place for the version.** `cpmemu --version` prints
 `cpmemu`, the version, the copyright and the license on stdout and exits with
