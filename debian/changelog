@@ -1,5 +1,5 @@
-cpmemu (4.16.0-1) UNRELEASED; urgency=medium
+cpmemu (4.16.0-1) unstable; urgency=medium
 
-  * Initial release.
+  * Initial release. (Closes: #1155310)
 
- -- Aaron Wohl <xdeb@awohl.com>  Tue, 24 Nov 2026 16:06:56 -0500
+ -- Aaron Wohl <xdeb@awohl.com>  Wed, 25 Nov 2026 09:15:02 -0500
