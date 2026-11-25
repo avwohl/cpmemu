@@ -10,6 +10,18 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
+## [Unreleased]
+
+**A workflow builds, signs and uploads the Debian source package.**
+`.github/workflows/debian-upload.yml` starts only by hand. Its `build` job
+builds the tip of `debian/latest` in `debian:sid` from the GitHub tarball of
+the upstream tag, then runs the test suite, lintian and the autopkgtest. Its
+`sign` job, on a fresh runner that runs no code from the package, signs the
+source package with the key in the secret `XDEB_GPG_PRIVATE_KEY` and verifies
+the signatures. Only when the `upload` input is set does the workflow upload
+the package to mentors.debian.net. `docs/debian-upload.md` gives the steps and
+the secrets.
+
 ## [4.16.0] - 2026-11-24
 
 **`NOTICE` credits the tnylpo code in the CPU core.** Two parts of the CPU core

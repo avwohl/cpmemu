@@ -1,0 +1,243 @@
+# The Debian source package: build it, check it, sign it, and - only when the
+# person who starts the run asks - upload it to mentors.debian.net.
+#
+# cpmemu goes into Debian through a sponsor.  The ITP is bug #1155310, the
+# packaging is on the DEP-14 branch debian/latest, and the way in is a signed
+# source upload to mentors.debian.net, which a sponsor downloads, checks and
+# uploads to Debian.  This workflow makes that signed upload.
+# docs/debian-upload.md says how to run it and how to set the secrets.
+#
+# It runs only by hand.  The file is on main because GitHub offers a
+# workflow_dispatch workflow only from the default branch; what it builds is
+# always the tip of debian/latest, whatever branch the run is started on.
+#
+# Two jobs, so that the key never shares a machine with code from the package.
+# The build job runs debian/rules, the test suite and the autopkgtest as root,
+# and code that runs as root could replace gpg or debsign for any later step
+# in the same container.  So the build job gets no secret: it hands the unsigned
+# files on as an artifact.  The sign job starts from a fresh runner and a fresh
+# debian:sid, installs only devscripts, dput and gnupg from Debian, and runs
+# nothing from the package.
+#
+# The key is the secret XDEB_GPG_PRIVATE_KEY, an ASCII-armoured export of the
+# secret key.  XDEB_GPG_PASSPHRASE is needed only when that key has a
+# passphrase.  Only the "Sign" step gets either secret.  It deletes its keyring
+# before it ends, and the steps after it have only the public key.
+name: Debian source package
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: 'Upload the signed source package to mentors.debian.net'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: debian:sid
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      # git first: without git in the container, actions/checkout fetches a
+      # tarball through the API, and that has no tags.  The orig check below
+      # needs the upstream tag.
+      - name: Install the packaging tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            autopkgtest build-essential ca-certificates curl devscripts \
+            dpkg-dev fakeroot git lintian
+
+      - uses: actions/checkout@v4
+        with:
+          ref: debian/latest
+          fetch-depth: 0
+          path: pkg
+
+      # Before the build, so a run that cannot upload stops in seconds.
+      - name: Check the changelog
+        env:
+          UPLOAD: ${{ inputs.upload }}
+        run: |
+          dist=$(dpkg-parsechangelog -l pkg/debian/changelog -S Distribution)
+          version=$(dpkg-parsechangelog -l pkg/debian/changelog -S Version)
+          echo "debian/latest has cpmemu $version for $dist"
+          if [ "$UPLOAD" = true ] && [ "$dist" = UNRELEASED ]; then
+            echo "debian/changelog names UNRELEASED: give the entry a distribution (unstable) before an upload." >&2
+            exit 1
+          fi
+
+      - name: Build and check the package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global --add safe.directory "$PWD/pkg"
+          version=$(dpkg-parsechangelog -l pkg/debian/changelog -S Version)
+          upver=${version%-*}
+          mkdir build
+          cd build
+          # The URL that uscan downloads for the Github template in
+          # debian/watch (devscripts 2.26.15 reported this URL for v4.16.0), so
+          # the orig tarball is the bytes that a sponsor's uscan gets.  With and
+          # without a token the URL gave the same sha256; the token only avoids
+          # the API limit on calls with no token.
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            -o "cpmemu_$upver.orig.tar.gz" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/tarball/refs/tags/v$upver"
+          mkdir "cpmemu-$upver" archive
+          tar xzf "cpmemu_$upver.orig.tar.gz" --strip-components=1 -C "cpmemu-$upver"
+          git -C ../pkg archive "v$upver" | tar x -C archive
+          diff -r archive "cpmemu-$upver"
+          echo "orig tarball: same files as git archive v$upver"
+          cp -a ../pkg/debian "cpmemu-$upver/"
+          cd "cpmemu-$upver"
+          apt-get build-dep -y .
+          # The source package first, from the unbuilt tree.  The binary build
+          # after it runs the test suite, and lintian and autopkgtest need the
+          # .deb.
+          dpkg-buildpackage -S -us -uc
+          dpkg-buildpackage -b -us -uc
+          cd ..
+          lintian -I -E --pedantic --fail-on error,warning "cpmemu_${version}"_*.changes
+          autopkgtest "cpmemu_${version}"_*.deb "cpmemu-$upver/" -- null
+          grep -q '\.orig\.tar\.gz$' "cpmemu_${version}_source.changes"
+          echo "the source .changes lists the orig tarball"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpmemu-debian-build
+          path: |
+            build/*.dsc
+            build/*.debian.tar.*
+            build/*.orig.tar.gz
+            build/*_source.changes
+            build/*_source.buildinfo
+            build/*.deb
+          if-no-files-found: error
+
+  sign:
+    needs: build
+    runs-on: ubuntu-latest
+    container: debian:sid
+    # The environment is where the secrets can be held so that only this job,
+    # started from main, gets them; docs/debian-upload.md has the commands.  A
+    # secret set on the repository is visible here as well, so the job works
+    # either way.
+    environment: debian-upload
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install the signing tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates devscripts dput gnupg
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cpmemu-debian-build
+          path: build
+
+      - name: Sign
+        env:
+          XDEB_GPG_PRIVATE_KEY: ${{ secrets.XDEB_GPG_PRIVATE_KEY }}
+          XDEB_GPG_PASSPHRASE: ${{ secrets.XDEB_GPG_PASSPHRASE }}
+        run: |
+          if [ -z "$XDEB_GPG_PRIVATE_KEY" ]; then
+            echo "The secret XDEB_GPG_PRIVATE_KEY is not set." >&2
+            exit 1
+          fi
+          GNUPGHOME=$(mktemp -d)
+          export GNUPGHOME
+          trap 'gpgconf --kill all; rm -rf "$GNUPGHOME"' EXIT
+          printf '%s\n' "$XDEB_GPG_PRIVATE_KEY" | gpg --batch --import
+          if [ -n "$XDEB_GPG_PASSPHRASE" ]; then
+            printf '%s' "$XDEB_GPG_PASSPHRASE" > "$GNUPGHOME/passphrase"
+            printf 'batch\npinentry-mode loopback\npassphrase-file %s\n' \
+              "$GNUPGHOME/passphrase" > "$GNUPGHOME/gpg.conf"
+          fi
+          # The key whose user ID is the address in Changed-By, which is the
+          # trailer line of debian/changelog.  debsign looks for the same
+          # address, and mentors.debian.net accepts the upload only from a
+          # key in that account.
+          signer=$(sed -n 's/^Changed-By: //p' build/*_source.changes)
+          email=${signer##*<}
+          email=${email%>*}
+          # "|| true": with no match gpg exits 2, and bash -e would stop the
+          # step here, before the message below says why.
+          fpr=$( (gpg --batch --with-colons --list-secret-keys "<$email>" || true) \
+                | awk -F: '$1 == "fpr" { print $10; exit }')
+          if [ -z "$fpr" ]; then
+            echo "No secret key in XDEB_GPG_PRIVATE_KEY has the user ID <$email>." >&2
+            exit 1
+          fi
+          echo "signing as $signer with key $fpr"
+          if ! debsign -k"$fpr" --re-sign build/*_source.changes; then
+            if [ -z "$XDEB_GPG_PASSPHRASE" ]; then
+              echo "If the key has a passphrase, set the secret XDEB_GPG_PASSPHRASE." >&2
+            fi
+            exit 1
+          fi
+          gpg --batch --export "$fpr" > build/signer.gpg
+
+      # dscverify checks the signatures of the .changes and the .dsc, and the
+      # checksum of each file they list.  dput -s does the checks that an
+      # upload does, but sends nothing.
+      #
+      # The dput setup is the HTTPS one from
+      # https://mentors.debian.net/intro-maintainers/.  The [mentors] entry in
+      # the dput package's own dput.cf is FTP.
+      - name: Verify the signatures
+        run: |
+          # An absolute path: dscverify reads a relative keyring path from
+          # another directory, and then finds no key.
+          dscverify --keyring "$PWD/build/signer.gpg" build/*_source.changes
+          # dput checks the signature again at the upload, in the step below,
+          # so the keyring is in a place that step can find.
+          export GNUPGHOME="$PWD/verify-gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          gpg --batch --import build/signer.gpg
+          # Trust for the one key in this keyring.  Without it dput says
+          # "Error checking signature ... SignatureVerifyError: 0" for a good
+          # signature, because the key has no trust, and then goes on.
+          fpr=$(gpg --batch --with-colons --list-keys | awk -F: '$1 == "fpr" { print $10; exit }')
+          echo "$fpr:6:" | gpg --batch --import-ownertrust
+          cat > dput.cf <<'EOF'
+          [mentors]
+          fqdn = mentors.debian.net
+          incoming = /upload
+          method = https
+          allow_unsigned_uploads = 0
+          progress_indicator = 0
+          EOF
+          dput -s -c dput.cf mentors build/*_source.changes
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpmemu-debian-source
+          path: |
+            build/*.dsc
+            build/*.debian.tar.*
+            build/*.orig.tar.gz
+            build/*_source.changes
+            build/*_source.buildinfo
+          if-no-files-found: error
+
+      - name: Upload to mentors.debian.net
+        if: inputs.upload
+        # $PWD, not ${{ github.workspace }}: in a container job that context
+        # is the path on the runner, not the path in the container.
+        run: GNUPGHOME="$PWD/verify-gnupg" dput -c dput.cf mentors build/*_source.changes
