@@ -10,7 +10,7 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
-## [Unreleased]
+## [4.16.1] - 2026-11-28
 
 **A workflow builds, signs and uploads the Debian source package.**
 `.github/workflows/debian-upload.yml` starts only by hand. Its `build` job
