@@ -108,7 +108,10 @@ jobs:
           dpkg-buildpackage -b -us -uc
           cd ..
           lintian -I -E --pedantic --fail-on error,warning "cpmemu_${version}"_*.changes
-          autopkgtest "cpmemu_${version}"_*.deb "cpmemu-$upver/" -- null
+          # Both binary packages: "Depends: @" in debian/tests/control is
+          # cpmemu and cpmemu-doc, and cpmemu-doc is not in the archive.
+          autopkgtest "cpmemu_${version}"_*.deb "cpmemu-doc_${version}"_all.deb \
+            "cpmemu-$upver/" -- null
           grep -q '\.orig\.tar\.gz$' "cpmemu_${version}_source.changes"
           echo "the source .changes lists the orig tarball"
 
