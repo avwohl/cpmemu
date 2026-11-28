@@ -22,6 +22,19 @@ the signatures. Only when the `upload` input is set does the workflow upload
 the package to mentors.debian.net. `docs/debian-upload.md` gives the steps and
 the secrets.
 
+**The pty console tests no longer fail in a pbuilder chroot.** The Debian
+review of RFS bug #1155325 reported two failures in pbuilder: "the terminal is
+put back on a quit" and "... on an interrupt", each with "it never finished".
+pbuilder starts the build with `&` from a shell with no job control, so the
+build starts with SIGINT and SIGQUIT ignored. By design, the emulator does not
+change a signal that it inherits with the ignore action, and
+`tests/pty_console.cc` gave its ignored signals to the emulator.
+
+Now each child of the harness sets the default action for each signal that the
+cases send. It also unblocks all signals before it starts the emulator. Two new
+cases examine the design: an emulator that starts with SIGINT or SIGHUP ignored
+must not stop on that signal.
+
 ## [4.16.0] - 2026-11-24
 
 **`NOTICE` credits the tnylpo code in the CPU core.** Two parts of the CPU core

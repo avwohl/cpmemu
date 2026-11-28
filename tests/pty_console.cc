@@ -145,6 +145,49 @@ static bool write_file(const std::string& path, const void* data, size_t len) {
 }
 
 // ============================================================================
+// The signals the emulator starts with
+//
+// Every case below was written against the start a shell gives a command it
+// runs in the foreground: the default action for each signal and nothing
+// blocked.  This harness cannot count on getting that start itself, and what
+// it is given goes on to the emulator, because an ignored signal and a blocked
+// one both survive fork and exec.
+//
+// That is not hypothetical.  A shell with no job control starts a command
+// run with & with SIGINT and SIGQUIT ignored (POSIX, XCU 2.11), and pbuilder
+// starts the whole build that way: pbuilder-buildpackage is a bash script with
+// no set -m that runs dpkg-buildpackage inside "( ... ) &" and then waits for
+// it.  The emulator keeps a signal it was started ignoring ignored, by design
+// (enable_raw_mode in os/linux/platform.cc).  So in a pbuilder chroot the quit
+// and the interrupt cases sent their signal to an emulator that ignored it as
+// designed, and the case killed it at the timeout as "it never finished": the
+// two failures reported on the Debian RFS, bug #1155325.  Measured on macOS 27
+// arm64 with sh -c 'pty_console cpmemu & wait': 45 passed, 2 failed, those two,
+// before this; every case passes with it.
+//
+// So each child that execs the emulator puts back the default action for every
+// signal a case sends or depends on, and unblocks everything, the way the
+// shell would have.  The cases that start the emulator ignoring a signal on
+// purpose do that afterwards, in run_ignored_cases.
+// ============================================================================
+
+static const int case_signals[] = {
+    // the kill cases
+    SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGSEGV, SIGBUS, SIGABRT,
+    // the job control cases: the suspend and resume, and the SIGTTOU that
+    // stops a background start at its tcsetattr
+    SIGTSTP, SIGCONT, SIGTTIN, SIGTTOU
+};
+
+static void give_shell_signals() {
+    for (size_t i = 0; i < sizeof case_signals / sizeof case_signals[0]; i++)
+        signal(case_signals[i], SIG_DFL);
+    sigset_t none;
+    sigemptyset(&none);
+    sigprocmask(SIG_SETMASK, &none, NULL);
+}
+
+// ============================================================================
 // The raw mode under test
 //
 // The same clears os/linux/platform.cc enable_raw_mode() makes, kept here so
@@ -317,6 +360,9 @@ struct Spawn {
     bool stderr_to_pty;         // only run_stderr_cases sets it
     int timeout_ms;
     int kill_with;
+    int start_ignoring;         // a signal the emulator starts with ignored,
+                                // as a nohup or a background start gives it;
+                                // 0 for the start a foreground shell gives
     bool collect_left;
 };
 
@@ -413,6 +459,8 @@ static bool run_guest(const Spawn& s, const std::string& dir, Result& r) {
         for (size_t i = 0; i < parts.size(); i++) argv.push_back(const_cast<char*>(parts[i].c_str()));
         argv.push_back(const_cast<char*>(s.com));
         argv.push_back(NULL);
+        give_shell_signals();
+        if (s.start_ignoring) signal(s.start_ignoring, SIG_IGN);
         execv(s.emu, &argv[0]);
         _exit(127);
     }
@@ -1127,6 +1175,7 @@ static bool job_start(Job& j, const std::string& emu, const std::string& com,
             if (j.pty.slave > 2) close(j.pty.slave);
             if (out_pipe[1] > 2) close(out_pipe[1]);
             if (err_pipe[1] > 2) close(err_pipe[1]);
+            give_shell_signals();
             execl(emu.c_str(), emu.c_str(), com.c_str(), (char*)NULL);
             _exit(127);
         }
@@ -1326,6 +1375,7 @@ static void run_stderr_cases(const std::string& emu, const std::string& dir,
     s.stdout_to_pty = true;
     s.timeout_ms = 10000;
     s.kill_with = 0;
+    s.start_ignoring = 0;
     s.collect_left = false;
 
     // Both on the terminal.  "CPU mode" is left out of the comparison: it is
@@ -1371,6 +1421,79 @@ static void run_stderr_cases(const std::string& emu, const std::string& dir,
         ok = false;
     }
     report(on_pipe, ok, detail, passed, failed);
+    unlink(com.c_str());
+}
+
+// ---------------------------------------------------------------------------
+// A signal the emulator was started ignoring
+//
+// The other half of give_shell_signals.  A nohup starts a command with SIGHUP
+// ignored, and a shell with no job control starts a command run with & with
+// SIGINT and SIGQUIT ignored.  The emulator leaves such a signal ignored: it
+// does not catch it to put the terminal back (enable_raw_mode) or to close its
+// files first (catch_termination), both in os/linux/platform.cc.  So the signal
+// must not end the run.  The guest reads its next key and ends as it would
+// have, and the normal exit puts the terminal back.  An emulator that caught
+// the signal anyway dies of it here, with nothing on stdout.
+//
+// SIGINT is in both of the emulator's lists and SIGHUP is too, so the two
+// cases cover both; SIGQUIT is only in the first.
+// ---------------------------------------------------------------------------
+
+static void run_ignored_cases(const std::string& emu, const std::string& dir,
+                              int& passed, int& failed) {
+    static const struct { const char* name; int sig; } ignored[] = {
+        { "an interrupt the emulator was started ignoring stays ignored", SIGINT },
+        { "a hangup the emulator was started ignoring stays ignored", SIGHUP },
+    };
+    const size_t count = sizeof ignored / sizeof ignored[0];
+    std::string com = dir + "/ignored.com";
+    if (!write_file(com, con1hex_com, sizeof con1hex_com)) {
+        for (size_t i = 0; i < count; i++)
+            report(ignored[i].name, false, "        cannot write the guest program\n", passed, failed);
+        return;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        Spawn s;
+        s.emu = emu.c_str();
+        s.com = com.c_str();
+        s.emu_args = NULL;
+        s.keys_before = NULL;
+        s.keys = ".";               // sent after the signal: the guest's last key
+        s.stdin_kind = StdinPty;
+        s.stdin_text = NULL;
+        s.stdout_to_pty = false;
+        s.stderr_to_pty = false;
+        s.timeout_ms = 10000;
+        s.kill_with = ignored[i].sig;
+        s.start_ignoring = ignored[i].sig;
+        s.collect_left = false;
+
+        Result r;
+        std::string detail;
+        bool ok = run_guest(s, dir, r);
+        if (!ok) detail += "        the emulator did not start\n";
+        if (ok && r.timed_out) {
+            detail += "        the emulator had to be killed: it never finished\n";
+            ok = false;
+        }
+        if (ok && !r.raw_seen) {
+            detail += "        the emulator never reached raw mode, so the signal proved nothing\n";
+            ok = false;
+        }
+        if (ok && !r.termios_restored) {
+            detail += "        the terminal was not put back on exit\n";
+            ok = false;
+        }
+        if (ok && r.out != "2E ") {
+            detail += "        the signal ended the run: the guest should have read its last key\n";
+            detail += "        expected: 2E \n";
+            detail += "        got:      " + show(r.out) + "\n";
+            ok = false;
+        }
+        report(ignored[i].name, ok, detail, passed, failed);
+    }
     unlink(com.c_str());
 }
 
@@ -1684,6 +1807,7 @@ int main(int argc, char** argv) {
         s.stderr_to_pty = false;
         s.timeout_ms = c.timeout_ms;
         s.kill_with = c.kill_with;
+        s.start_ignoring = 0;
         s.collect_left = (c.want_left != NULL);
 
         Result r;
@@ -1735,6 +1859,7 @@ int main(int argc, char** argv) {
     }
 
     run_stderr_cases(emu, dir, passed, failed);
+    run_ignored_cases(emu, dir, passed, failed);
 
     // Last, because both build a session of their own and one of them stops a
     // process: a case that goes wrong here should not be able to disturb the
