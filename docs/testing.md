@@ -3,6 +3,8 @@
 ```bash
 tests/run_tests.sh          # quick tests, asserts and exits non-zero on failure
 tests/run_tests.sh --zex    # adds zexdoc, zexall and 8080exm
+CPMEMU_ZEX_JOBS=3 tests/run_tests.sh --zex    # the three at the same time
+tests/run_tests.sh --emu=/usr/bin/cpmemu      # tests an installed cpmemu
 make -C src unit            # 8080-mode CPU unit tests, under a second
 make -C src test            # three quick tests, eyeball only, never fails
 ```

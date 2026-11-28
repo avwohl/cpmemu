@@ -35,6 +35,28 @@ cases send. It also unblocks all signals before it starts the emulator. Two new
 cases examine the design: an emulator that starts with SIGINT or SIGHUP ignored
 must not stop on that signal.
 
+**`tests/run_tests.sh --emu=PATH` tests an installed emulator.** The suite
+then does not build the emulator, and it does not write into the source tree:
+the 8080 unit tests build in a copy of `src/`. The Debian autopkgtest uses it
+on `/usr/bin/cpmemu`.
+
+The copies for the unit tests and the Windows cross-compile are now made
+writable, so a read-only source tree works. `--help` now prints the whole
+comment at the top of the script. Before, it printed lines 2 to 45.
+
+**`--zex` prints each instruction group when the group completes, and
+`CPMEMU_ZEX_JOBS=N` runs up to N of the three exercisers at the same time.**
+Before, the suite printed no line between the start and the end of an
+exerciser. A Debian buildd stops a build after 150 minutes with no output.
+The default is one at a time, as before.
+
+The suite now applies the cap of `CPMEMU_ZEX_TIMEOUT` itself, without
+timeout(1). Thus a ^C or a kill of the suite also stops the exercisers. GNU
+timeout puts itself in a process group of its own, so these signals did not
+reach an exerciser that ran under it. The Debian package (branch
+`debian/latest`) runs `--zex` in its build, with the `parallel=N` of
+`DEB_BUILD_OPTIONS`.
+
 ## [4.16.0] - 2026-11-24
 
 **`NOTICE` credits the tnylpo code in the CPU core.** Two parts of the CPU core

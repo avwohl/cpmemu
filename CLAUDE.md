@@ -9,8 +9,9 @@ to know that the code does not say.
 ## Build and test
 
     make -C src                 # cpmemu
-    tests/run_tests.sh          # the suite that can fail: 373 checks, about 30s
-    tests/run_tests.sh --zex    # and zexdoc, zexall, 8080exm: about 18 minutes
+    tests/run_tests.sh          # the suite that can fail: 375 checks, about 30s
+    tests/run_tests.sh --zex    # and zexdoc, zexall, 8080exm: 6 to 18 minutes
+    CPMEMU_ZEX_JOBS=3 tests/run_tests.sh --zex  # the three at once: about 4 minutes on an M4
     make -C src unit            # the 8080 unit tests on their own
 
 `make -C src test` runs three guests as an eyeball check and asserts nothing.

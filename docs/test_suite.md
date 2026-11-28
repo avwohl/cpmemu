@@ -411,6 +411,14 @@ make sure of these results:
 - `--version` writes `cpmemu` and the version in `src/version.h` on stdout and
   exits with status 0.
 
+## Test an installed cpmemu
+
+`tests/run_tests.sh --emu=PATH` tests the emulator at PATH, for example
+`/usr/bin/cpmemu`, instead of `src/cpmemu`. With this option, the suite does
+not build the emulator. The suite writes only into its temporary directory:
+it builds the 8080 unit tests in a copy of `src/`. The Debian autopkgtest
+`suite` uses this option.
+
 ## Running Individual Tests
 
 ### Console Output Tests

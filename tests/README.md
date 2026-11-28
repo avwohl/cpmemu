@@ -15,6 +15,7 @@ each for zexdoc and zexall and 3m41s for `8080exm`, measured:
 ```bash
 tests/run_tests.sh --zex                      # cap defaults to 1 hour each
 CPMEMU_ZEX_TIMEOUT=7200 tests/run_tests.sh --zex
+CPMEMU_ZEX_JOBS=3 tests/run_tests.sh --zex    # the three at the same time
 ```
 
 `make -C src test` runs three of the quick tests as an eyeball check with no
