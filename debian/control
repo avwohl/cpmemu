@@ -2,17 +2,17 @@ Source: cpmemu
 Section: otherosfs
 Maintainer: Aaron Wohl <xdeb@awohl.com>
 Build-Depends:
- debhelper (>= 14),
+ debhelper-compat (= 14),
  dh-sequence-python3,
- dh-sequence-single-binary,
 Standards-Version: 4.7.4
-X-DH-Compat: 14
 Homepage: https://github.com/avwohl/cpmemu
 Vcs-Browser: https://github.com/avwohl/cpmemu/tree/debian/latest
 Vcs-Git: https://github.com/avwohl/cpmemu.git -b debian/latest
 
 Package: cpmemu
 Architecture: any
+Suggests:
+ cpmemu-doc,
 Description: CP/M 2.2 emulator that runs CP/M programs on the host
  cpmemu runs CP/M 2.2 .COM programs on Linux.  It emulates a Z80 or an 8080
  CPU, and it answers the BDOS and BIOS calls of the program on the host.
@@ -28,3 +28,16 @@ Description: CP/M 2.2 emulator that runs CP/M programs on the host
  The package also contains cpm_disk, which makes CP/M disk images (8-inch
  SSSD floppies, and the RomWBW hd1k and combo hard disk formats) and copies
  files into and out of them.
+
+Package: cpmemu-doc
+Section: doc
+Architecture: all
+Multi-Arch: foreign
+Description: CP/M 2.2 emulator that runs CP/M programs on the host - documentation
+ cpmemu runs CP/M 2.2 .COM programs on Linux.  It emulates a Z80 or an 8080
+ CPU, and it answers the BDOS and BIOS calls of the program on the host.
+ .
+ This package contains the documentation of cpmemu and cpm_disk, in
+ Markdown: how to run CP/M programs, the configuration file, the console,
+ the GDB stub, the disk image formats and the test suite.  It also contains
+ example configuration files.

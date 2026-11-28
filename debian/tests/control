@@ -1,2 +1,8 @@
+# A quick check that the installed programs start and do their main job.
 Tests: smoke
 Depends: @
+Restrictions: superficial
+
+# The upstream test suite, run against the installed cpmemu and cpm_disk.
+Tests: suite
+Depends: @, g++, make, python3

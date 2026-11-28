@@ -31,7 +31,20 @@ Debian).  When um80 is not installed, those groups of checks skip and the
 suite still exits 0.  So does the group of tests/cpm-test, a git submodule
 that is empty in the release tarball.
 
-The build runs tests/run_tests.sh, which runs the prebuilt programs under
-the emulator it just built, and util/test_cpm_disk.py.
+The build runs tests/run_tests.sh --zex, which runs the prebuilt programs
+under the emulator it just built, then the instruction exercisers zexdoc,
+zexall and 8080exm, and then util/test_cpm_disk.py.  The exercisers take
+some minutes; DEB_BUILD_OPTIONS=parallel=3 runs the three at the same time.
+
+cpmemu-doc installs docs/*.md in /usr/share/doc/cpmemu/docs and the
+examples in /usr/share/doc/cpmemu/examples.  Policy 12.3 prefers the
+documentation directory of the main package for a separate documentation
+package, and dh_installexamples puts the examples of cpmemu-doc there by
+itself.
+
+The autopkgtest "suite" runs the same suite, without the exercisers, against
+the installed /usr/bin/cpmemu (tests/run_tests.sh --emu=/usr/bin/cpmemu),
+and the cpm_disk unit tests against the installed /usr/bin/cpm_disk.  The
+autopkgtest "smoke" is a quick check and is marked superficial.
 
  -- Aaron Wohl <xdeb@awohl.com>  Tue, 24 Nov 2026 16:10:00 -0500

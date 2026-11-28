@@ -1,0 +1,24 @@
+#!/bin/sh
+# The upstream test suite, run against the installed /usr/bin/cpmemu and
+# /usr/bin/cpm_disk, not against programs built from the source tree.  The
+# suite writes only into its own temporary directory.
+set -eu
+exec 2>&1
+
+# A skip that a Debian testbed cannot avoid is allowed, and every other skip
+# is a failure: um80, the assembler of the drive-mapping and GDB guests, is
+# not in Debian; tests/cpm-test is a git submodule that is empty in the
+# release tarball; the Windows cross-compile and console checks are for
+# Windows.  The pty console checks are not in the list, so a testbed with no
+# pseudo-terminal fails this test.  The instruction exercisers (--zex) run in
+# the build, not here.
+CPMEMU_SKIP_OK="assembler cpm-test mingw windows-console" \
+    tests/run_tests.sh --require --emu=/usr/bin/cpmemu
+
+# The unit tests of cpm_disk import it as a module, and run it as a program
+# beside the test file.  A copy of the installed program, under the name of
+# the module, beside a copy of the tests, makes both of those the installed
+# cpm_disk.
+cp /usr/bin/cpm_disk "$AUTOPKGTEST_TMP/cpm_disk.py"
+cp util/test_cpm_disk.py "$AUTOPKGTEST_TMP/"
+python3 -B "$AUTOPKGTEST_TMP/test_cpm_disk.py"

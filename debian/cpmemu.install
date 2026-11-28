@@ -1,1 +1,4 @@
-docs/*.md usr/share/doc/cpmemu/docs
+usr/bin/cpmemu
+usr/bin/cpm_disk
+usr/share/man/man1/cpmemu.1
+usr/share/man/man1/cpm_disk.1

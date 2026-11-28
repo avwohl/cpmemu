@@ -1,6 +1,7 @@
 #!/usr/bin/make -f
 
 include /usr/share/dpkg/architecture.mk
+include /usr/share/dpkg/buildopts.mk
 
 # Every hardening flag, -Wl,-z,now (immediate binding) included.  src/makefile
 # adds the flags of dpkg-buildflags to its own.
@@ -9,23 +10,39 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 # The makefile installs under /usr/local unless PREFIX says otherwise
 # (PREFIX ?= in src/makefile).  It installs cpmemu, cpm_disk and the two man
 # pages, and not libqkz80: the library has no SONAME and nothing in Debian
-# links to it.  The single-binary addon (dh-sequence-single-binary in
-# Build-Depends) installs them straight into debian/cpmemu, and dh_python3
-# rewrites the '#!/usr/bin/env python3' of cpm_disk to /usr/bin/python3.
+# links to it.  They go to debian/tmp, and debian/cpmemu.install takes them
+# from there.  dh_python3 (dh-sequence-python3 in Build-Depends) rewrites the
+# '#!/usr/bin/env python3' of cpm_disk to /usr/bin/python3.
 export PREFIX = /usr
 
 %:
 	dh $@ --sourcedirectory=src
+
+# cpmemu-doc is Markdown and example files from the source tree, so the build
+# of the architecture-independent package compiles nothing and tests nothing.
+override_dh_auto_build-indep override_dh_auto_install-indep override_dh_auto_test-indep:
 
 # The suite runs from the top of the tree.  um80, the assembler of the
 # drive-mapping and GDB guests, is not in Debian, so those groups skip and the
 # suite still exits 0; a check that runs and fails exits non-zero.  The suite
 # runs the cpmemu it built, so a cross build cannot run it.  Some checks end a
 # guest with a signal on purpose, hence no core files.
-override_dh_auto_test:
+#
+# --zex adds the instruction exercisers zexdoc, zexall and 8080exm.  One after
+# another they took 6m23s on a GitHub ubuntu runner, and 151s at the same time
+# on an Apple M4.  CPMEMU_ZEX_JOBS lets them run at the same time, up to the
+# parallel=N of DEB_BUILD_OPTIONS.  The suite prints each instruction group as
+# it completes; the longest gap between two lines was 66s on the M4.  The cap
+# of the suite is one hour for each exerciser.  CPMEMU_ZEX_TIMEOUT makes it
+# four hours, for slow buildds: the suite stops an exerciser that runs past
+# its cap, and then fails.  python3 -B writes no __pycache__ into util/.
+override_dh_auto_test-arch:
 ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
 ifeq ($(DEB_BUILD_GNU_TYPE),$(DEB_HOST_GNU_TYPE))
-	ulimit -c 0; tests/run_tests.sh
-	python3 util/test_cpm_disk.py
+	ulimit -c 0; \
+	CPMEMU_ZEX_JOBS=$(or $(DEB_BUILD_OPTION_PARALLEL),1) \
+	CPMEMU_ZEX_TIMEOUT=14400 \
+	tests/run_tests.sh --zex
+	python3 -B util/test_cpm_disk.py
 endif
 endif
