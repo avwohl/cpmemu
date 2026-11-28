@@ -15,15 +15,24 @@
 # Guest output uses CP/M line endings, so the expectations below are written
 # with explicit \r\n.
 #
-# Usage: tests/run_tests.sh [--zex] [--require] [--help]
+# Usage: tests/run_tests.sh [--zex] [--require] [--emu=PATH] [--help]
 #   --zex   also run zexdoc, zexall and 8080exm.  zexdoc and zexall take about
 #           7 minutes each on the machine this was measured on - 13m46s for the
 #           pair, 67 groups each - and 8080exm adds 25 more groups under --8080
 #           in 3m41s, so all three are opt-in rather than part of the default
 #           run.  The cap defaults to an hour apiece, which is generous
 #           headroom for slower hardware; override it with CPMEMU_ZEX_TIMEOUT
-#           (seconds).  The preliminary 8080 test is not among them: it runs in
-#           under a tenth of a second and is in the default suite.
+#           (seconds).  Each group is printed as it completes, so a long run
+#           is never silent for more than one group.  CPMEMU_ZEX_JOBS=N runs up
+#           to N of the three at once (default 1, one after another); the
+#           Debian build gives it the parallel=N of DEB_BUILD_OPTIONS.  The
+#           preliminary 8080 test is not among them: it runs in under a tenth
+#           of a second and is in the default suite.
+#   --emu=PATH
+#           test the emulator at PATH, such as an installed /usr/bin/cpmemu,
+#           instead of src/cpmemu.  The suite then does not build the emulator
+#           and writes nothing into the source tree: the 8080 unit tests build
+#           in a copy of it.  The Debian autopkgtest runs the suite this way.
 #   --require
 #           a skip for want of a tool is a failure.  Same as
 #           CPMEMU_REQUIRE_ALL=1.  A skip exits 0, so on a machine missing an
@@ -42,7 +51,7 @@
 #           macOS CI job passes "mingw" and nothing else.  The last two cover
 #           skips the pty and console sub-harnesses print themselves, which
 #           are skips of this suite too - pty_console.cc skipping for want of a
-#           pty is 44 checks gone, and --require could not see it.
+#           pty is 49 checks gone, and --require could not see it.
 
 set -u
 
@@ -51,20 +60,55 @@ root=$(dirname -- "$here")
 emu=$root/src/cpmemu
 run_zex=0
 zex_timeout=${CPMEMU_ZEX_TIMEOUT:-3600}
+zex_jobs=${CPMEMU_ZEX_JOBS:-1}
 require_all=${CPMEMU_REQUIRE_ALL:-0}
 
 for arg in "$@"; do
     case $arg in
         --zex)  run_zex=1 ;;
         --require) require_all=1 ;;
+        --emu=?*) emu=${arg#--emu=} ;;
         --help|-h)
-            sed -n '2,45p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            # The header, up to the first line that is not a comment
+            sed -n '2,/^[^#]/p' "${BASH_SOURCE[0]}" | sed -n 's/^# \{0,1\}//p'
             exit 0 ;;
         *)
             echo "unknown option: $arg (try --help)" >&2
             exit 2 ;;
     esac
 done
+
+# Each a whole number of 1 or more.  The length limit is there because test(1)
+# cannot compare a number past its integer range, and a comparison that only
+# errors would make the batch loop below spin for ever.  10# because a leading
+# 0 would otherwise make the number octal.
+whole_number() {    # name value max-digits
+    case $2 in
+        ''|*[!0-9]*) ;;
+        *) [ ${#2} -le "$3" ] && [ $((10#$2)) -ge 1 ] && return 0 ;;
+    esac
+    echo "$1 must be a whole number of 1 or more, at most $3 digits, not '$2'" >&2
+    exit 2
+}
+whole_number CPMEMU_ZEX_JOBS "$zex_jobs" 4
+whole_number CPMEMU_ZEX_TIMEOUT "$zex_timeout" 9
+zex_jobs=$((10#$zex_jobs))
+zex_timeout=$((10#$zex_timeout))
+
+# The checks run the emulator from other directories, so the path has to be
+# absolute; a bare name is looked up on PATH, the way a shell would.
+case $emu in
+    */*) ;;
+    *) found=$(command -v "$emu") || { printf '%s is not on PATH\n' "$emu" >&2; exit 2; }
+       emu=$found ;;
+esac
+case $emu in
+    /*) ;;
+    *) emu=$(cd -- "$(dirname -- "$emu")" && pwd)/$(basename -- "$emu") || exit 2 ;;
+esac
+# The suite's own build of the emulator, or another one.  Only its own may be
+# built here, and only then may the suite write into the source tree.
+if [ "$emu" = "$root/src/cpmemu" ]; then own_emu=1; else own_emu=0; fi
 
 passed=0
 failed=0
@@ -100,9 +144,10 @@ trap 'rm -rf "$tmp"' EXIT
 # timeout(1) is GNU coreutils and is in no BSD or macOS base system - on the Mac
 # this was written on it existed only because Homebrew coreutils was installed.
 # Without a bound the guard tests below stop being guards: a regression that
-# reinstates a spin would hang the suite rather than fail it, and check_zex
-# would have no cap at all. With a bare `timeout` and nothing providing it, all
-# three instead fail with "exited 127", which reads as an emulator bug.
+# reinstates a spin would hang the suite rather than fail it. With a bare
+# `timeout` and nothing providing it, they instead fail with "exited 127",
+# which reads as an emulator bug. The exercisers do not use this: zex_follow
+# below applies their cap itself.
 if command -v timeout >/dev/null 2>&1; then
     run_bounded() { timeout "$@"; }
 elif command -v gtimeout >/dev/null 2>&1; then
@@ -177,29 +222,119 @@ check() {
     fi
 }
 
-# check_zex <name> <program.com> [emulator options...]
-# zexdoc and zexall print one line per instruction group ending in "OK", a
-# line containing "ERROR" on a CRC mismatch, and "Tests complete" at the end.
-# 8080exm.com is the same exerciser converted to the 8080 and prints
+# The exercisers: zex_start starts one, zex_follow prints each group as it
+# completes until every exerciser it is given has ended, and zex_report reads
+# the result.  zexdoc and zexall print one line per instruction group ending in
+# "OK", a line containing "ERROR" on a CRC mismatch, and "Tests complete" at
+# the end.  8080exm.com is the same exerciser converted to the 8080 and prints
 # "PASS! crc is:xxxxxxxx" where the other two print "OK", so both spellings
 # count as a finished group here.
-# The run goes straight to a file rather than through a pipe, so `timeout`'s
-# own exit status is visible instead of being replaced by the last stage's.
-check_zex() {
-    local name=$1 prog=$2
-    shift 2
-    local out=$tmp/zex rc groups errors
+#
+# Each run goes straight to a file, in the background, so that the shell is
+# free to print the groups as they arrive.  A run used to print one line at its
+# start and one at its end, and nothing in the minutes between: a build log
+# that a Debian buildd ends after 150 minutes with no output.  The longest
+# group, aluop a,<b,c,d,e,h,l,(hl),a>, is now the longest silence: 66s of
+# zexdoc's 151s, measured on an Apple M4 with the three exercisers running at
+# once.
+#
+# The emulator is started directly, not under timeout(1) or run_bounded, and
+# zex_follow applies the cap.  So zex_pid is the emulator's own pid, and
+# zex_stop can end it.  GNU timeout moves itself into a process group of its
+# own, so neither a ^C nor the end of the suite reached a run under it, and an
+# interrupted suite left up to three exercisers running until their cap.
+zex_name=("zexdoc (documented instructions)" "zexall (all instructions)" "8080exm (8080 mode)")
+zex_tag=(zexdoc zexall 8080exm)
+zex_prog=(tests/zexdoc.com tests/zexall.com tests/8080/8080exm.com)
+zex_opts=("" "" "--8080")
+zex_pid=("" "" "")
+zex_live=("" "" "")     # set from the start of a run until zex_report waits for it
+zex_began=(0 0 0)       # $SECONDS at the start
+zex_capped=("" "" "")   # $SECONDS when the cap sent SIGTERM
+zex_shown=(0 0 0)
 
-    if [ ! -f "$root/$prog" ]; then
+zex_start() {
+    local i=$1
+    zex_pid[$i]=
+    zex_capped[$i]=
+    zex_shown[$i]=0
+    [ -f "$root/${zex_prog[$i]}" ] || return 0     # zex_report says so
+    printf '      %s: running, minutes rather than seconds, cap %ss\n' \
+           "${zex_name[$i]}" "$zex_timeout"
+    # zex_opts unquoted: it is one option or none
+    "$emu" ${zex_opts[$i]} "$root/${zex_prog[$i]}" >"$tmp/zex$i" 2>/dev/null </dev/null &
+    zex_pid[$i]=$!
+    zex_live[$i]=1
+    zex_began[$i]=$SECONDS
+}
+
+# End every exerciser that is still running: for a ^C, a kill or an exit of the
+# suite while they run.
+zex_stop() {
+    local i
+    for i in 0 1 2; do
+        [ -n "${zex_live[$i]}" ] || continue
+        kill -KILL "${zex_pid[$i]}" 2>/dev/null
+        # the wait collects it, so bash prints no "Killed" line for it
+        wait "${zex_pid[$i]}" 2>/dev/null
+        zex_live[$i]=
+    done
+}
+
+# Print the lines that have been finished since the last call, CR taken out:
+# the exercisers put theirs at the start of the next line.
+zex_show() {
+    local i=$1 n
+    n=$(wc -l <"$tmp/zex$i")
+    n=$((n + 0))
+    [ "$n" -gt "${zex_shown[$i]}" ] || return 0
+    sed -n "$((zex_shown[$i] + 1)),${n}p" "$tmp/zex$i" | tr -d '\r' |
+        grep -v '^[[:space:]]*$' | sed "s/^/        ${zex_tag[$i]}: /"
+    zex_shown[$i]=$n
+}
+
+# The cap: SIGTERM at zex_timeout seconds, which the emulator answers by
+# ending the run, and SIGKILL 10 seconds later if it has not.
+zex_follow() {
+    local i running
+    while :; do
+        running=0
+        for i in "$@"; do
+            [ -n "${zex_live[$i]}" ] || continue
+            if kill -0 "${zex_pid[$i]}" 2>/dev/null; then
+                running=1
+                if [ -z "${zex_capped[$i]}" ]; then
+                    if [ $((SECONDS - zex_began[$i])) -ge "$zex_timeout" ]; then
+                        zex_capped[$i]=$SECONDS
+                        kill -TERM "${zex_pid[$i]}" 2>/dev/null
+                    fi
+                elif [ $((SECONDS - zex_capped[$i])) -ge 10 ]; then
+                    kill -KILL "${zex_pid[$i]}" 2>/dev/null
+                fi
+            fi
+            zex_show "$i"
+        done
+        [ $running -eq 1 ] || break
+        sleep 2
+    done
+}
+
+zex_report() {
+    local i=$1 name=${zex_name[$1]} prog=${zex_prog[$1]} out=$tmp/zex$1 rc groups errors
+
+    if [ -z "${zex_pid[$i]}" ]; then
         printf 'SKIP  %s\n        missing: %s\n' "$name" "$prog"
         skipped=$((skipped + 1))
         soft_skip missing-com "$name (missing: $prog)"
         return
     fi
 
-    printf '      %s: running, minutes rather than seconds, cap %ss\n' "$name" "$zex_timeout"
-    run_bounded "$zex_timeout" "$emu" "$@" "$root/$prog" >"$out" 2>/dev/null </dev/null
+    wait "${zex_pid[$i]}"
     rc=$?
+    zex_live[$i]=
+    # 124, the status timeout(1) gives, for a run the cap ended
+    [ -z "${zex_capped[$i]}" ] || rc=124
+    zex_show "$i"
     groups=$(grep -cE 'OK$|PASS!' "$out")
     errors=$(grep -c 'ERROR' "$out")
 
@@ -233,6 +368,10 @@ check_zex() {
     passed=$((passed + 1))
 }
 
+if [ ! -x "$emu" ] && [ $own_emu -eq 0 ]; then
+    echo "no emulator at $emu" >&2
+    exit 2
+fi
 if [ ! -x "$emu" ]; then
     echo "emulator not found at $emu, building it"
     if ! make -C "$root/src"; then
@@ -1696,12 +1835,25 @@ fi
 
 echo
 unitlog=$tmp/unit.log
-if ! make -C "$root/src" unit_8080 >"$tmp/unitbuild.log" 2>&1; then
+# Against another emulator the source tree is not ours to build in, so the
+# unit tests build in a copy of the two directories the makefile reads.
+unitdir=$root/src
+if [ $own_emu -eq 0 ]; then
+    unitdir=$tmp/unit/src
+    mkdir -p "$unitdir" "$tmp/unit/tests"
+    cp -r "$root/src/." "$unitdir/"
+    cp "$root/tests/unit_8080.cc" "$tmp/unit/tests/"
+    # cp keeps the modes of a read-only tree, and then neither make nor the
+    # rm -rf at the exit can write here
+    chmod -R u+w "$tmp/unit"
+    rm -f "$unitdir"/*.o "$unitdir"/*.a "$unitdir"/unit_8080
+fi
+if ! make -C "$unitdir" unit_8080 >"$tmp/unitbuild.log" 2>&1; then
     printf 'FAIL  8080 unit tests (unit_8080 did not build)\n'
     sed 's/^/        /' <"$tmp/unitbuild.log" | head -15
     failed=$((failed + 1))
 else
-    "$root/src/unit_8080" >"$unitlog" 2>&1
+    "$unitdir/unit_8080" >"$unitlog" 2>&1
     grep -v -e '^[0-9][0-9]* groups' -e '^cpmemu 8080' -e '^====' -e '^$' "$unitlog"
     if grep -q '^\(PASS\|FAIL\)  ' "$unitlog"; then
         passed=$((passed + $(grep -c '^PASS  ' "$unitlog")))
@@ -1760,7 +1912,7 @@ case $(uname -s) in
                 skipped=$((skipped + $(grep -c '^SKIP  ' "$ptylog")))
                 # A skip the sub-harness printed is a skip of this suite, and
                 # --require was blind to these: pty_console.cc skips its whole
-                # run when no pty can be opened, and that is 44 checks - the
+                # run when no pty can be opened, and that is 49 checks - the
                 # entire reason the macOS job exists - vanishing under a green
                 # tick.  Measured: forcing that branch gave "60 passed, 0
                 # failed, 5 skipped" and exit 0 with --require set.
@@ -1924,6 +2076,7 @@ else
     rm -rf "$wintmp"
     mkdir -p "$wintmp"
     cp -r "$root/src/." "$wintmp/"
+    chmod -R u+w "$wintmp"      # as for the unit tests: a read-only tree
     rm -f "$wintmp"/*.o "$wintmp"/*.a "$wintmp"/cpmemu "$wintmp"/cpmemu.exe
     if ( cd "$wintmp" && make -f Makefile.win \
              CXX=x86_64-w64-mingw32-g++ AR=x86_64-w64-mingw32-ar ) \
@@ -2011,11 +2164,38 @@ esac
 # are in the changelog.  The path is tests/8080/, beside the .mac it was
 # assembled from; there used to be a second, byte-identical copy at
 # tests/8080EXM.COM and it is the one that has gone.
+#
+# CPMEMU_ZEX_JOBS of them at a time, in batches, and the results in the same
+# order whatever the batch size.  Each one is a single CPU-bound process, so
+# three at once take about as long as the longest one alone.  Measured on an
+# Apple M4 with the three at once: zexdoc 151s, zexall 151s, 8080exm 76s, and
+# the whole suite with --zex 205s.  One after another on the GitHub ubuntu
+# runner of ci.yml, the three took 6m23s.
+#
+# A ^C, a kill or an exit of the suite while they run ends them as well: the
+# traps are set only for this part of the run.  The INT, TERM and HUP traps
+# then end the suite by the same signal, so that its caller sees the signal.
 if [ $run_zex -eq 1 ]; then
+    trap 'zex_stop; rm -rf "$tmp"' EXIT
+    for zex_sig in INT TERM HUP; do
+        trap "zex_stop; trap - $zex_sig; kill -$zex_sig \$\$" $zex_sig
+    done
     echo
-    check_zex "zexdoc (documented instructions)" tests/zexdoc.com
-    check_zex "zexall (all instructions)"        tests/zexall.com
-    check_zex "8080exm (8080 mode)"              tests/8080/8080exm.com --8080
+    zex_next=0
+    while [ $zex_next -lt ${#zex_prog[@]} ]; do
+        zex_batch=
+        zex_count=0
+        while [ $zex_next -lt ${#zex_prog[@]} ] && [ $zex_count -lt "$zex_jobs" ]; do
+            zex_start $zex_next
+            zex_batch="$zex_batch $zex_next"
+            zex_next=$((zex_next + 1))
+            zex_count=$((zex_count + 1))
+        done
+        zex_follow $zex_batch
+        for zex_i in $zex_batch; do zex_report "$zex_i"; done
+    done
+    trap - INT TERM HUP
+    trap 'rm -rf "$tmp"' EXIT
 else
     echo
     echo "SKIP  zexdoc, zexall and 8080exm (pass --zex to run them)"

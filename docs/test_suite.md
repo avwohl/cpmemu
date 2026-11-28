@@ -100,6 +100,21 @@ completes with no handler involved, so it is a guard against that changing. On a
 platform that returns `EINTR` instead, the `SIGCONT` handler is the only thing
 between the `fg` and a canonical terminal.
 
+The harness gives the emulator the signals that a shell gives to a command in
+the foreground. Before each child starts the emulator, the child sets the
+default action for each signal that a case sends, and unblocks all signals.
+Without this step, the emulator gets each ignored signal of the harness.
+
+A shell with no job control ignores SIGINT and SIGQUIT in a command that ends
+in `&`. pbuilder starts the Debian build in that way. The emulator does not
+change a signal that it inherits with the ignore action. Thus in a pbuilder
+chroot, the quit case and the interrupt case failed with "it never finished"
+(Debian bug #1155325).
+
+Two cases examine this rule of the emulator. They start the emulator with
+SIGINT ignored, or with SIGHUP ignored, and send that signal. Then the guest
+must read its last key and stop normally.
+
 One trap worth knowing if you write a probe of your own here: a master fd that
 survives into the child keeps the terminal alive, so the reader blocks forever
 with no EOF and no error. That looks exactly like a platform that cannot report
@@ -395,6 +410,14 @@ make sure of these results:
   entry does not count.
 - `--version` writes `cpmemu` and the version in `src/version.h` on stdout and
   exits with status 0.
+
+## Test an installed cpmemu
+
+`tests/run_tests.sh --emu=PATH` tests the emulator at PATH, for example
+`/usr/bin/cpmemu`, instead of `src/cpmemu`. With this option, the suite does
+not build the emulator. The suite writes only into its temporary directory:
+it builds the 8080 unit tests in a copy of `src/`. The Debian autopkgtest
+`suite` uses this option.
 
 ## Running Individual Tests
 

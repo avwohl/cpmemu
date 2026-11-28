@@ -10,6 +10,6 @@
 #ifndef CPMEMU_VERSION_H
 #define CPMEMU_VERSION_H
 
-#define CPMEMU_VERSION "4.16.0"
+#define CPMEMU_VERSION "4.16.1"
 
 #endif

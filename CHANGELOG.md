@@ -10,6 +10,53 @@ counter-examples and the things that were deliberately *not* done. This file
 summarises and points; `git log` is the detail. Open work is in
 [`todo.txt`](todo.txt).
 
+## [4.16.1] - 2026-11-28
+
+**A workflow builds, signs and uploads the Debian source package.**
+`.github/workflows/debian-upload.yml` starts only by hand. Its `build` job
+builds the tip of `debian/latest` in `debian:sid` from the GitHub tarball of
+the upstream tag, then runs the test suite, lintian and the autopkgtest. Its
+`sign` job, on a fresh runner that runs no code from the package, signs the
+source package with the key in the secret `XDEB_GPG_PRIVATE_KEY` and verifies
+the signatures. Only when the `upload` input is set does the workflow upload
+the package to mentors.debian.net. `docs/debian-upload.md` gives the steps and
+the secrets.
+
+**The pty console tests no longer fail in a pbuilder chroot.** The Debian
+review of RFS bug #1155325 reported two failures in pbuilder: "the terminal is
+put back on a quit" and "... on an interrupt", each with "it never finished".
+pbuilder starts the build with `&` from a shell with no job control, so the
+build starts with SIGINT and SIGQUIT ignored. By design, the emulator does not
+change a signal that it inherits with the ignore action, and
+`tests/pty_console.cc` gave its ignored signals to the emulator.
+
+Now each child of the harness sets the default action for each signal that the
+cases send. It also unblocks all signals before it starts the emulator. Two new
+cases examine the design: an emulator that starts with SIGINT or SIGHUP ignored
+must not stop on that signal.
+
+**`tests/run_tests.sh --emu=PATH` tests an installed emulator.** The suite
+then does not build the emulator, and it does not write into the source tree:
+the 8080 unit tests build in a copy of `src/`. The Debian autopkgtest uses it
+on `/usr/bin/cpmemu`.
+
+The copies for the unit tests and the Windows cross-compile are now made
+writable, so a read-only source tree works. `--help` now prints the whole
+comment at the top of the script. Before, it printed lines 2 to 45.
+
+**`--zex` prints each instruction group when the group completes, and
+`CPMEMU_ZEX_JOBS=N` runs up to N of the three exercisers at the same time.**
+Before, the suite printed no line between the start and the end of an
+exerciser. A Debian buildd stops a build after 150 minutes with no output.
+The default is one at a time, as before.
+
+The suite now applies the cap of `CPMEMU_ZEX_TIMEOUT` itself, without
+timeout(1). Thus a ^C or a kill of the suite also stops the exercisers. GNU
+timeout puts itself in a process group of its own, so these signals did not
+reach an exerciser that ran under it. The Debian package (branch
+`debian/latest`) runs `--zex` in its build, with the `parallel=N` of
+`DEB_BUILD_OPTIONS`.
+
 ## [4.16.0] - 2026-11-24
 
 **`NOTICE` credits the tnylpo code in the CPU core.** Two parts of the CPU core

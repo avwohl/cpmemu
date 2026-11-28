@@ -11,7 +11,8 @@ man/                the cpmemu.1 and cpm_disk.1 man pages
 examples/           config file examples (the reference is docs/config_file.md)
 packaging/windows/  MSIX packaging
 docs/               the documents linked from README.md
-.github/workflows/  ci.yml (the test suite) and release.yml (deb, rpm, macOS)
+.github/workflows/  ci.yml (the test suite), release.yml (deb, rpm, macOS)
+                    and debian-upload.yml (the Debian source package)
 LICENSE             the GNU GPL version 3
 NOTICE              code from other projects, and the license of each
 ```
